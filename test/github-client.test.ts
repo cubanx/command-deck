@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { openDatabase } from "../src/db";
-import { conditionalGet, reconcileInstallations, reconcileSerial } from "../src/github";
+import { bootstrapInstallation, conditionalGet, reconcileInstallations, reconcileSerial } from "../src/github";
 
 test("conditional reads retain ETags and surface a 304 without replacing data", async () => {
   const db = openDatabase();
@@ -22,4 +22,11 @@ test("installation reconciliation is serial and uses the supplied installation t
   const order: string[] = []; const headers: string[] = [];
   const results = await reconcileInstallations(db, async (id) => { order.push(`token:${id}`); return `token-${id}`; }, async (_url, init) => { headers.push(new Headers(init?.headers).get("authorization")!); return new Response('{"repositories":[]}'); });
   expect(order).toEqual(["token:a", "token:b"]); expect(headers).toEqual(["Bearer token-a", "Bearer token-b"]); expect(results).toHaveLength(2);
+});
+
+test("bootstrap persists PR draft and head evidence", async () => {
+  const db = openDatabase();
+  db.query("INSERT INTO installations (id) VALUES ('i')").run();
+  await bootstrapInstallation(db, "i", "token", async (url) => new Response(String(url).includes("pulls?") ? JSON.stringify([{ number: 1, title: "Prepare Defiant", html_url: "https://github.com/ds9/ops/pull/1", user: { login: "sisko" }, draft: true, head: { ref: "ops/defiant", sha: "b".repeat(40) } }]) : JSON.stringify({ repositories: [{ id: 2, full_name: "ds9/ops" }] })));
+  expect(db.query("SELECT draft,head_ref,head_sha FROM pull_requests").get()).toMatchObject({ draft: 1, head_ref: "ops/defiant", head_sha: "b".repeat(40) });
 });

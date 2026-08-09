@@ -64,7 +64,7 @@ export async function bootstrapInstallation(db: Db, installationId: string, toke
     const prs = await conditionalGet(db, `installation:${installationId}:repo:${repo.id}:prs`, `https://api.github.com/repositories/${repo.id}/pulls?state=open`, request);
     if (prs.kind !== "changed") continue;
     db.query("DELETE FROM pull_requests WHERE installation_id=? AND repository_id=?").run(installationId, String(repo.id));
-    for (const pr of (prs.body as Array<any>)) db.query("INSERT INTO pull_requests (installation_id,repository_id,number,title,url,author_login,state,updated_at) VALUES (?,?,?,?,?,?,?,?)").run(installationId, String(repo.id), pr.number, pr.title, pr.html_url ?? null, pr.user?.login ?? null, "open", pr.updated_at ?? new Date().toISOString());
+    for (const pr of (prs.body as Array<any>)) db.query("INSERT INTO pull_requests (installation_id,repository_id,number,title,url,author_login,state,draft,head_ref,head_sha,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").run(installationId, String(repo.id), pr.number, pr.title, pr.html_url ?? null, pr.user?.login ?? null, "open", pr.draft ? 1 : 0, typeof pr.head?.ref === "string" ? pr.head.ref : null, typeof pr.head?.sha === "string" ? pr.head.sha : null, pr.updated_at ?? new Date().toISOString());
   }
   return repos;
 }

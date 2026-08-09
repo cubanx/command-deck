@@ -6,15 +6,18 @@ The service treats authenticated webhooks plus SQLite projections as the increme
 
 ## Local setup
 
-Requirements: [Bun](https://bun.sh/) and a GitHub App when exercising provider flows.
+Requirement: [Bun](https://bun.sh/).
 
 ```bash
-cp .env.example .env
 bun install
 bun run dev
 ```
 
-Open `http://localhost:3000`. The public shell, `/health`, and `/ready` work without provider credentials; sign-in, installation, provider reads, and webhooks remain disabled until their variables are supplied.
+Open `http://localhost:3000`. The development command binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and SQLite paths without provider credentials or cookies.
+
+Use **Connect local checkout** to grant the browser read-only access to a repository. The PWA reads only `.git/HEAD` and `openspec/changes/*/tasks.md`, matches that evidence to a PR, presents the complete current unfinished group inside the PR card, and can open the selected task file without uploading its path or contents. Browsers without the native directory picker continue to show committed GitHub projections.
+
+For real provider integration, copy `.env.example` to `.env`, supply a development GitHub App, leave `DCC_LOCAL_DEMO=0`, and use `bun run start`. Local webhooks additionally require a public forwarding URL.
 
 Local validation:
 
@@ -30,9 +33,11 @@ openspec validate build-developer-command-center-mvp --strict
 | --- | --- |
 | `PORT` | HTTP port; defaults to `3000`. |
 | `DATABASE_PATH` | SQLite path; defaults to `./data/command-center.sqlite`. |
+| `DCC_LOCAL_DEMO` | Credential-free fixture access. `bun run dev` sets it to `1`; hosted or production environments reject it. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub App OAuth identity flow. The resulting user token is used only during the callback and is never persisted. |
 | `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_PRIVATE_KEY` | Installation flow, App JWTs, and installation-token repository reads. Encode private-key newlines as `\\n` when necessary. |
 | `GITHUB_WEBHOOK_SECRET` | GitHub SHA-256 webhook HMAC verification. |
+| `GITHUB_REVIEW_BOT_LOGIN` / `GITHUB_REVIEW_BOT_START_MARKER` / `GITHUB_REVIEW_BOT_DONE_MARKER` | Optional exact bot login and case-insensitive pull-request comment markers used together to project automated review progress. |
 | `RAILWAY_WEBHOOK_TOKEN` | Unguessable Railway webhook URL segment used only as an intake filter. |
 | `RAILWAY_API_TOKEN` | Read-only Railway Public API token used to verify deployment hints. |
 | `RECONCILE_INTERVAL_MS` | Serial GitHub reconciliation interval; defaults to six hours and cannot be less than one minute. |
@@ -45,10 +50,12 @@ Configure the App to request user authorization during installation and use:
 
 - callback URL: `/auth/github/callback`
 - webhook URL: `/webhooks/github`
-- repository permissions: metadata read, pull requests read, checks read, actions read, and contents read
-- events: installation, pull request, pull request review, check run, check suite, workflow run, and push
+- repository permissions: metadata read, pull requests read, checks read, actions read, contents read, and—when automated review tracking is configured—issues read
+- events: installation, pull request, pull request review, check run, check suite, workflow run, push, and—when automated review tracking is configured—issue comment
 
 The install callback does not trust its `installation_id`. It confirms the installation through `/user/installations` with the ephemeral user token before binding it to the signed-in developer. Repository automation then uses installation access tokens, not user access tokens.
+
+Automated review tracking keeps GitHub's formal review decision separate. Only signed `issue_comment` deliveries on pull requests, from the exact configured bot login, can match the configured start or done marker; the done marker wins when both are present. Without matching evidence the bot-review state remains unknown.
 
 After binding an installation, bootstrap its current repositories and open pull requests with authenticated `POST /api/installations/:installationId/bootstrap`. `repair` is an equivalent explicit path. Both routes are restricted to a developer already bound to that installation.
 

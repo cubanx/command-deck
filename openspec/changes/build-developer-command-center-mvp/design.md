@@ -14,14 +14,14 @@ The visual reference is Crisp `internal-apps`, specifically its neutral compact 
 - Scope all persisted developer-facing state by user and/or GitHub App installation.
 - Make durable webhook-fed projections the normal incremental path and reserve provider reads for bootstrap, repair, explicit detail, targeted artifact reads, and infrequent reconciliation.
 - Verify every trustworthy boundary before creating projections or notifications.
-- Keep the entire MVP locally runnable and testable without configuring or mutating external systems.
+- Keep the entire MVP locally runnable, visible, and testable without configuring or mutating external systems.
 
 **Non-Goals:**
 
 - Teams, invitations, admin screens, general RBAC, billing, or a general SaaS platform.
 - Electron, a native menu-bar client, a Mac-hosted webhook receiver, or a local tunnel.
 - Postgres, Redis, a queue service, multiple runtime services, offline-first data synchronization, or a frontend framework.
-- Uncommitted OpenSpec state, repository cloning, or a local worktree reporter.
+- Repository cloning, background filesystem watching, local file writes, or uploading worktree contents to the hosted service.
 - Live deployment, credential creation, provider webhook/App setup, or production verification in this change.
 - Background Web Push while the PWA is closed; active signed-in clients receive browser notifications in the MVP.
 
@@ -38,6 +38,12 @@ This avoids a framework, bundler, ORM, queue, cache, and second service. A hoste
 GitHub OAuth uses state-bound callbacks to identify the developer. The user access token is used only to fetch identity during the callback and is not persisted. Random opaque sessions are stored as SHA-256 hashes and delivered in secure, HTTP-only, same-site cookies.
 
 GitHub App installation bindings are a many-to-many relation between users and installations. Repository, pull-request, workflow, check, and OpenSpec rows belong to an installation. Every signed-in query joins through the current user's installation bindings. Installation access tokens, minted from the App private key, perform repository API reads so automation does not spend the developer's personal token budget.
+
+### Local development reuses the real dashboard with deterministic projections
+
+`bun run dev` enables an explicit local demo mode. Startup idempotently inserts one distinctive fictional developer, installation binding, and representative rows into the existing projection tables. The centralized authenticated-request helper resolves that developer without a cookie only in this mode, so snapshots, SSE, scoping, and browser rendering exercise the normal application paths.
+
+The demo listener binds to `127.0.0.1`, and configuration rejects demo mode whenever the environment declares production. No fake OAuth provider, alternate dashboard route, new schema, or dependency is introduced. Real provider integration remains available by running the normal start command with GitHub credentials.
 
 ### A SQLite inbox is the queue
 
@@ -59,7 +65,21 @@ GitHub GETs are performed serially. Stable request keys retain ETags; authentica
 
 ### OpenSpec is parsed, not reimplemented
 
-Push payload file lists select changed committed `openspec/changes/*/tasks.md` paths. The worker fetches only those files using an installation token, counts standard Markdown task checkboxes, and stores completed/total progress plus the source commit. Deletion removes the projection. A transition to all-complete can notify the bound developer. No workflow rules or duplicate task engine are introduced.
+Push payload file lists select changed committed `openspec/changes/*/tasks.md` paths. The worker fetches only those files using an installation token, counts standard Markdown task checkboxes, and stores completed/total progress, the source commit and branch ref, and the first heading group containing an unchecked task with every task in that group. Pull-request projections retain their head commit and branch. The dashboard attaches an OpenSpec only when the installation and repository match plus either the head/source commit matches exactly or one unique branch match exists; ambiguous or orphaned state is not guessed. Deletion removes the projection. A transition to all-complete can notify the bound developer. No workflow rules or duplicate task engine are introduced.
+
+Hosted snapshots construct an HTTPS GitHub blob URL from the installation-bound repository name, source commit, and validated OpenSpec change name. The browser can also request read-only access to a checkout with the native directory picker, read only `.git/HEAD` plus `openspec/changes/*/tasks.md`, parse those artifacts locally with the same task rules, and attach them by branch or detached head SHA. A linked-worktree pointer or unavailable head remains unlinked rather than causing access outside the granted checkout. The directory handle may be retained in IndexedDB, but renewed permission always requires a user gesture. Local paths and file contents are never sent to the service.
+
+### The dashboard emphasizes exceptions and recent evidence
+
+Pull-request cards are limited to open pull requests authored by the signed-in developer that are drafts, have a failed check or Actions workflow, requested changes, conflicting/unmergeable state, or a linked incomplete OpenSpec. Each card links its title and PR number to the persisted GitHub URL, shows draft/ready, Actions, check, review, and mergeability evidence, and nests the linked OpenSpec's progress, full current unfinished group as disabled source-state checkboxes, and source action. Missing evidence remains unknown rather than green. OpenSpec is not a peer dashboard section.
+
+Deployment cards include verified, pending, and error projections updated during the last 48 hours. Shape-valid Railway hints create a pending row before verification; successful verification replaces it with authoritative status, while an unavailable or non-matching verification retains pending/error evidence without emitting a success/failure notification.
+
+### Automated review progress uses configured evidence
+
+GitHub's formal submitted review state remains distinct from an automated reviewer that announces work through pull-request comments. An optional exact bot login plus configurable case-insensitive started and finished markers define the evidence contract. Signed `issue_comment` created or edited events for pull requests update `in_progress` or `complete` only when the comment author matches that login; the finished marker wins when both markers are present. Unmatched actors, ordinary issue comments, deleted comments, and unconfigured installations do not alter state.
+
+This deliberately avoids hardcoding Claude prose or treating arbitrary comments as workflow state. The GitHub App needs read-only Issues permission and the `issue_comment` subscription when this feature is configured. Bootstrap cannot reconstruct the transient state without additional provider reads, so it remains unknown until matching webhook evidence arrives.
 
 ### SSE drives active-client updates and notifications
 
@@ -81,6 +101,11 @@ The browser UI uses a restrained slate-neutral palette, compact labels, bordered
 - [Active-client notifications do not wake a closed PWA] → State this MVP limit clearly; add standards-based Web Push only when closed-app delivery is required.
 - [Repository contents reads consume GitHub quota] → Fetch only changed committed OpenSpec task files and retain conditional request metadata.
 - [SQLite rows could cross users if a query omits scope] → Centralize dashboard reads through installation-binding joins and test negative cross-user cases.
+- [A demo authentication bypass could escape local development] → Make the flag explicit, reject it under production configuration, bind the demo listener to loopback, and test both guards.
+- [Provider or artifact URLs could become scriptable browser input] → Construct OpenSpec URLs from validated path components and allow only persisted GitHub HTTPS pull-request URLs before rendering anchors.
+- [Native directory picking is unavailable in some browsers] → Feature-detect it, keep committed GitHub projections usable, and explain the limitation instead of adding a native helper or upload path.
+- [A 48-hour deployment view can omit older unresolved failures] → Treat it as a deliberate recent-operations window and add configurable history only after users need it.
+- [Bot comment wording can change] → Keep the exact actor and both markers configurable, show unknown when no matching evidence exists, and never infer state from an untrusted author or a broad regex.
 
 ## Migration Plan
 

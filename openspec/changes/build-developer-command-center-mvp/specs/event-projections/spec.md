@@ -22,6 +22,21 @@ The system SHALL update affected local pull-request, review, check, workflow, in
 - **WHEN** a supported pull-request webhook changes a tracked pull request
 - **THEN** the installation-scoped projection is inserted, updated, or removed without listing all pull requests from GitHub
 
+### Requirement: Configurable automated review evidence
+The system SHALL optionally project automated review progress from signed pull-request comment webhooks using an exact configured bot login and configurable started and finished markers, independently of the formal GitHub review decision.
+
+#### Scenario: Configured reviewer starts work
+- **WHEN** a created or edited pull-request comment is authored by the configured bot and contains the configured started marker
+- **THEN** the pull request records the automated review as in progress without changing its formal review state
+
+#### Scenario: Configured reviewer finishes work
+- **WHEN** a created or edited pull-request comment is authored by the configured bot and contains the configured finished marker
+- **THEN** the pull request records the automated review as complete, with completion taking precedence if both markers are present
+
+#### Scenario: Comment evidence is not authoritative
+- **WHEN** the actor does not match, the comment is not on a pull request, or the signal configuration is incomplete
+- **THEN** the automated review projection remains unchanged
+
 ### Requirement: Verified Railway projections
 The system MUST treat Railway webhook payloads as untrusted hints, SHALL validate their minimum shape, and SHALL reconcile the referenced deployment through the Railway Public API before persisting an authoritative status or emitting a transition notification.
 
@@ -31,7 +46,7 @@ The system MUST treat Railway webhook payloads as untrusted hints, SHALL validat
 
 #### Scenario: Railway hint cannot be verified
 - **WHEN** the provider API does not return the referenced deployment or is unavailable
-- **THEN** the system retains a pending/error verification state and emits no success or failure notification
+- **THEN** the system retains a deployment projection with pending/error verification state for dashboard evidence and emits no success or failure notification
 
 ### Requirement: Recoverable inbox processing
 The system SHALL retry pending accepted deliveries after process startup and SHALL clear raw payload bodies after successful processing while retaining delivery identity and outcome.

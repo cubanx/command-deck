@@ -24,3 +24,14 @@ The system MUST filter every developer-facing read and live stream by the authen
 #### Scenario: Two developers have different installations
 - **WHEN** one developer requests the dashboard or event stream
 - **THEN** no rows or notifications belonging only to the other developer are returned
+
+### Requirement: Safe credential-free local demo
+The system SHALL make the standard development command serve deterministic fixture projections as one fictional developer without provider credentials, cookies, or a separate dashboard implementation, and MUST reject that access mode when production is declared.
+
+#### Scenario: Developer starts the local command center
+- **WHEN** the standard development command starts without GitHub or Railway credentials
+- **THEN** the loopback-only service seeds representative user-scoped projections idempotently and its snapshot and live stream authenticate as the fixture developer
+
+#### Scenario: Local demo is requested in production
+- **WHEN** configuration enables the local demo while declaring a production environment
+- **THEN** startup fails before serving requests
