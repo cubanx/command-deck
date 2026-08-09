@@ -24,9 +24,14 @@ test("installation reconciliation is serial and uses the supplied installation t
   expect(order).toEqual(["token:a", "token:b"]); expect(headers).toEqual(["Bearer token-a", "Bearer token-b"]); expect(results).toHaveLength(2);
 });
 
-test("bootstrap persists PR draft and head evidence", async () => {
+test("bootstrap preserves webhook evidence, removes stale PRs, and requests 100 rows", async () => {
   const db = openDatabase();
   db.query("INSERT INTO installations (id) VALUES ('i')").run();
-  await bootstrapInstallation(db, "i", "token", async (url) => new Response(String(url).includes("pulls?") ? JSON.stringify([{ number: 1, title: "Prepare Defiant", html_url: "https://github.com/ds9/ops/pull/1", user: { login: "sisko" }, draft: true, head: { ref: "ops/defiant", sha: "b".repeat(40) } }]) : JSON.stringify({ repositories: [{ id: 2, full_name: "ds9/ops" }] })));
-  expect(db.query("SELECT draft,head_ref,head_sha FROM pull_requests").get()).toMatchObject({ draft: 1, head_ref: "ops/defiant", head_sha: "b".repeat(40) });
+  db.query("INSERT INTO repositories (installation_id,id,full_name) VALUES ('i','2','ds9/ops')").run();
+  db.query("INSERT INTO pull_requests (installation_id,repository_id,number,title,author_login,state,mergeable,review_state,checks_state,workflow_state,bot_review_actor,bot_review_state) VALUES ('i','2',1,'Old','sisko','open','conflicting','changes_requested','failure','failure','claude[bot]','complete'),('i','2',2,'Stale','sisko','open','clean','approved','success','success',NULL,NULL)").run();
+  let pullsUrl = "";
+  await bootstrapInstallation(db, "i", "token", async (url) => { if (String(url).includes("pulls?")) { pullsUrl = String(url); return new Response(JSON.stringify([{ number: 1, title: "Prepare Defiant", html_url: "https://github.com/ds9/ops/pull/1", user: { login: "sisko" }, draft: true, head: { ref: "ops/defiant", sha: "b".repeat(40) } }])); } return new Response(JSON.stringify({ repositories: [{ id: 2, full_name: "ds9/ops" }] })); });
+  expect(pullsUrl).toContain("per_page=100");
+  expect(db.query("SELECT draft,head_ref,head_sha,mergeable,review_state,checks_state,workflow_state,bot_review_actor,bot_review_state FROM pull_requests WHERE number=1").get()).toMatchObject({ draft: 1, head_ref: "ops/defiant", head_sha: "b".repeat(40), mergeable: "conflicting", review_state: "changes_requested", checks_state: "failure", workflow_state: "failure", bot_review_actor: "claude[bot]", bot_review_state: "complete" });
+  expect(db.query("SELECT count(*) AS count FROM pull_requests WHERE number=2").get()!.count).toBe(0);
 });

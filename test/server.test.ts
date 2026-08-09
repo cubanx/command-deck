@@ -41,3 +41,19 @@ test("local demo serves the seeded snapshot and stream without a session", async
   expect(events.status).toBe(200);
   await events.body?.cancel();
 });
+
+test("startup drain recovers pending OpenSpec push deliveries", async () => {
+  const db = openDatabase();
+  const { privateKey } = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+  const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64").match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----`;
+  db.query("INSERT INTO installations (id) VALUES ('9')").run();
+  db.query("INSERT INTO inbox_deliveries (provider,delivery_id,payload,event_name) VALUES ('github','push',?,'push')").run(JSON.stringify({ installation: { id: 9 }, repository: { id: 2 }, ref: "refs/heads/ops/defiant", after: "a".repeat(40), commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }] }));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => String(input).includes("access_tokens") ? Response.json({ token: "installation-token" }) : new Response("- [ ] Launch Defiant");
+  try {
+    const app = createApp(db, { ...config, githubAppId: "1", githubAppPrivateKey: pem });
+    await app.drain();
+    expect(db.query("SELECT change_name FROM openspec_progress").get()!.change_name).toBe("defiant");
+    expect(db.query("SELECT status,payload FROM inbox_deliveries WHERE delivery_id='push'").get()).toMatchObject({ status: "done", payload: null });
+  } finally { globalThis.fetch = originalFetch; }
+});
