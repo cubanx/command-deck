@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { openDatabase } from "../src/db";
-import { LOCAL_DEMO_USER, bindInstallation, bindRailwayConnection, createOAuthState, createSession, dashboardForSession, dashboardForUser, consumeOAuthState, seedLocalDemo, sessionUser } from "../src/access";
+import { LOCAL_DEMO_USER, bindInstallation, bindRailwayConnection, createOAuthState, createSession, dashboardForSession, dashboardForUser, consumeOAuthState, seedLocalDemo, sessionUser, syncConfiguredRailwayConnections } from "../src/access";
 
 test("OAuth state is one-time and expires", () => {
   const db = openDatabase();
@@ -40,6 +40,20 @@ test("local demo projections are deterministic and idempotent", () => {
   expect(dashboard.pullRequests[0]?.url).toBe("https://github.com/cubanx/dev-command-center/pull/1");
   expect(dashboard.pullRequests[0]?.draft).toBe(1);
   expect(dashboard.pullRequests[0]?.open_spec).not.toBeNull();
+});
+
+test("configured Railway mappings replace hosted state and ignore unknown users", () => {
+  const db = openDatabase();
+  db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1701','sisko'),('u2','1702','kira')").run();
+  bindRailwayConnection(db, "u1", "stale-project", "stale-service", "stale-environment");
+  bindRailwayConnection(db, "u2", "cardassia", "central-command", "prime");
+  syncConfiguredRailwayConnections(db, [
+    { githubUserId: "1701", projectId: "bajor-orbital", serviceId: "promenade", environmentId: "alpha-quadrant" },
+    { githubUserId: "9999", projectId: "gamma-quadrant", serviceId: "dominion", environmentId: "founders" }
+  ]);
+  expect(db.query("SELECT user_id,project_id,service_id,environment_id FROM railway_connections").all()).toEqual([
+    { user_id: "u1", project_id: "bajor-orbital", service_id: "promenade", environment_id: "alpha-quadrant" }
+  ]);
 });
 
 test("dashboard correlates OpenSpec into PR status and retains every recent deployment state", () => {

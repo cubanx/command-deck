@@ -25,6 +25,25 @@ The system MUST filter every developer-facing read and live stream by the authen
 - **WHEN** one developer requests the dashboard or event stream
 - **THEN** no rows or notifications belonging only to the other developer are returned
 
+### Requirement: Operator-controlled Railway binding
+The system MUST NOT let browser clients create Railway project, service, or environment mappings and SHALL treat a strictly validated server-side configuration keyed by immutable GitHub numeric user ID as the complete hosted mapping source for the MVP.
+
+#### Scenario: Signed-in developer submits Railway identifiers
+- **WHEN** a signed-in developer posts syntactically valid Railway resource identifiers
+- **THEN** the service exposes no self-service binding route and persists no mapping
+
+#### Scenario: Configured developer exists
+- **WHEN** startup or successful GitHub login finds a configured immutable GitHub user ID already persisted as a developer
+- **THEN** the service atomically replaces hosted mappings with exactly that operator-controlled configuration
+
+#### Scenario: Configured developer has not signed in
+- **WHEN** a configured immutable GitHub user ID has no persisted developer
+- **THEN** the service creates no mapping until that GitHub identity signs in
+
+#### Scenario: Local demo seeds Railway evidence
+- **WHEN** the loopback-only local demo starts
+- **THEN** it MAY create its deterministic fixture mapping without enabling client-created or hosted configured mappings
+
 ### Requirement: Safe credential-free local demo
 The system SHALL make the standard development command serve deterministic fixture projections as one fictional developer without provider credentials, cookies, or a separate dashboard implementation, and MUST reject that access mode when production is declared.
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { openDatabase } from "../src/db";
-import { LOCAL_DEMO_USER } from "../src/access";
+import { LOCAL_DEMO_USER, createOAuthState } from "../src/access";
 import { createApp } from "../src/server";
 
 const config = { port: 0, hostname: undefined, databasePath: ":memory:", localDemo: false };
@@ -40,6 +40,37 @@ test("local demo serves the seeded snapshot and stream without a session", async
   const events = await app.fetch(new Request("http://local/events"));
   expect(events.status).toBe(200);
   await events.body?.cancel();
+});
+
+test("browser clients cannot create Railway resource mappings", async () => {
+  const db = openDatabase();
+  const app = createApp(db, { ...config, localDemo: true, hostname: "127.0.0.1" });
+  const before = db.query("SELECT COUNT(*) AS count FROM railway_connections").get()!.count;
+  const response = await app.fetch(new Request("http://local/api/railway/connections", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ projectId: "deep-space-nine", serviceId: "defiant", environmentId: "bajoran-sector" })
+  }));
+  expect(response.status).toBe(404);
+  expect(db.query("SELECT COUNT(*) AS count FROM railway_connections").get()!.count).toBe(before);
+});
+
+test("hosted Railway configuration syncs existing users and the GitHub callback", async () => {
+  const db = openDatabase();
+  db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1701','sisko')").run();
+  const railwayConnections = [
+    { githubUserId: "1701", projectId: "bajor-orbital", serviceId: "promenade", environmentId: "alpha-quadrant" },
+    { githubUserId: "1702", projectId: "deep-space-nine", serviceId: "defiant", environmentId: "bajoran-sector" }
+  ];
+  const app = createApp(db, { ...config, githubClientId: "client", githubClientSecret: "secret", railwayConnections });
+  expect(db.query("SELECT project_id FROM railway_connections").all()).toEqual([{ project_id: "bajor-orbital" }]);
+  const state = createOAuthState(db);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => String(input).includes("access_token") ? Response.json({ access_token: "token" }) : Response.json({ id: 1702, login: "kira" });
+  try {
+    expect((await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}`))).status).toBe(302);
+    expect(db.query("SELECT project_id FROM railway_connections ORDER BY project_id").all()).toEqual([{ project_id: "bajor-orbital" }, { project_id: "deep-space-nine" }]);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test("startup drain recovers pending OpenSpec push deliveries", async () => {

@@ -57,6 +57,8 @@ Supported GitHub pull request, review, check suite/run, workflow run, installati
 
 Railway webhook URLs contain an environment-supplied unguessable route token, but this is only an intake filter because Railway does not document payload signing. A strict shape validator extracts project, service, environment, and deployment IDs. The worker then queries recent deployments through Railway's read-only Public API using the supplied project/service IDs and accepts the status only when the authoritative response contains the hinted deployment. Until then the row remains `pending_verification`; no success/failure notification is emitted.
 
+The shared Railway API token verifies deployment evidence, not a signed-in developer's authorization to a Railway project. The MVP therefore exposes no browser route for creating Railway project mappings. Hosted mappings come only from a strictly validated environment JSON array keyed by immutable GitHub numeric user ID; startup and successful GitHub login synchronize that configuration as the complete hosted source of truth, while unknown users receive no rows. The deterministic loopback demo keeps its fixture mapping and rejects hosted mappings. Railway OAuth remains the later multi-user upgrade.
+
 ### Provider reads are narrow, serial, conditional, and rate-limit aware
 
 An explicit bootstrap imports installations' repositories and open pull requests. Repair can target one installation or repository. Explicit detail reads are user initiated. A configurable reconciliation timer defaults to six hours and is disabled when provider credentials are absent.
@@ -101,6 +103,7 @@ The browser UI uses a restrained slate-neutral palette, compact labels, bordered
 - [Active-client notifications do not wake a closed PWA] → State this MVP limit clearly; add standards-based Web Push only when closed-app delivery is required.
 - [Repository contents reads consume GitHub quota] → Fetch only changed committed OpenSpec task files and retain conditional request metadata.
 - [SQLite rows could cross users if a query omits scope] → Centralize dashboard reads through installation-binding joins and test negative cross-user cases.
+- [A developer could claim arbitrary Railway resource identifiers] → Never accept client-created Railway mappings; permit only operator-controlled mappings keyed by immutable GitHub user ID until Railway OAuth is implemented.
 - [A demo authentication bypass could escape local development] → Make the flag explicit, reject it under production configuration, bind the demo listener to loopback, and test both guards.
 - [Provider or artifact URLs could become scriptable browser input] → Construct OpenSpec URLs from validated path components and allow only persisted GitHub HTTPS pull-request URLs before rendering anchors.
 - [Native directory picking is unavailable in some browsers] → Feature-detect it, keep committed GitHub projections usable, and explain the limitation instead of adding a native helper or upload path.

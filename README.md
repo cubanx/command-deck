@@ -40,6 +40,7 @@ openspec validate build-developer-command-center-mvp --strict
 | `GITHUB_REVIEW_BOT_LOGIN` / `GITHUB_REVIEW_BOT_START_MARKER` / `GITHUB_REVIEW_BOT_DONE_MARKER` | Optional exact bot login and case-insensitive pull-request comment markers used together to project automated review progress. |
 | `RAILWAY_WEBHOOK_TOKEN` | Unguessable Railway webhook URL segment used only as an intake filter. |
 | `RAILWAY_API_TOKEN` | Read-only Railway Public API token used to verify deployment hints. |
+| `RAILWAY_CONNECTIONS_JSON` | Operator-controlled hosted mappings from immutable GitHub numeric user IDs to Railway project, service, and environment IDs. Defaults to `[]` and is rejected in local-demo mode. |
 | `RECONCILE_INTERVAL_MS` | Serial GitHub reconciliation interval; defaults to six hours and cannot be less than one minute. |
 
 Keep values in the environment or a secret manager. Never commit `.env`, App private keys, webhook secrets, or provider tokens.
@@ -63,21 +64,20 @@ After binding an installation, bootstrap its current repositories and open pull 
 
 Railway's webhook documentation does not define payload signing. Configure the target as `/webhooks/railway/<RAILWAY_WEBHOOK_TOKEN>`. Payloads remain untrusted hints even after the route token matches: the service validates identifiers, queries recent deployments through Railway's read-only GraphQL API, and persists or notifies only when the exact project, service, environment, and deployment match.
 
-A signed-in developer binds a personal Railway scope with:
+The shared Railway API token verifies deployment evidence but does not prove that a signed-in developer may access a project. The MVP therefore exposes no browser route for creating Railway mappings. Hosted mappings are operator-controlled:
 
-```js
-await fetch("/api/railway/connections", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    projectId: "project-id",
-    serviceId: "service-id",
-    environmentId: "environment-id"
-  })
-});
+```json
+[
+  {
+    "githubUserId": "362276",
+    "projectId": "project-id",
+    "serviceId": "service-id",
+    "environmentId": "environment-id"
+  }
+]
 ```
 
-This only stores a user-scoped read mapping; it does not configure or mutate Railway.
+Set the single-line JSON as `RAILWAY_CONNECTIONS_JSON`. Startup and successful GitHub login transactionally replace hosted mappings with this configuration. Entries for GitHub IDs that have not signed in create no rows until their first login; removing an entry removes its mapping at the next startup or login. The loopback local demo keeps only its deterministic fixture mapping. Railway OAuth is the upgrade when developers must manage their own connections.
 
 ## Trust and data boundaries
 

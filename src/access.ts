@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { RailwayConnectionConfig } from "./config";
 import type { Db } from "./db";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -54,6 +55,13 @@ export function bindInstallation(db: Db, userId: string, installationId: string)
 }
 export function bindRailwayConnection(db: Db, userId: string, projectId: string, serviceId: string, environmentId: string) {
   db.query("INSERT INTO railway_connections (user_id,project_id,service_id,environment_id) VALUES (?,?,?,?) ON CONFLICT DO NOTHING").run(userId, projectId, serviceId, environmentId);
+}
+export function syncConfiguredRailwayConnections(db: Db, connections: RailwayConnectionConfig[]) {
+  db.transaction(() => {
+    db.query("DELETE FROM railway_connections").run();
+    const insert = db.query("INSERT INTO railway_connections (user_id,project_id,service_id,environment_id) SELECT id,?,?,? FROM users WHERE github_id=?");
+    for (const connection of connections) insert.run(connection.projectId, connection.serviceId, connection.environmentId, connection.githubUserId);
+  })();
 }
 export function dashboardForUser(db: Db, userId: string, now = new Date()) {
   const openSpecs: Array<Record<string, unknown> & { source_url: string | null }> = (db.query("SELECT op.*,r.full_name FROM openspec_progress op JOIN repositories r ON r.installation_id=op.installation_id AND r.id=op.repository_id JOIN user_installations ui ON ui.installation_id=op.installation_id WHERE ui.user_id=? ORDER BY op.updated_at DESC").all(userId) as Array<Record<string, unknown>>).map((item) => ({ ...item, source_url: openSpecUrl(item.full_name, item.source_commit, item.change_name) }));

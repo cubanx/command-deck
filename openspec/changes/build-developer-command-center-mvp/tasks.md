@@ -51,3 +51,16 @@
 - [x] 9.2 Project actor-scoped automated review progress from signed pull-request comment webhooks using configurable markers, without provider polling or free-form regex rules.
 - [x] 9.3 Render automated reviewer identity and in-progress/complete evidence beside the formal review state, and document the read-only Issues permission and `issue_comment` subscription.
 - [x] 9.4 Run type checking, the full Bun test suite, strict OpenSpec validation, and a local dashboard smoke; fix local failures and record the group complete.
+
+## 10. Railway binding trust boundary
+
+- [x] 10.1 Write a failing regression test proving an authenticated browser cannot create a Railway resource mapping.
+- [x] 10.2 Remove the unauthorizable self-service Railway connection route and document provider-authorized binding as deferred while preserving the deterministic local-demo fixture.
+- [x] 10.3 Run type checking, the full Bun test suite, and strict OpenSpec validation; fix local failures and record the group complete.
+
+## 11. Operator-configured Railway mappings
+
+- [x] 11.1 Write failing tests for strict mapping configuration, immutable GitHub-ID ownership, exact replacement, unknown users, and local-demo separation.
+- [x] 11.2 Parse the environment-only mapping configuration and transactionally synchronize it at hosted startup and successful GitHub login without restoring a browser write route.
+- [x] 11.3 Document the configuration shape, source-of-truth behavior, security boundary, and Railway OAuth upgrade path.
+- [x] 11.4 Run type checking, the full Bun test suite, and strict OpenSpec validation; fix local failures and record the group complete.

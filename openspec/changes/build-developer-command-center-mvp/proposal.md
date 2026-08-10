@@ -6,6 +6,7 @@ Developers currently assemble pull-request, check, deploy, and OpenSpec state by
 
 - Add GitHub sign-in and GitHub App installation binding so every persisted view is scoped to a developer and/or installation from the first release.
 - Add durable, idempotent GitHub and Railway webhook ingestion with provider-specific trust handling.
+- Prevent browser clients from creating Railway project mappings; allow only operator-controlled mappings keyed by immutable GitHub user ID plus the deterministic local-demo fixture binding in this MVP.
 - Project open pull requests, reviews, checks, workflows, Railway deployments, and committed OpenSpec task progress into one local SQLite database.
 - Add bootstrap, repair, explicit-detail, and infrequent serial reconciliation paths that use installation tokens, rate-limit backoff, and authenticated conditional requests.
 - Add a compact responsive dashboard, live updates, focused empty/error states, and notifications for useful transitions only.

@@ -24,3 +24,12 @@ test("automated review signals are configured together", () => {
     GITHUB_REVIEW_BOT_DONE_MARKER: "review complete"
   }).reviewBot).toEqual({ login: "claude[bot]", startMarker: "started review", doneMarker: "review complete" });
 });
+
+test("Railway mappings are strict operator configuration keyed by GitHub ID", () => {
+  const mapping = { githubUserId: "1701", projectId: "bajor-orbital", serviceId: "promenade", environmentId: "alpha-quadrant" };
+  expect(loadConfig({ RAILWAY_CONNECTIONS_JSON: JSON.stringify([mapping]) }).railwayConnections).toEqual([mapping]);
+  for (const value of ["{}", "not-json", JSON.stringify([{ ...mapping, githubUserId: "sisko" }]), JSON.stringify([{ ...mapping, extra: "wormhole" }]), JSON.stringify([mapping, mapping])]) {
+    expect(() => loadConfig({ RAILWAY_CONNECTIONS_JSON: value })).toThrow("RAILWAY_CONNECTIONS_JSON");
+  }
+  expect(() => loadConfig({ DCC_LOCAL_DEMO: "1", RAILWAY_CONNECTIONS_JSON: JSON.stringify([mapping]) })).toThrow("local demo");
+});
