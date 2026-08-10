@@ -1,0 +1,13 @@
+{
+  "name": "developer-command-center",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": { "@types/bun": "latest", "typescript": "latest" }
+}
