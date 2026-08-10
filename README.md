@@ -33,6 +33,9 @@ openspec validate build-developer-command-center-mvp --strict
 | --- | --- |
 | `PORT` | HTTP port; defaults to `3000`. |
 | `DATABASE_PATH` | SQLite path; defaults to `./data/command-center.sqlite`. |
+| `NODE_ENV` | Set to `production` only for the hosted service; it enables fail-closed production validation. |
+| `PUBLIC_URL` | Production HTTPS origin with no path, query, fragment, or credentials; must equal `https://${RAILWAY_PUBLIC_DOMAIN}`. |
+| `RAILWAY_PUBLIC_DOMAIN` / `RAILWAY_VOLUME_MOUNT_PATH` | Railway-provided production cross-checks. Mount the single volume at `/data` and set `DATABASE_PATH=/data/command-center.sqlite`. |
 | `DCC_LOCAL_DEMO` | Credential-free fixture access. `bun run dev` sets it to `1`; hosted or production environments reject it. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub App OAuth identity flow. The resulting user token is used only during the callback and is never persisted. |
 | `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_PRIVATE_KEY` | Installation flow, App JWTs, and installation-token repository reads. Encode private-key newlines as `\\n` when necessary. |
@@ -45,14 +48,26 @@ openspec validate build-developer-command-center-mvp --strict
 
 Keep values in the environment or a secret manager. Never commit `.env`, App private keys, webhook secrets, or provider tokens.
 
+## Production rollout contract
+
+Repository configuration only is covered here; creating a Railway service, volume, domain, GitHub App, secrets, or deployment requires fresh authorization.
+
+1. Run exactly one Railway service and replica from this Dockerfile. Attach one persistent volume at `/data`; set `NODE_ENV=production`, `DATABASE_PATH=/data/command-center.sqlite`, and set `PUBLIC_URL` to the generated HTTPS Railway domain. SQLite and WAL sidecars must stay on that volume.
+2. Set the required server variables by name only: `PUBLIC_URL`, `DATABASE_PATH`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `RAILWAY_API_TOKEN`, and `RAILWAY_CONNECTIONS_JSON`. Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`. Never place resolved values in evidence.
+3. Railway activates only after `/ready` returns `200`; `/health` is liveness only. A volume-backed SQLite service is intentionally single-replica: redeploys briefly interrupt service, but retain the volume.
+4. Roll back by selecting the last known-good deployment while retaining the attached volume. If `/ready` does not recover, stop and investigate the mounted database—never recreate the volume as a rollback shortcut.
+
+Record redacted evidence only: timestamp, reviewed Git SHA, Railway deployment ID, variable-name checklist, `/health` and `/ready` statuses, OAuth result, GitHub delivery IDs/outcomes, reconciliation result, restart durability, and rollback outcome.
+
 ## GitHub App contract
 
-Configure the App to request user authorization during installation and use:
+Configure a private personal `cubanx` App, install it only on selected repositories, and use:
 
-- callback URL: `/auth/github/callback`
-- webhook URL: `/webhooks/github`
-- repository permissions: metadata read, pull requests read, checks read, actions read, contents read, and—when automated review tracking is configured—issues read
-- events: installation, pull request, pull request review, check run, check suite, workflow run, push, and—when automated review tracking is configured—issue comment
+- homepage: `${PUBLIC_URL}`
+- callback URL: `${PUBLIC_URL}/auth/github/callback`
+- webhook URL: `${PUBLIC_URL}/webhooks/github`, enabled with SSL verification
+- repository permissions: metadata read (implicit), pull requests read, checks read, actions read, contents read; issues read only when review-bot tracking is configured
+- events: installation, pull request, pull request review, check run, check suite, workflow run, and push; issue comment only when review-bot tracking is configured
 
 The install callback does not trust its `installation_id`. It confirms the installation through `/user/installations` with the ephemeral user token before binding it to the signed-in developer. Repository automation then uses installation access tokens, not user access tokens.
 
@@ -62,7 +77,7 @@ After binding an installation, bootstrap its current repositories and open pull 
 
 ## Railway contract
 
-Railway's webhook documentation does not define payload signing. Configure the target as `/webhooks/railway/<RAILWAY_WEBHOOK_TOKEN>`. Payloads remain untrusted hints even after the route token matches: the service validates identifiers, queries recent deployments through Railway's read-only GraphQL API, and persists or notifies only when the exact project, service, environment, and deployment match.
+Railway's webhook documentation does not define payload signing. Configure the target as `${PUBLIC_URL}/webhooks/railway/<RAILWAY_WEBHOOK_TOKEN>`. Keep `RAILWAY_CONNECTIONS_JSON` and every route token server-side. Payloads remain untrusted hints even after the route token matches: the service validates identifiers, queries recent deployments through Railway's read-only GraphQL API, and persists or notifies only when the exact project, service, environment, and deployment match.
 
 The shared Railway API token verifies deployment evidence but does not prove that a signed-in developer may access a project. The MVP therefore exposes no browser route for creating Railway mappings. Hosted mappings are operator-controlled:
 

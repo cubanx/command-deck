@@ -88,3 +88,15 @@ test("startup drain recovers pending OpenSpec push deliveries", async () => {
     expect(db.query("SELECT status,payload FROM inbox_deliveries WHERE delivery_id='push'").get()).toMatchObject({ status: "done", payload: null });
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("production trusts only the matching Railway forwarded origin and keeps liveness separate from readiness", async () => {
+  const db = openDatabase();
+  const app = createApp(db, { ...config, production: true, publicUrl: "https://command-center.up.railway.app", oauthCallbackUrl: "https://command-center.up.railway.app/auth/github/callback", secureCookies: true, githubClientId: "client" });
+  expect((await app.fetch(new Request("http://local/auth/github", { headers: { "x-forwarded-proto": "http", "x-forwarded-host": "command-center.up.railway.app" } }))).status).toBe(400);
+  const response = await app.fetch(new Request("http://local/auth/github", { headers: { "x-forwarded-proto": "https", "x-forwarded-host": "command-center.up.railway.app" } }));
+  expect(response.status).toBe(302);
+  expect(response.headers.get("location")).toContain("redirect_uri=https%3A%2F%2Fcommand-center.up.railway.app%2Fauth%2Fgithub%2Fcallback");
+  expect((await app.fetch(new Request("http://local/health"))).status).toBe(200);
+  db.close();
+  expect((await app.fetch(new Request("http://local/ready"))).status).toBe(503);
+});
