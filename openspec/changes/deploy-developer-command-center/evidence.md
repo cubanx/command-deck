@@ -27,6 +27,15 @@
 - Webhook signing secret was rotated after a rejected-name validation response exposed the superseded value; only the replacement is retained
 - Secret values: not recorded
 
+## GitHub App deployment permission update
+
+- Timestamp: 2026-08-11T12:53Z
+- App: `Command Deck.ai`; owner `cubanx`; slug `command-deck-ai`
+- Repository permission added: Deployments read-only
+- Events added: Deployment, Deployment status
+- Provider verification: saved settings reopened and showed the read-only permission and both checked events
+- Secret values: not accessed or recorded
+
 ## GitHub-only deployment-source implementation
 
 - Timestamp: 2026-08-11

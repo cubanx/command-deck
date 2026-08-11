@@ -36,7 +36,7 @@
 ## 6. Authorized Personal GitHub App Setup
 
 - [x] 6.1 After fresh explicit authorization, create the private personal `cubanx` GitHub App with the documented homepage, callback, webhook URL, SSL verification, initial permissions, and events.
-- [ ] 6.2 After fresh explicit authorization, add Deployments read plus Deployment and Deployment status events and record the reviewed App configuration without secrets.
+- [x] 6.2 After fresh explicit authorization, add Deployments read plus Deployment and Deployment status events and record the reviewed App configuration without secrets.
 - [ ] 6.3 Install the App only on the selected repositories and record the App and installation identifiers plus the permission/event review without secrets.
 
 ## 7. Authorized Deployment and Bounded Production Verification
