@@ -30,8 +30,8 @@
 ## 5. Authorized Railway Hosting and Secret Setup
 
 - [x] 5.1 After fresh explicit authorization, create or select the one Railway service from current `main`, attach one volume at `/data`, generate the public domain, set one replica, and record redacted resource identifiers.
-- [ ] 5.2 After fresh explicit authorization, verify approved 1Password credential metadata and project only the required GitHub and hosting variables into Railway without exposing resolved values.
-- [ ] 5.3 Configure Railway build/start behavior, `/ready` healthcheck, bounded timeout, and deployment drain/restart policy; record a redacted settings export or screenshots.
+- [x] 5.2 After fresh explicit authorization, verify approved 1Password credential metadata and project only the required GitHub and hosting variables into Railway without exposing resolved values.
+- [x] 5.3 Configure Railway build/start behavior, `/ready` healthcheck, bounded timeout, and deployment drain/restart policy; record a redacted settings export or screenshots.
 
 ## 6. Authorized Personal GitHub App Setup
 

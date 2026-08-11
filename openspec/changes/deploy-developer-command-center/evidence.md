@@ -11,12 +11,25 @@
 - Deployment: not performed
 - Secrets: not recorded
 
+## Railway production variables and runtime settings
+
+- Timestamp: 2026-08-11T13:13Z
+- Credential governance verified: each source item has the sole `operational-credential` tag and complete owner, scope, destinations, rotation-authority, and purpose metadata
+- Canonical secret sources: OAuth client secret `zoev…uaqi`, App private key `m5h…sh2m`, webhook signing secret `j53s…rnnu` in the Automation vault
+- Operator variables present: `NODE_ENV`, `PUBLIC_URL`, `DATABASE_PATH`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_CLIENT_ID`
+- Directly projected secret variables present: `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`
+- Railway-provided hosting variables verified by name, including `RAILWAY_PUBLIC_DOMAIN` and `RAILWAY_VOLUME_MOUNT_PATH`
+- Runtime readback: Dockerfile builder at `Dockerfile`; start command `bun run src/server.ts`; healthcheck `/ready`; timeout 60 seconds; one SFO replica
+- Restart readback: provider-default `ON_FAILURE` policy (omitted from the normalized export) with 3 maximum retries; application SIGTERM handling owns drain behavior
+- Deployment list before and after configuration: empty; deploy triggers were suppressed for variable writes and the configuration mutation returned no deployment ID
+- Secret values: streamed directly from immutable 1Password references; not displayed or recorded
+
 ## GitHub App configuration
 
 - Timestamp: 2026-08-11T12:21Z
 - Owner: `cubanx` (personal account)
 - App: `Command Deck.ai`; App ID `4558…8048`; slug `command-deck-ai`
-- Installability: only on the `cubanx` account; repository selection deferred to task 5.2
+- Installability: only on the `cubanx` account; repository selection deferred to task 6.3
 - Homepage: `https://developer-command-center-production.up.railway.app`
 - OAuth callback: `https://developer-command-center-production.up.railway.app/auth/github/callback`
 - Webhook: `https://developer-command-center-production.up.railway.app/webhooks/github`; active; SSL verification enabled
