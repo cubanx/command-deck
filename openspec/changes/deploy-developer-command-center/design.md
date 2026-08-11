@@ -16,7 +16,7 @@ Railway currently requires a Dockerfile for Bun detection, injects `PORT`, provi
 - Keep Railway credentials, runtime API reads, connection mappings, and webhook intake out of the application.
 - Fail startup on missing, malformed, placeholder, or mutually inconsistent production configuration.
 - Gate activation on database readiness and retain a cheap liveness endpoint.
-- Define reversible rollout steps and exact completion evidence without performing external mutations.
+- Define the handoff to a reversible, evidence-gated operational rollout after this PR merges.
 
 **Non-Goals:**
 
@@ -67,7 +67,7 @@ Railway remains hosting-only. The runtime has no Railway API token, connection m
 
 ### Operational gates and evidence
 
-Repository work may complete before deployment, but production tasks stay unchecked. Activation requires `/health` and `/ready` returning `200`; `/ready` verifies the persistent database can be queried. Verification is bounded to one test installation, one selected repository, one synthetic or naturally generated event per configured event family, one OAuth login, one restart durability check, and one rollback rehearsal/record. Evidence records timestamp, deployed Git SHA, Railway deployment ID, redacted configuration-name checklist, relevant GitHub delivery IDs, HTTP statuses, and projection outcome—never secrets or payloads.
+This PR-owned change ends before deployment. `operate-developer-command-center-production` is blocked until PR #2 merges and its exact merge SHA is verified on current `main`; that operational change owns activation, verification, restart, rollback, and final evidence. Activation requires `/health` and `/ready` returning `200`; `/ready` verifies the persistent database can be queried. Evidence never records secrets or payloads.
 
 ## Risks / Trade-offs
 
@@ -81,12 +81,10 @@ Repository work may complete before deployment, but production tasks stay unchec
 
 ## Migration Plan
 
-1. Merge repository configuration only after tests and strict OpenSpec validation pass.
-2. With explicit authorization, create/select one Railway service from current `main`, attach a `/data` volume, generate its public domain, and configure healthcheck `/ready`.
-3. With explicit authorization, create/update the personal GitHub App using the exact URLs, permissions, and events above; install it only on selected repositories.
-4. Inject server variables from approved 1Password-backed sources without displaying values. Deploy the exact reviewed Git SHA.
-5. Capture bounded verification evidence. Keep production tasks unchecked until each artifact exists.
-6. Roll back by selecting the last known-good Railway deployment while retaining the volume. If readiness does not recover, stop traffic and diagnose the mounted database; do not delete or recreate the volume.
+1. Complete repository validation and authorized predeployment Railway, 1Password, and GitHub App setup.
+2. Merge PR #2.
+3. In `operate-developer-command-center-production`, verify the exact merge SHA on current `main` before any production mutation.
+4. Deploy and verify that SHA, then exercise restart and rollback while retaining the volume.
 
 ## Open Questions
 

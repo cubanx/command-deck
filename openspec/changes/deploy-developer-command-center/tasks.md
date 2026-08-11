@@ -37,13 +37,4 @@
 
 - [x] 6.1 After fresh explicit authorization, create the private personal `cubanx` GitHub App with the documented homepage, callback, webhook URL, SSL verification, initial permissions, and events.
 - [x] 6.2 After fresh explicit authorization, add Deployments read plus Deployment and Deployment status events and record the reviewed App configuration without secrets.
-- [ ] 6.3 Install the App only on the selected repositories and record the App and installation identifiers plus the permission/event review without secrets.
-
-## 7. Authorized Deployment and Bounded Production Verification
-
-- [ ] 7.1 After fresh explicit authorization, deploy the exact reviewed Git SHA and record its Railway deployment ID; require `/health` and `/ready` to return `200` before continuing.
-- [ ] 7.2 Verify one OAuth login and secure session, one selected-repository bootstrap, and one accepted GitHub delivery per configured event family; record delivery IDs and outcomes only.
-- [ ] 7.3 Verify signed GitHub Deployment and Deployment status deliveries update the installation-scoped dashboard and emit only deduplicated terminal transitions.
-- [ ] 7.4 Restart the service once and verify the delivery inbox and projections survive on the attached volume.
-- [ ] 7.5 Rehearse or execute rollback to the last known-good deployment without replacing the volume, restore the intended deployment, and record readiness outcomes.
-- [ ] 7.6 Complete the redacted production evidence record with timestamp, exact Git SHA, deployment ID, configuration-name checklist, endpoint statuses, GitHub delivery IDs, OAuth/projection/durability results, and rollback result.
+- [x] 6.3 Install the App only on the selected repositories and record the App and installation identifiers plus the permission/event review without secrets.

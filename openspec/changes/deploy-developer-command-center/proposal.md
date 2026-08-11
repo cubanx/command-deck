@@ -8,8 +8,8 @@ The merged MVP has no reproducible production deployment contract, so its SQLite
 - Make the production origin, database path, proxy behavior, and required secrets explicit and fail closed when inconsistent.
 - Document the personal GitHub App's least-privilege permissions, events, OAuth callback, webhook URL, and installation-token contract.
 - Project deployment state from signed GitHub deployment webhooks and bounded installation-token bootstrap/repair reads; Railway remains hosting-only.
-- Document health/readiness gates, rollback, and bounded production verification.
-- Separate repository implementation tasks from external mutations and leave production tasks incomplete until their exact evidence exists.
+- Document health/readiness gates, rollback, and bounded production verification for the follow-up operational change.
+- End this PR-owned change at deploy-ready code and authorized predeployment setup; hand actual deployment and production verification to `operate-developer-command-center-production`.
 
 ## Capabilities
 

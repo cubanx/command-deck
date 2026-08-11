@@ -29,7 +29,7 @@
 - Timestamp: 2026-08-11T12:21Z
 - Owner: `cubanx` (personal account)
 - App: `Command Deck.ai`; App ID `4558…8048`; slug `command-deck-ai`
-- Installability: only on the `cubanx` account; repository selection deferred to task 6.3
+- Installability: only on the `cubanx` account; installed only on `cubanx/dev-command-center`
 - Homepage: `https://developer-command-center-production.up.railway.app`
 - OAuth callback: `https://developer-command-center-production.up.railway.app/auth/github/callback`
 - Webhook: `https://developer-command-center-production.up.railway.app/webhooks/github`; active; SSL verification enabled
@@ -47,6 +47,17 @@
 - Repository permission added: Deployments read-only
 - Events added: Deployment, Deployment status
 - Provider verification: saved settings reopened and showed the read-only permission and both checked events
+- Secret values: not accessed or recorded
+
+## GitHub App installation
+
+- Timestamp: 2026-08-11T13:20Z
+- App: `Command Deck.ai`; App ID `4558…8048`; installation ID `1529…2571`
+- Account: `cubanx`
+- Repository access: only selected repositories; exactly `cubanx/dev-command-center`
+- Permission review: read-only Actions, Checks, Contents, Deployments, Metadata, and Pull requests
+- Event review: Installation, Check run, Check suite, Deployment, Deployment status, Pull request, Pull request review, Push, and Workflow run
+- Provider verification: installation success alert displayed and saved installation page showed one selected repository
 - Secret values: not accessed or recorded
 
 ## GitHub-only deployment-source implementation
