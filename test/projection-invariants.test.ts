@@ -18,8 +18,8 @@ test("GitHub projections close PRs and dedupe review, check, and mergeability tr
 test("push projects only changed committed task artifacts and completion once", async () => {
   const db = openDatabase(); db.query("INSERT INTO users (id,github_id,login) VALUES ('u','1','odo')").run(); bindInstallation(db, "u", "1");
   const push = (sha: string, content: string) => JSON.stringify({ ...base, ref: "refs/heads/ops/defiant", after: sha, commits: [{ modified: ["openspec/changes/defiant/tasks.md", "README.md"] }] });
-  acceptGitHubDelivery(db, "push1", "push", push("a", "")); await drainInbox(db, undefined, async () => "- [ ] Fly");
-  acceptGitHubDelivery(db, "push2", "push", push("b", "")); await drainInbox(db, undefined, async () => "- [x] Fly");
+  acceptGitHubDelivery(db, "push1", "push", push("a", "")); await drainInbox(db, async () => "- [ ] Fly");
+  acceptGitHubDelivery(db, "push2", "push", push("b", "")); await drainInbox(db, async () => "- [x] Fly");
   expect(db.query("SELECT completed,total FROM openspec_progress").get()!.completed).toBe(1);
   expect(db.query("SELECT source_ref FROM openspec_progress").get()!.source_ref).toBe("ops/defiant");
   expect(db.query("SELECT count(*) AS count FROM notifications WHERE title='OpenSpec complete'").get()!.count).toBe(1);

@@ -7,7 +7,8 @@ The merged MVP has no reproducible production deployment contract, so its SQLite
 - Add a pinned Bun container build and Railway service configuration for one service with one persistent volume.
 - Make the production origin, database path, proxy behavior, and required secrets explicit and fail closed when inconsistent.
 - Document the personal GitHub App's least-privilege permissions, events, OAuth callback, webhook URL, and installation-token contract.
-- Document server-side Railway connection mappings, untrusted webhook hints, health/readiness gates, rollback, and bounded production verification.
+- Project deployment state from signed GitHub deployment webhooks and bounded installation-token bootstrap/repair reads; Railway remains hosting-only.
+- Document health/readiness gates, rollback, and bounded production verification.
 - Separate repository implementation tasks from external mutations and leave production tasks incomplete until their exact evidence exists.
 
 ## Capabilities
@@ -18,8 +19,10 @@ The merged MVP has no reproducible production deployment contract, so its SQLite
 
 ### Modified Capabilities
 
-None.
+- `event-projections`: Replace Railway hint reconciliation with installation-scoped GitHub deployment projections.
+- `command-center-dashboard`: Source recent deployments from GitHub-native projections.
+- `transition-notifications`: Emit deployment transitions only from signed GitHub status changes.
 
 ## Impact
 
-This affects the service startup/configuration path, deployment files, configuration tests, and operator documentation. It introduces no application service, database, queue, or runtime dependency; external GitHub, Railway, and 1Password state remains unchanged until separately authorized.
+This affects service configuration, event projections, dashboard access, the additive SQLite schema, deployment files, tests, and operator documentation. It removes runtime Railway credentials and webhooks and introduces no application service, database, queue, or runtime dependency.

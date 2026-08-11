@@ -42,7 +42,7 @@ The operator contract MUST define a private personal GitHub App with only the pe
 
 #### Scenario: GitHub App configuration review
 - **WHEN** the App is prepared for production
-- **THEN** its callback is `${PUBLIC_URL}/auth/github/callback`, webhook is `${PUBLIC_URL}/webhooks/github` with SSL verification, repository permissions are Metadata read (implicit), Pull requests read, Checks read, Actions read, and Contents read, with Issues read only for review-bot tracking; subscribed events are Installation, Pull request, Pull request review, Check run, Check suite, Workflow run, and Push, with Issue comment only for review-bot tracking
+- **THEN** its callback is `${PUBLIC_URL}/auth/github/callback`, webhook is `${PUBLIC_URL}/webhooks/github` with SSL verification, repository permissions are Metadata read (implicit), Pull requests read, Checks read, Actions read, Contents read, and Deployments read, with Issues read only for review-bot tracking; subscribed events are Installation, Pull request, Pull request review, Check run, Check suite, Workflow run, Push, Deployment, and Deployment status, with Issue comment only for review-bot tracking
 
 #### Scenario: Repository API authentication
 - **WHEN** the service bootstraps, repairs, reconciles, or fetches explicit repository details
@@ -56,27 +56,27 @@ The operator contract MUST define a private personal GitHub App with only the pe
 The service MUST validate every required production variable at startup and MUST NOT expose secret values to source control, clients, logs, or verification evidence.
 
 #### Scenario: Missing or placeholder secret
-- **WHEN** a required GitHub or Railway credential is absent, blank, malformed, or an obvious placeholder
+- **WHEN** a required GitHub credential is absent, blank, malformed, or an obvious placeholder
 - **THEN** startup fails with only the variable name and sanitized reason
 
 #### Scenario: Required variables present
 - **WHEN** production starts
-- **THEN** it requires `NODE_ENV`, `PUBLIC_URL`, `DATABASE_PATH`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `RAILWAY_API_TOKEN`, and `RAILWAY_CONNECTIONS_JSON`, while Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`
+- **THEN** it requires `NODE_ENV`, `PUBLIC_URL`, `DATABASE_PATH`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`, while Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`
 
-### Requirement: Trusted Railway reconciliation boundary
-Railway connection mappings MUST remain server-side, strictly validated, and authoritative only after targeted provider reconciliation.
+### Requirement: GitHub-native deployment boundary
+Deployment visibility MUST come from the selected repositories through signed GitHub deliveries and installation-scoped API reads; the runtime MUST NOT require Railway API credentials, mappings, or webhook intake.
 
-#### Scenario: Valid connection mapping
-- **WHEN** `RAILWAY_CONNECTIONS_JSON` is loaded
-- **THEN** every mapping has exactly `githubUserId`, `projectId`, `serviceId`, and `environmentId`, non-empty provider IDs, and no duplicate full mapping identity; the one server-side `RAILWAY_WEBHOOK_TOKEN` is the intake filter
+#### Scenario: Incremental deployment update
+- **WHEN** GitHub sends a valid signed `deployment` or `deployment_status` delivery for a selected repository
+- **THEN** the installation-scoped deployment projection is updated idempotently without querying Railway
 
-#### Scenario: Railway webhook hint
-- **WHEN** a token-authenticated Railway webhook is accepted
-- **THEN** the payload is treated only as a hint and no consequential deployment state is published until a targeted Railway API read succeeds
+#### Scenario: Bootstrap or repair
+- **WHEN** an installation is first bound or explicitly repaired
+- **THEN** the service uses a short-lived installation token for bounded deployment and latest-status reads and honors GitHub backoff and conditional-request metadata
 
-#### Scenario: GitHub API budget
-- **WHEN** GitHub bootstrap or reconciliation indicates a rate limit, retry delay, or unchanged resource
-- **THEN** it honors GitHub backoff and conditional-request metadata rather than polling aggressively
+#### Scenario: Railway hosting boundary
+- **WHEN** production starts on Railway
+- **THEN** it requires no Railway API token, connection mapping, or Railway webhook token and exposes no Railway webhook route
 
 ### Requirement: Health and readiness gates
 The service SHALL expose separate liveness and readiness endpoints, and Railway activation MUST use readiness.
@@ -98,7 +98,7 @@ Production execution MUST require explicit authorization, preserve the persisten
 
 #### Scenario: Production verification evidence
 - **WHEN** rollout verification is performed
-- **THEN** evidence records the timestamp, exact Git SHA, Railway deployment ID, redacted configuration-name checklist, GitHub delivery IDs, endpoint statuses, OAuth result, reconciliation result, restart durability result, and rollback result without secrets or payload bodies
+- **THEN** evidence records the timestamp, exact Git SHA, Railway deployment ID, redacted configuration-name checklist, GitHub delivery IDs, endpoint statuses, OAuth result, projection result, restart durability result, and rollback result without secrets or payload bodies
 
 #### Scenario: Rollback
 - **WHEN** readiness or bounded verification fails

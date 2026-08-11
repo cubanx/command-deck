@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { RailwayConnectionConfig } from "./config";
 import type { Db } from "./db";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -25,9 +24,8 @@ export function seedLocalDemo(db: Db) {
     const activeGroup = { title: "9. Configurable automated review progress", tasks: [{ completed: true, text: "Test review signals" }, { completed: true, text: "Project bot progress" }, { completed: true, text: "Render review evidence" }, { completed: false, text: "Review the local dashboard" }] };
     db.query("DELETE FROM openspec_progress WHERE installation_id=? AND repository_id=? AND change_name<>?").run("local-demo-installation", "local-demo-repository", "build-developer-command-center-mvp");
     db.query("INSERT INTO openspec_progress (installation_id,repository_id,change_name,completed,total,source_commit,source_ref,active_group,updated_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(installation_id,repository_id,change_name) DO UPDATE SET completed=excluded.completed,total=excluded.total,source_commit=excluded.source_commit,source_ref=excluded.source_ref,active_group=excluded.active_group,updated_at=CURRENT_TIMESTAMP").run("local-demo-installation", "local-demo-repository", "build-developer-command-center-mvp", 26, 27, "local-demo", "dcc/build-developer-command-center-mvp", JSON.stringify(activeGroup));
-    bindRailwayConnection(db, LOCAL_DEMO_USER.id, "bajor-orbital", "promenade", "alpha-quadrant");
-    db.query("DELETE FROM deployments WHERE project_id=? AND service_id=? AND environment_id=?").run("bajor-orbital", "promenade", "alpha-quadrant");
-    for (const [id, status, verification] of [["runabout-42", "SUCCESS", "verified"], ["runabout-43", "unknown", "pending"], ["runabout-44", "unknown", "error"]]) db.query("INSERT INTO deployments (installation_id,project_id,service_id,environment_id,id,status,verification_state,updated_at) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").run("local-demo-installation", "bajor-orbital", "promenade", "alpha-quadrant", id, status, verification);
+    db.query("DELETE FROM github_deployments WHERE installation_id=?").run("local-demo-installation");
+    for (const [id, state] of [["42", "success"], ["43", "pending"], ["44", "failure"]]) db.query("INSERT INTO github_deployments (installation_id,repository_id,id,environment,ref,sha,state,updated_at) VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").run("local-demo-installation", "local-demo-repository", id, "production", "main", "local-demo", state);
     db.query("INSERT INTO notifications (id,user_id,transition_key,title,body,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id,transition_key) DO UPDATE SET title=excluded.title,body=excluded.body,created_at=excluded.created_at").run("local-demo-notification", LOCAL_DEMO_USER.id, "demo:checks-failed:1701", "Checks failed", "Build developer command center MVP needs attention.", "2026-08-09T12:15:00.000Z");
   })();
 }
@@ -53,16 +51,6 @@ export function bindInstallation(db: Db, userId: string, installationId: string)
   db.query("INSERT INTO installations (id) VALUES (?) ON CONFLICT(id) DO NOTHING").run(installationId);
   db.query("INSERT INTO user_installations (user_id, installation_id) VALUES (?, ?) ON CONFLICT DO NOTHING").run(userId, installationId);
 }
-export function bindRailwayConnection(db: Db, userId: string, projectId: string, serviceId: string, environmentId: string) {
-  db.query("INSERT INTO railway_connections (user_id,project_id,service_id,environment_id) VALUES (?,?,?,?) ON CONFLICT DO NOTHING").run(userId, projectId, serviceId, environmentId);
-}
-export function syncConfiguredRailwayConnections(db: Db, connections: RailwayConnectionConfig[]) {
-  db.transaction(() => {
-    db.query("DELETE FROM railway_connections").run();
-    const insert = db.query("INSERT INTO railway_connections (user_id,project_id,service_id,environment_id) SELECT id,?,?,? FROM users WHERE github_id=?");
-    for (const connection of connections) insert.run(connection.projectId, connection.serviceId, connection.environmentId, connection.githubUserId);
-  })();
-}
 export function dashboardForUser(db: Db, userId: string, now = new Date()) {
   const openSpecs: Array<Record<string, unknown> & { source_url: string | null }> = (db.query("SELECT op.*,r.full_name FROM openspec_progress op JOIN repositories r ON r.installation_id=op.installation_id AND r.id=op.repository_id JOIN user_installations ui ON ui.installation_id=op.installation_id WHERE ui.user_id=? ORDER BY op.updated_at DESC").all(userId) as Array<Record<string, unknown>>).map((item) => ({ ...item, source_url: openSpecUrl(item.full_name, item.source_commit, item.change_name) }));
   const projectedPullRequests = db.query("SELECT pr.*,r.full_name FROM pull_requests pr JOIN repositories r ON r.installation_id=pr.installation_id AND r.id=pr.repository_id JOIN user_installations ui ON ui.installation_id=pr.installation_id JOIN users u ON u.id=ui.user_id WHERE ui.user_id=? AND pr.author_login=u.login ORDER BY pr.updated_at DESC,pr.number DESC").all(userId) as Array<Record<string, unknown>>;
@@ -75,7 +63,7 @@ export function dashboardForUser(db: Db, userId: string, now = new Date()) {
     const openSpec = commitMatches.length === 1 && uniqueCommitHead ? commitMatches[0] : branchMatches.length === 1 && uniqueBranchHead ? branchMatches[0] : null;
     return { ...pr, url: pullRequestUrl(pr.url, pr.full_name, pr.number), open_spec: openSpec, needs_attention: needsAttention(pr) || Boolean(openSpec && Number(openSpec.completed) < Number(openSpec.total)) };
   });
-  const deployments = db.query("SELECT d.* FROM deployments d JOIN railway_connections rc ON rc.project_id=d.project_id AND rc.service_id=d.service_id AND rc.environment_id=d.environment_id WHERE rc.user_id=? AND datetime(d.updated_at)>=datetime(?) ORDER BY d.updated_at DESC,d.id DESC").all(userId, new Date(now.getTime() - 48 * 60 * 60_000).toISOString()) as Array<Record<string, unknown>>;
+  const deployments = db.query("SELECT d.*,r.full_name FROM github_deployments d JOIN repositories r ON r.installation_id=d.installation_id AND r.id=d.repository_id JOIN user_installations ui ON ui.installation_id=d.installation_id WHERE ui.user_id=? AND datetime(d.updated_at)>=datetime(?) ORDER BY d.updated_at DESC,d.id DESC").all(userId, new Date(now.getTime() - 48 * 60 * 60_000).toISOString()) as Array<Record<string, unknown>>;
   const notifications = db.query("SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 20").all(userId) as Array<Record<string, unknown>>;
   const installationCount = (db.query("SELECT count(*) AS count FROM user_installations WHERE user_id=?").get(userId) as { count: number }).count;
   return { pullRequests, deployments, notifications, installationCount };

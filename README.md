@@ -1,6 +1,6 @@
 # Developer Command Center
 
-A small, installable command center for a developer's open pull requests, checks, reviews, Railway deployments, and committed OpenSpec progress.
+A small, installable command center for a developer's open pull requests, checks, reviews, GitHub deployment status, and committed OpenSpec progress.
 
 The service treats authenticated webhooks plus SQLite projections as the incremental source. Provider API calls are limited to explicit bootstrap/repair, targeted OpenSpec file reads, and six-hour conditional reconciliation.
 
@@ -41,9 +41,6 @@ openspec validate build-developer-command-center-mvp --strict
 | `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_PRIVATE_KEY` | Installation flow, App JWTs, and installation-token repository reads. Encode private-key newlines as `\\n` when necessary. |
 | `GITHUB_WEBHOOK_SECRET` | GitHub SHA-256 webhook HMAC verification. |
 | `GITHUB_REVIEW_BOT_LOGIN` / `GITHUB_REVIEW_BOT_START_MARKER` / `GITHUB_REVIEW_BOT_DONE_MARKER` | Optional exact bot login and case-insensitive pull-request comment markers used together to project automated review progress. |
-| `RAILWAY_WEBHOOK_TOKEN` | Unguessable Railway webhook URL segment used only as an intake filter. |
-| `RAILWAY_API_TOKEN` | Read-only Railway Public API token used to verify deployment hints. |
-| `RAILWAY_CONNECTIONS_JSON` | Operator-controlled hosted mappings from immutable GitHub numeric user IDs to Railway project, service, and environment IDs. Defaults to `[]` and is rejected in local-demo mode. |
 | `RECONCILE_INTERVAL_MS` | Serial GitHub reconciliation interval; defaults to six hours and cannot be less than one minute. |
 
 Keep values in the environment or a secret manager. Never commit `.env`, App private keys, webhook secrets, or provider tokens.
@@ -53,11 +50,11 @@ Keep values in the environment or a secret manager. Never commit `.env`, App pri
 Repository configuration only is covered here; creating a Railway service, volume, domain, GitHub App, secrets, or deployment requires fresh authorization.
 
 1. Run exactly one Railway service and replica from this Dockerfile. Attach one persistent volume at `/data`; set `NODE_ENV=production`, `DATABASE_PATH=/data/command-center.sqlite`, and set `PUBLIC_URL` to the generated HTTPS Railway domain. SQLite and WAL sidecars must stay on that volume.
-2. Set the required server variables by name only: `PUBLIC_URL`, `DATABASE_PATH`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `RAILWAY_API_TOKEN`, and `RAILWAY_CONNECTIONS_JSON`. Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`. Never place resolved values in evidence.
+2. Set the required server variables by name only: `PUBLIC_URL`, `DATABASE_PATH`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`. Never place resolved values in evidence.
 3. Railway activates only after `/ready` returns `200`; `/health` is liveness only. A volume-backed SQLite service is intentionally single-replica: redeploys briefly interrupt service, but retain the volume.
 4. Roll back by selecting the last known-good deployment while retaining the attached volume. If `/ready` does not recover, stop and investigate the mounted database—never recreate the volume as a rollback shortcut.
 
-Record redacted evidence only: timestamp, reviewed Git SHA, Railway deployment ID, variable-name checklist, `/health` and `/ready` statuses, OAuth result, GitHub delivery IDs/outcomes, reconciliation result, restart durability, and rollback outcome.
+Record redacted evidence only: timestamp, reviewed Git SHA, Railway deployment ID, variable-name checklist, `/health` and `/ready` statuses, OAuth result, GitHub delivery IDs/outcomes, deployment projection result, restart durability, and rollback outcome.
 
 ## GitHub App contract
 
@@ -66,8 +63,8 @@ Configure a private personal `cubanx` App, install it only on selected repositor
 - homepage: `${PUBLIC_URL}`
 - callback URL: `${PUBLIC_URL}/auth/github/callback`
 - webhook URL: `${PUBLIC_URL}/webhooks/github`, enabled with SSL verification
-- repository permissions: metadata read (implicit), pull requests read, checks read, actions read, contents read; issues read only when review-bot tracking is configured
-- events: installation, pull request, pull request review, check run, check suite, workflow run, and push; issue comment only when review-bot tracking is configured
+- repository permissions: metadata read (implicit), pull requests read, checks read, actions read, contents read, deployments read; issues read only when review-bot tracking is configured
+- events: installation, pull request, pull request review, check run, check suite, workflow run, push, deployment, and deployment status; issue comment only when review-bot tracking is configured
 
 The install callback does not trust its `installation_id`. It confirms the installation through `/user/installations` with the ephemeral user token before binding it to the signed-in developer. Repository automation then uses installation access tokens, not user access tokens.
 
@@ -75,39 +72,26 @@ Automated review tracking keeps GitHub's formal review decision separate. Only s
 
 After binding an installation, bootstrap its current repositories and open pull requests with authenticated `POST /api/installations/:installationId/bootstrap`. `repair` is an equivalent explicit path. Both routes are restricted to a developer already bound to that installation.
 
-## Railway contract
+## GitHub deployment contract
 
-Railway's webhook documentation does not define payload signing. Configure the target as `${PUBLIC_URL}/webhooks/railway/<RAILWAY_WEBHOOK_TOKEN>`. Keep `RAILWAY_CONNECTIONS_JSON` and every route token server-side. Payloads remain untrusted hints even after the route token matches: the service validates identifiers, queries recent deployments through Railway's read-only GraphQL API, and persists or notifies only when the exact project, service, environment, and deployment match.
+GitHub Deployment and Deployment status deliveries are signed with `GITHUB_WEBHOOK_SECRET`, deduplicated by delivery ID, and projected only within the delivery's installation. The dashboard shows repository-centric deployment status; it intentionally does not query Railway APIs or expose Railway logs, replicas, restarts, or configuration.
 
-The shared Railway API token verifies deployment evidence but does not prove that a signed-in developer may access a project. The MVP therefore exposes no browser route for creating Railway mappings. Hosted mappings are operator-controlled:
-
-```json
-[
-  {
-    "githubUserId": "362276",
-    "projectId": "project-id",
-    "serviceId": "service-id",
-    "environmentId": "environment-id"
-  }
-]
-```
-
-Set the single-line JSON as `RAILWAY_CONNECTIONS_JSON`. Startup and successful GitHub login transactionally replace hosted mappings with this configuration. Entries for GitHub IDs that have not signed in create no rows until their first login; removing an entry removes its mapping at the next startup or login. The loopback local demo keeps only its deterministic fixture mapping. Railway OAuth is the upgrade when developers must manage their own connections.
+GitHub installation bindings determine dashboard visibility. Bootstrap and explicit repair use short-lived installation tokens with bounded conditional reads for recent deployments and their latest statuses; webhooks remain the incremental source. The dashboard retains only safe HTTP(S) deployment target and log links. Direct Railway access is a future capability, not a hidden credential waiting in the walls.
 
 ## Trust and data boundaries
 
 - GitHub requests are size-limited and HMAC-verified against the raw body before durable inbox insertion. Delivery IDs are unique and redelivery-safe.
 - Accepted payloads are persisted before `202`, processed serially, retried after restart, and cleared after successful projection.
-- Railway hints retain their payload while verification is pending and cannot trigger success/failure notifications before an authoritative match.
-- Dashboard queries join the current developer to GitHub installations and Railway project/service/environment mappings. Pull requests are additionally filtered to the signed-in GitHub author.
+- GitHub deployment status transitions are idempotent and only terminal state changes notify installation-bound users.
+- Dashboard queries join the current developer to GitHub installations; pull requests are additionally filtered to the signed-in GitHub author.
 - Sessions are high-entropy opaque tokens; only SHA-256 hashes are stored in SQLite and cookies are secure, HTTP-only, and same-site.
 - Provider text is escaped before browser rendering. The service worker caches only public shell assets, never authenticated API or webhook traffic.
 
 ## API-budget behavior
 
-Normal GitHub pull-request, review, check, workflow, and installation changes update projections from webhooks without list/search calls. Push events fetch only changed committed `openspec/changes/*/tasks.md` files. Bootstrap, repair, and reconciliation use installation tokens, authenticated ETags, serial requests, rate-limit headers, and bounded backoff. An authorized `304` preserves the projection without consuming the primary REST limit.
+Normal GitHub pull-request, review, check, workflow, installation, deployment, and deployment-status changes update projections from webhooks without list/search calls. Push events fetch only changed committed `openspec/changes/*/tasks.md` files. Bootstrap, repair, and reconciliation use installation tokens, authenticated ETags, serial requests, rate-limit headers, and bounded backoff. An authorized `304` preserves the projection without consuming the primary REST limit.
 
-The MVP reconciles at most the first 100 repositories and first 100 open pull requests per repository. Pagination is the explicit upgrade when a real installation reaches that ceiling.
+The MVP reconciles at most the first 100 repositories, first 100 open pull requests per repository, and 20 recent deployments per repository with one latest-status read each. Pagination is the explicit upgrade when a real installation reaches those ceilings.
 
 ## MVP limits and operational gate
 

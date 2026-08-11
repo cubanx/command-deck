@@ -21,7 +21,9 @@ test("public PWA assets are available but authenticated snapshot and stream are 
   expect(script).toContain("source_ref");
   expect(script).toContain("workflow_state");
   expect(script).toContain("bot_review_state");
-  expect(script).toContain("verification_state");
+  expect(script).toContain("deployment.state");
+  expect(script).toContain("deployment.target_url");
+  expect(script).toContain(">Logs<");
   expect(script).toContain("type=\"checkbox\"");
   expect(script).toContain("draft");
   expect(script).not.toContain("<h2>OpenSpec</h2>");
@@ -42,34 +44,27 @@ test("local demo serves the seeded snapshot and stream without a session", async
   await events.body?.cancel();
 });
 
-test("browser clients cannot create Railway resource mappings", async () => {
+test("runtime exposes no Railway webhook or mapping routes", async () => {
   const db = openDatabase();
   const app = createApp(db, { ...config, localDemo: true, hostname: "127.0.0.1" });
-  const before = db.query("SELECT COUNT(*) AS count FROM railway_connections").get()!.count;
-  const response = await app.fetch(new Request("http://local/api/railway/connections", {
+  const response = await app.fetch(new Request("http://local/webhooks/railway/example", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ projectId: "deep-space-nine", serviceId: "defiant", environmentId: "bajoran-sector" })
   }));
   expect(response.status).toBe(404);
-  expect(db.query("SELECT COUNT(*) AS count FROM railway_connections").get()!.count).toBe(before);
+  expect((await app.fetch(new Request("http://local/api/railway/connections"))).status).toBe(404);
 });
 
-test("hosted Railway configuration syncs existing users and the GitHub callback", async () => {
+test("GitHub callback binds only a verified installation", async () => {
   const db = openDatabase();
-  db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1701','sisko')").run();
-  const railwayConnections = [
-    { githubUserId: "1701", projectId: "bajor-orbital", serviceId: "promenade", environmentId: "alpha-quadrant" },
-    { githubUserId: "1702", projectId: "deep-space-nine", serviceId: "defiant", environmentId: "bajoran-sector" }
-  ];
-  const app = createApp(db, { ...config, githubClientId: "client", githubClientSecret: "secret", railwayConnections });
-  expect(db.query("SELECT project_id FROM railway_connections").all()).toEqual([{ project_id: "bajor-orbital" }]);
+  const app = createApp(db, { ...config, githubClientId: "client", githubClientSecret: "secret" });
   const state = createOAuthState(db);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => String(input).includes("access_token") ? Response.json({ access_token: "token" }) : Response.json({ id: 1702, login: "kira" });
   try {
     expect((await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}`))).status).toBe(302);
-    expect(db.query("SELECT project_id FROM railway_connections ORDER BY project_id").all()).toEqual([{ project_id: "bajor-orbital" }, { project_id: "deep-space-nine" }]);
+    expect(db.query("SELECT installation_id FROM user_installations").all()).toEqual([]);
   } finally { globalThis.fetch = originalFetch; }
 });
 

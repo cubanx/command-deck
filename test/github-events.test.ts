@@ -35,9 +35,9 @@ test("configured bot comments project review progress without changing formal re
   const reviewBot = { login: "claude[bot]", startMarker: "started review", doneMarker: "review complete" };
   acceptGitHubDelivery(db, "other", "issue_comment", comment("quark", "started review"));
   acceptGitHubDelivery(db, "start", "issue_comment", comment("Claude[bot]", "Claude started review"));
-  await drainInbox(db, undefined, undefined, reviewBot);
+  await drainInbox(db, undefined, reviewBot);
   expect(db.query("SELECT review_state,bot_review_actor,bot_review_state FROM pull_requests").get()).toMatchObject({ review_state: "changes_requested", bot_review_actor: "Claude[bot]", bot_review_state: "in_progress" });
   acceptGitHubDelivery(db, "done", "issue_comment", comment("claude[bot]", "Started review; review complete", "edited"));
-  await drainInbox(db, undefined, undefined, reviewBot);
+  await drainInbox(db, undefined, reviewBot);
   expect(db.query("SELECT review_state,bot_review_state FROM pull_requests").get()).toMatchObject({ review_state: "changes_requested", bot_review_state: "complete" });
 });
