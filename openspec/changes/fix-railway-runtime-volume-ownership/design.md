@@ -10,7 +10,7 @@ The pinned `oven/bun:1.3.11` runtime already contains POSIX shell, `stat`, `chow
 
 - Make the runtime-mounted `/data` directory writable without a Railway UID override.
 - Bound root authority to validation and a non-recursive ownership change of the mount root.
-- Make the stable application identity and privilege drop observable in a container smoke check.
+- Make the stable application identity and privilege drop observable in a container validation check.
 - Fail closed with fixed diagnostics when configuration, identity, ownership repair, or privilege drop is unsafe.
 
 **Non-Goals:**
@@ -35,16 +35,16 @@ Alternative: recursively `chown /data`. Rejected because unrelated or intentiona
 
 ### Use fixed diagnostics and a real read-only failure
 
-Configuration, identity, ownership inspection, ownership repair, and privilege-drop failures emit fixed messages without environment values or filesystem enumeration. The Docker smoke uses a fresh root-owned named volume for success and mounts another named volume read-only to prove ownership repair fails without changing its sentinel.
+Configuration, identity, ownership inspection, ownership repair, and privilege-drop failures emit fixed messages without environment values or filesystem enumeration. The Docker volume validation uses a fresh root-owned named volume for success and mounts another named volume read-only to prove ownership repair fails without changing its sentinel.
 
-Alternative: unit-test shell branches with mocks. Rejected because the Docker boundary is the behavior that failed and the existing smoke script already provides the smallest executable contract.
+Alternative: unit-test shell branches with mocks. Rejected because the Docker boundary is the behavior that failed and the existing validation script already provides the smallest executable contract.
 
 ## Risks / Trade-offs
 
 - [The runtime image starts briefly as root] → Validate only fixed paths, perform at most one mount-root `chown`, then `exec setpriv`; assert PID 1 is UID 1000.
 - [The upstream `bun` identity changes] → Require UID/GID 1000 at startup and fail before changing ownership.
 - [Existing database files are not accessible to `bun`] → Do not broaden root authority; fail database startup and resolve the specific production state through the authorized operational change.
-- [Docker named volumes do not reproduce every Railway detail] → Treat the smoke as the local ownership and privilege contract; keep real deployment evidence in `operate-developer-command-center-production`.
+- [Docker named volumes do not reproduce every Railway detail] → Treat the validation as the local ownership and privilege contract; keep real deployment evidence in `operate-developer-command-center-production`.
 
 ## Migration Plan
 

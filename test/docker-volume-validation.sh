@@ -3,7 +3,7 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
-image="dcc-volume-smoke:$$"
+image="dcc-volume-validation:$$"
 fresh_container="dcc-volume-fresh-$$"
 fresh_volume="dcc-volume-fresh-$$"
 readonly_volume="dcc-volume-readonly-$$"
