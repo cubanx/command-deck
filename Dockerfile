@@ -8,5 +8,7 @@ WORKDIR /app
 COPY --from=install /app/node_modules ./node_modules
 COPY --chown=bun:bun package.json bun.lock ./
 COPY --chown=bun:bun src ./src
+COPY --chown=root:root docker-entrypoint.sh /usr/local/bin/dcc-entrypoint
 USER bun
+ENTRYPOINT ["/usr/local/bin/dcc-entrypoint"]
 CMD ["bun", "run", "src/server.ts"]
