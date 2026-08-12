@@ -7,6 +7,10 @@ The system SHALL persist notifications only for review requests, failed checks, 
 - **WHEN** a webhook or reconciliation repeats state already projected
 - **THEN** no new notification is created
 
+#### Scenario: Untrusted Railway failure hint
+- **WHEN** a Railway webhook claims a failed deployment but authoritative verification has not succeeded
+- **THEN** no failure notification is created
+
 #### Scenario: GitHub deployment reaches a terminal state
 - **WHEN** a signed `deployment_status` event transitions an installation-scoped deployment into `success`, `failure`, or `error`
 - **THEN** the system creates one user-scoped notification for developers bound to that installation
