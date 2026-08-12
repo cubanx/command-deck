@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { openDatabase } from "../src/db";
-import { LOCAL_DEMO_USER, bindInstallation, bindRailwayConnection, createOAuthState, createSession, dashboardForSession, dashboardForUser, consumeOAuthState, seedLocalDemo, sessionUser, syncConfiguredRailwayConnections } from "../src/access";
+import { LOCAL_DEMO_USER, bindInstallation, createOAuthState, createSession, dashboardForSession, dashboardForUser, consumeOAuthState, seedLocalDemo, sessionUser } from "../src/access";
 
 test("OAuth state is one-time and expires", () => {
   const db = openDatabase();
@@ -42,20 +42,6 @@ test("local demo projections are deterministic and idempotent", () => {
   expect(dashboard.pullRequests[0]?.open_spec).not.toBeNull();
 });
 
-test("configured Railway mappings replace hosted state and ignore unknown users", () => {
-  const db = openDatabase();
-  db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1701','sisko'),('u2','1702','kira')").run();
-  bindRailwayConnection(db, "u1", "stale-project", "stale-service", "stale-environment");
-  bindRailwayConnection(db, "u2", "cardassia", "central-command", "prime");
-  syncConfiguredRailwayConnections(db, [
-    { githubUserId: "1701", projectId: "bajor-orbital", serviceId: "promenade", environmentId: "alpha-quadrant" },
-    { githubUserId: "9999", projectId: "gamma-quadrant", serviceId: "dominion", environmentId: "founders" }
-  ]);
-  expect(db.query("SELECT user_id,project_id,service_id,environment_id FROM railway_connections").all()).toEqual([
-    { user_id: "u1", project_id: "bajor-orbital", service_id: "promenade", environment_id: "alpha-quadrant" }
-  ]);
-});
-
 test("dashboard correlates OpenSpec into PR status and retains every recent deployment state", () => {
   const db = openDatabase();
   db.query("INSERT INTO users (id,github_id,login) VALUES ('u','9','dax')").run();
@@ -65,15 +51,14 @@ test("dashboard correlates OpenSpec into PR status and retains every recent depl
   db.query("INSERT INTO pull_requests (installation_id,repository_id,number,title,url,author_login,state,draft,checks_state,head_ref,head_sha) VALUES ('i','r',2,'Spec pending','https://github.com/cubanx/dev-command-center/pull/2','dax','open',0,'success','ops/warp-core',?)").run("b".repeat(40));
   db.query("INSERT INTO pull_requests (installation_id,repository_id,number,title,url,author_login,state,draft,checks_state,head_ref,head_sha) VALUES ('i','r',3,'Healthy','https://github.com/cubanx/dev-command-center/pull/3','dax','open',0,'success','ops/healthy',?)").run("c".repeat(40));
   db.query("INSERT INTO openspec_progress (installation_id,repository_id,change_name,completed,total,source_commit,source_ref,active_group) VALUES ('i','r','warp-core',1,2,?,?,?)").run("b".repeat(40), "ops/warp-core", JSON.stringify({ title: "2. Core", tasks: [{ completed: false, text: "Align" }] }));
-  bindRailwayConnection(db, "u", "p", "s", "e");
-  for (const [id, state, updated] of [["verified", "verified", "2030-01-02T00:00:00Z"], ["pending", "pending", "2030-01-01T12:00:00Z"], ["error", "error", "2030-01-01T11:00:00Z"], ["old", "verified", "2029-12-20T00:00:00Z"]]) db.query("INSERT INTO deployments (project_id,service_id,environment_id,id,status,verification_state,updated_at) VALUES ('p','s','e',?,'unknown',?,?)").run(id, state, updated);
+  for (const [id, state, updated] of [["verified", "success", "2030-01-02T00:00:00Z"], ["pending", "pending", "2030-01-01T12:00:00Z"], ["error", "failure", "2030-01-01T11:00:00Z"], ["old", "success", "2029-12-20T00:00:00Z"]]) db.query("INSERT INTO github_deployments (installation_id,repository_id,id,state,updated_at) VALUES ('i','r',?,?,?)").run(id, state, updated);
   const dashboard = dashboardForUser(db, "u", new Date("2030-01-02T12:00:00Z"));
   const byNumber = new Map(dashboard.pullRequests.map((pr) => [pr.number, pr]));
   expect([...byNumber.values()].map((pr) => pr.needs_attention)).toEqual([false, true, true]);
   expect(byNumber.get(1)?.url).toBe("https://github.com/cubanx/dev-command-center/pull/1");
   expect(byNumber.get(2)?.open_spec?.source_url).toBe(`https://github.com/cubanx/dev-command-center/blob/${"b".repeat(40)}/openspec/changes/warp-core/tasks.md`);
   expect(byNumber.get(3)?.open_spec).toBeNull();
-  expect(dashboard.deployments.map((deployment) => deployment.verification_state)).toEqual(["verified", "pending", "error"]);
+  expect(dashboard.deployments.map((deployment) => deployment.state)).toEqual(["success", "pending", "failure"]);
 });
 
 test("dashboard leaves ambiguous branch OpenSpecs unlinked", () => {

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { openDatabase } from "../src/db";
-import { bootstrapInstallation, conditionalGet, reconcileInstallations, reconcileSerial } from "../src/github";
+import { bootstrapDeployments, bootstrapInstallation, conditionalGet, reconcileInstallations, reconcileSerial } from "../src/github";
 
 test("conditional reads retain ETags and surface a 304 without replacing data", async () => {
   const db = openDatabase();
@@ -34,4 +34,21 @@ test("bootstrap preserves webhook evidence, removes stale PRs, and requests 100 
   expect(pullsUrl).toContain("per_page=100");
   expect(db.query("SELECT draft,head_ref,head_sha,mergeable,review_state,checks_state,workflow_state,bot_review_actor,bot_review_state FROM pull_requests WHERE number=1").get()).toMatchObject({ draft: 1, head_ref: "ops/defiant", head_sha: "b".repeat(40), mergeable: "conflicting", review_state: "changes_requested", checks_state: "failure", workflow_state: "failure", bot_review_actor: "claude[bot]", bot_review_state: "complete" });
   expect(db.query("SELECT count(*) AS count FROM pull_requests WHERE number=2").get()!.count).toBe(0);
+});
+
+test("deployment bootstrap is installation-token scoped, conditional, and bounded", async () => {
+  const db = openDatabase(); db.query("INSERT INTO installations (id) VALUES ('i')").run();
+  const urls: string[] = [], headers: Headers[] = [];
+  await bootstrapDeployments(db, "i", "2", "token", async (url, init) => { urls.push(String(url)); headers.push(new Headers(init?.headers)); return String(url).includes("/statuses") ? Response.json([{ id: 9, state: "success" }], { headers: { etag: "status-v1" } }) : Response.json([{ id: 7, environment: "production", ref: "main", sha: "a".repeat(40) }], { headers: { etag: "deployments-v1" } }); });
+  expect(urls).toEqual(["https://api.github.com/repositories/2/deployments?per_page=20", "https://api.github.com/repositories/2/deployments/7/statuses?per_page=1"]);
+  expect(headers.every((value) => value.get("authorization") === "Bearer token")).toBeTrue();
+  expect(db.query("SELECT state FROM github_deployments WHERE id='7'").get()).toEqual({ state: "success" });
+});
+
+test("deployment bootstrap preserves status evidence on a 304", async () => {
+  const db = openDatabase(); db.query("INSERT INTO installations (id) VALUES ('i')").run();
+  db.query("INSERT INTO github_deployments (installation_id,repository_id,id,state,status_id,updated_at) VALUES ('i','2','7','success','9','2026-01-01')").run();
+  db.query("INSERT INTO etags (request_key,value) VALUES ('installation:i:repo:2:deployment:7:statuses','status-v1')").run();
+  await bootstrapDeployments(db, "i", "2", "token", async (url) => String(url).includes("/statuses") ? new Response(null, { status: 304 }) : Response.json([{ id: 7, environment: "production", ref: "main", sha: "a".repeat(40) }]));
+  expect(db.query("SELECT state,status_id,updated_at FROM github_deployments WHERE id='7'").get()).toEqual({ state: "success", status_id: "9", updated_at: "2026-01-01" });
 });

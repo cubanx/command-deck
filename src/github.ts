@@ -62,13 +62,28 @@ export async function bootstrapInstallation(db: Db, installationId: string, toke
   for (const repo of items) {
     db.query("INSERT INTO repositories (installation_id,id,full_name) VALUES (?,?,?) ON CONFLICT(installation_id,id) DO UPDATE SET full_name=excluded.full_name").run(installationId, String(repo.id), repo.full_name);
     const prs = await conditionalGet(db, `installation:${installationId}:repo:${repo.id}:prs`, `https://api.github.com/repositories/${repo.id}/pulls?state=open&per_page=100`, request);
-    if (prs.kind !== "changed") continue;
-    const pullRequests = prs.body as Array<any>, numbers = new Set(pullRequests.map((pr) => Number(pr.number)));
-    for (const pr of pullRequests) db.query("INSERT INTO pull_requests (installation_id,repository_id,number,title,url,author_login,state,draft,head_ref,head_sha,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(installation_id,repository_id,number) DO UPDATE SET title=excluded.title,url=excluded.url,author_login=excluded.author_login,state=excluded.state,draft=excluded.draft,head_ref=excluded.head_ref,head_sha=excluded.head_sha,updated_at=excluded.updated_at").run(installationId, String(repo.id), pr.number, pr.title, pr.html_url ?? null, pr.user?.login ?? null, pr.state ?? "open", pr.draft ? 1 : 0, typeof pr.head?.ref === "string" ? pr.head.ref : null, typeof pr.head?.sha === "string" ? pr.head.sha : null, pr.updated_at ?? new Date().toISOString());
-    // ponytail: first page only; retain unmatched rows at the ceiling until pagination exists.
-    if (pullRequests.length < 100) for (const row of db.query("SELECT number FROM pull_requests WHERE installation_id=? AND repository_id=?").all(installationId, String(repo.id)) as { number: number }[]) if (!numbers.has(row.number)) db.query("DELETE FROM pull_requests WHERE installation_id=? AND repository_id=? AND number=?").run(installationId, String(repo.id), row.number);
+    if (prs.kind === "changed") {
+      const pullRequests = prs.body as Array<any>, numbers = new Set(pullRequests.map((pr) => Number(pr.number)));
+      for (const pr of pullRequests) db.query("INSERT INTO pull_requests (installation_id,repository_id,number,title,url,author_login,state,draft,head_ref,head_sha,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(installation_id,repository_id,number) DO UPDATE SET title=excluded.title,url=excluded.url,author_login=excluded.author_login,state=excluded.state,draft=excluded.draft,head_ref=excluded.head_ref,head_sha=excluded.head_sha,updated_at=excluded.updated_at").run(installationId, String(repo.id), pr.number, pr.title, pr.html_url ?? null, pr.user?.login ?? null, pr.state ?? "open", pr.draft ? 1 : 0, typeof pr.head?.ref === "string" ? pr.head.ref : null, typeof pr.head?.sha === "string" ? pr.head.sha : null, pr.updated_at ?? new Date().toISOString());
+      // ponytail: first page only; retain unmatched rows at the ceiling until pagination exists.
+      if (pullRequests.length < 100) for (const row of db.query("SELECT number FROM pull_requests WHERE installation_id=? AND repository_id=?").all(installationId, String(repo.id)) as { number: number }[]) if (!numbers.has(row.number)) db.query("DELETE FROM pull_requests WHERE installation_id=? AND repository_id=? AND number=?").run(installationId, String(repo.id), row.number);
+    }
+    await bootstrapDeployments(db, installationId, String(repo.id), token, fetcher);
   }
   return repos;
+}
+export async function bootstrapDeployments(db: Db, installationId: string, repositoryId: string, token: string, fetcher: FetchLike = fetch) {
+  const request: FetchLike = (url, init) => fetcher(url, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), authorization: `Bearer ${token}` } });
+  const list = await conditionalGet(db, `installation:${installationId}:repo:${repositoryId}:deployments`, `https://api.github.com/repositories/${repositoryId}/deployments?per_page=20`, request);
+  if (list.kind !== "changed") return list;
+  // ponytail: only the newest 20 deployments; paginate if a selected repository needs deeper history.
+  for (const deployment of Array.isArray(list.body) ? list.body as Array<any> : []) {
+    const id = String(deployment.id); const statuses = await conditionalGet(db, `installation:${installationId}:repo:${repositoryId}:deployment:${id}:statuses`, `https://api.github.com/repositories/${repositoryId}/deployments/${id}/statuses?per_page=1`, request);
+    const latest = statuses.kind === "changed" ? (statuses.body as Array<any>)[0] : null;
+    const prior = latest ? null : db.query("SELECT state,status_id,updated_at FROM github_deployments WHERE installation_id=? AND repository_id=? AND id=?").get(installationId, repositoryId, id) as { state: string; status_id: string | null; updated_at: string } | null;
+    db.query("INSERT INTO github_deployments (installation_id,repository_id,id,environment,ref,sha,state,status_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(installation_id,repository_id,id) DO UPDATE SET environment=excluded.environment,ref=excluded.ref,sha=excluded.sha,state=excluded.state,status_id=excluded.status_id,updated_at=excluded.updated_at").run(installationId, repositoryId, id, deployment.environment ?? null, deployment.ref ?? null, deployment.sha ?? null, latest?.state ?? prior?.state ?? "pending", latest?.id ? String(latest.id) : prior?.status_id ?? null, latest?.created_at ?? prior?.updated_at ?? deployment.created_at ?? new Date().toISOString());
+  }
+  return list;
 }
 export async function reconcileInstallations(db: Db, tokenFor: (installationId: string) => Promise<string>, fetcher: FetchLike = fetch) {
   const results: Array<{ installationId: string; result: ReadResult }> = [];

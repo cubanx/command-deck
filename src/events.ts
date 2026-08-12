@@ -12,9 +12,6 @@ export function githubSignatureValid(body: string, signature: string | null, sec
 export function acceptGitHubDelivery(db: Db, deliveryId: string, eventName: string, body: string) {
   return db.query("INSERT INTO inbox_deliveries (provider, delivery_id, payload, event_name) VALUES ('github', ?, ?, ?) ON CONFLICT DO NOTHING").run(deliveryId, body, eventName).changes === 1;
 }
-export function acceptRailwayHint(db: Db, deliveryId: string, body: string) {
-  return db.query("INSERT INTO inbox_deliveries (provider, delivery_id, payload, event_name) VALUES ('railway', ?, ?, 'deployment') ON CONFLICT DO NOTHING").run(deliveryId, body).changes === 1;
-}
 export function notifyBoundUsers(db: Db, installationId: string, key: string, title: string, body: string) {
   const users = db.query("SELECT user_id FROM user_installations WHERE installation_id=?").all(installationId) as { user_id: string }[];
   for (const { user_id } of users) db.query("INSERT INTO notifications (id, user_id, transition_key, title, body) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, transition_key) DO NOTHING").run(randomUUID(), user_id, key, title, body);
@@ -23,17 +20,29 @@ function notifyUser(db: Db, userId: string, key: string, title: string, body: st
   db.query("INSERT INTO notifications (id, user_id, transition_key, title, body) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, transition_key) DO NOTHING").run(randomUUID(), userId, key, title, body);
 }
 const installationUsers = (db: Db, installationId: string) => (db.query("SELECT user_id FROM user_installations WHERE installation_id=?").all(installationId) as { user_id: string }[]).map((row) => row.user_id);
-type RailwayHint = { projectId: string; serviceId: string; environmentId: string; deploymentId: string };
 const branchRef = (value: unknown) => typeof value === "string" && value.length <= 255 && /^[A-Za-z0-9._/-]+$/.test(value) && !value.includes("..") ? value : null;
 const commitSha = (value: unknown) => typeof value === "string" && /^[0-9a-f]{40}$/i.test(value) ? value : null;
-const railwayUsers = (db: Db, hint: RailwayHint) => db.query("SELECT user_id FROM railway_connections WHERE project_id=? AND service_id=? AND environment_id=?").all(hint.projectId, hint.serviceId, hint.environmentId) as { user_id: string }[];
-const projectRailwayState = (db: Db, hint: RailwayHint, status: string, verification: "pending" | "error" | "verified") => {
-  if (verification === "pending") db.query("INSERT INTO deployments (project_id,service_id,environment_id,id,status,verification_state) VALUES (?,?,?,?,?,'pending') ON CONFLICT DO NOTHING").run(hint.projectId, hint.serviceId, hint.environmentId, hint.deploymentId, status);
-  else if (verification === "error") db.query("INSERT INTO deployments (project_id,service_id,environment_id,id,status,verification_state) VALUES (?,?,?,?,?,'error') ON CONFLICT(project_id,service_id,environment_id,id) DO UPDATE SET verification_state='error',updated_at=CURRENT_TIMESTAMP WHERE deployments.verification_state!='verified'").run(hint.projectId, hint.serviceId, hint.environmentId, hint.deploymentId, status);
-  else db.query("INSERT INTO deployments (project_id,service_id,environment_id,id,status,verification_state) VALUES (?,?,?,?,?,'verified') ON CONFLICT(project_id,service_id,environment_id,id) DO UPDATE SET status=excluded.status,verification_state='verified',updated_at=CURRENT_TIMESTAMP").run(hint.projectId, hint.serviceId, hint.environmentId, hint.deploymentId, status);
-};
+const deploymentId = (value: unknown) => typeof value === "number" || (typeof value === "string" && /^\d+$/.test(value)) ? String(value) : null;
+const providerId = (value: unknown) => typeof value === "string" || typeof value === "number" ? String(value) : null;
+const terminal = new Set(["success", "failure", "error"]);
+const safeUrl = (value: unknown) => { try { const url = new URL(String(value)); return ["http:", "https:"].includes(url.protocol) ? url.toString() : null; } catch { return null; } };
+function projectDeployment(db: Db, event: string, data: any) {
+  const installation = providerId(data.installation?.id), repository = providerId(data.repository?.id), deployment = data.deployment;
+  if (!installation || !repository || !deployment || !deploymentId(deployment.id)) return "ignored";
+  const id = deploymentId(deployment.id)!;
+  db.query("INSERT INTO installations (id) VALUES (?) ON CONFLICT DO NOTHING").run(installation);
+  db.query("INSERT INTO repositories (installation_id,id,full_name) VALUES (?,?,?) ON CONFLICT(installation_id,id) DO UPDATE SET full_name=excluded.full_name").run(installation, repository, data.repository.full_name ?? repository);
+  const prior = db.query("SELECT state,updated_at FROM github_deployments WHERE installation_id=? AND repository_id=? AND id=?").get(installation, repository, id) as { state: string; updated_at: string } | null;
+  const status = event === "deployment_status" ? String(data.deployment_status?.state ?? "pending").toLowerCase() : prior?.state ?? "pending";
+  const updatedAt = data.deployment_status?.created_at ?? deployment.created_at ?? new Date().toISOString();
+  if (event === "deployment_status" && prior && Date.parse(updatedAt) < Date.parse(prior.updated_at)) return "done";
+  db.query("INSERT INTO github_deployments (installation_id,repository_id,id,environment,ref,sha,state,status_id,target_url,log_url,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(installation_id,repository_id,id) DO UPDATE SET environment=COALESCE(excluded.environment,github_deployments.environment),ref=COALESCE(excluded.ref,github_deployments.ref),sha=COALESCE(excluded.sha,github_deployments.sha),state=excluded.state,status_id=excluded.status_id,target_url=COALESCE(excluded.target_url,github_deployments.target_url),log_url=COALESCE(excluded.log_url,github_deployments.log_url),updated_at=excluded.updated_at").run(installation, repository, id, deployment.environment ?? null, deployment.ref ?? null, deployment.sha ?? null, status, deploymentId(data.deployment_status?.id), safeUrl(data.deployment_status?.target_url), safeUrl(data.deployment_status?.log_url), updatedAt);
+  if (event === "deployment_status" && terminal.has(status) && prior?.state !== status) notifyBoundUsers(db, installation, `github-deployment:${repository}:${id}:${status}`, `Deployment ${status}`, data.repository.full_name ?? "Repository");
+  return "done";
+}
 async function projectGitHub(db: Db, event: string, raw: string, fetchTasks?: (input: { installationId: string; repositoryId: string; path: string; sha: string }) => Promise<string | null>, reviewBot?: ReviewBotConfig) {
   const data = JSON.parse(raw) as any;
+  if (event === "deployment" || event === "deployment_status") return projectDeployment(db, event, data);
   if (event === "pull_request" && data.installation?.id && data.repository?.id && data.pull_request) {
     const pr = data.pull_request, installation = String(data.installation.id), repo = String(data.repository.id);
     db.query("INSERT INTO installations (id) VALUES (?) ON CONFLICT DO NOTHING").run(installation);
@@ -63,33 +72,19 @@ async function projectGitHub(db: Db, event: string, raw: string, fetchTasks?: (i
   if (["installation", "push"].includes(event)) return "done";
   return "ignored";
 }
-export async function drainInbox(db: Db, railwayVerifier?: (hint: { projectId: string; serviceId: string; environmentId: string; deploymentId: string }) => Promise<{ status: string } | null>, fetchTasks?: (input: { installationId: string; repositoryId: string; path: string; sha: string }) => Promise<string | null>, reviewBot?: ReviewBotConfig) {
+export async function drainInbox(db: Db, fetchTasks?: (input: { installationId: string; repositoryId: string; path: string; sha: string }) => Promise<string | null>, reviewBot?: ReviewBotConfig, sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))) {
   const affected = new Set<string>();
   const rows = db.query("SELECT provider, delivery_id, payload, event_name FROM inbox_deliveries WHERE status IN ('pending', 'pending_verification') ORDER BY received_at").all() as { provider: string; delivery_id: string; payload: string; event_name: string }[];
   for (const row of rows) {
-    try {
-      if (row.provider === "github") {
-        const status = await projectGitHub(db, row.event_name, row.payload, fetchTasks, reviewBot);
-        const installation = JSON.parse(row.payload).installation?.id; if (installation) installationUsers(db, String(installation)).forEach((id) => affected.add(id));
-        db.query("UPDATE inbox_deliveries SET status=?, payload=NULL, processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(status, row.provider, row.delivery_id);
-      } else {
-        const hint = parseRailwayHint(row.payload);
-        if (!hint) { db.query("UPDATE inbox_deliveries SET status='rejected',error='invalid Railway hint',payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); continue; }
-        projectRailwayState(db, hint, "unknown", "pending");
-        const users = railwayUsers(db, hint); users.forEach(({ user_id }) => affected.add(user_id));
-        if (!railwayVerifier) { db.query("UPDATE inbox_deliveries SET status='pending_verification',error='verification unavailable',processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); continue; }
-        let verified: { status: string } | null;
-        try { verified = await railwayVerifier(hint); } catch (error) { projectRailwayState(db, hint, "unknown", "error"); db.query("UPDATE inbox_deliveries SET status='error',error=? WHERE provider=? AND delivery_id=?").run(error instanceof Error ? error.message.slice(0, 200) : "verification failed", row.provider, row.delivery_id); continue; }
-        if (!verified) { db.query("UPDATE inbox_deliveries SET status='pending_verification', error='deployment not verified' WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); continue; }
-        const prior = db.query("SELECT status FROM deployments WHERE project_id=? AND service_id=? AND environment_id=? AND id=?").get(hint.projectId, hint.serviceId, hint.environmentId, hint.deploymentId) as { status: string } | null;
-        projectRailwayState(db, hint, verified.status, "verified");
-        if (prior?.status !== verified.status && ["SUCCESS", "FAILED"].includes(verified.status)) for (const { user_id } of users) notifyUser(db, user_id, `railway:${hint.deploymentId}:${verified.status}`, `Deployment ${verified.status.toLowerCase()}`, hint.serviceId);
-        db.query("UPDATE inbox_deliveries SET status='done', payload=NULL, processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id);
-      }
-    } catch (error) { db.query("UPDATE inbox_deliveries SET status='error', error=? WHERE provider=? AND delivery_id=?").run(error instanceof Error ? error.message.slice(0, 200) : "processing failed", row.provider, row.delivery_id); }
+    for (let attempt = 0; attempt < 3; attempt++) try {
+      if (row.provider !== "github") { db.query("UPDATE inbox_deliveries SET status='rejected',error='unsupported provider',payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); break; }
+      const status = await projectGitHub(db, row.event_name, row.payload, fetchTasks, reviewBot);
+      const installation = JSON.parse(row.payload).installation?.id; if (installation) installationUsers(db, String(installation)).forEach((id) => affected.add(id));
+      db.query("UPDATE inbox_deliveries SET status=?,error=NULL,payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(status, row.provider, row.delivery_id); break;
+    } catch (error) {
+      db.query("UPDATE inbox_deliveries SET status='pending',error=? WHERE provider=? AND delivery_id=?").run(error instanceof Error ? error.message.slice(0, 200) : "processing failed", row.provider, row.delivery_id);
+      if (attempt < 2) await sleep(1000 * 2 ** attempt);
+    }
   }
   return [...affected];
-}
-export function parseRailwayHint(raw: string) {
-  try { const value = JSON.parse(raw); const r = value.resource ?? value; const projectId = r.project?.id ?? r.projectId, serviceId = r.service?.id ?? r.serviceId, environmentId = r.environment?.id ?? r.environmentId, deploymentId = r.deployment?.id ?? r.deploymentId; return [projectId, serviceId, environmentId, deploymentId].every((x) => typeof x === "string" && x.length > 0) ? { projectId, serviceId, environmentId, deploymentId } : null; } catch { return null; }
 }
