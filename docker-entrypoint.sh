@@ -23,4 +23,4 @@ if [ "$owner" != 1000:1000 ] && ! chown 1000:1000 /data 2>/dev/null; then
   fail 'unable to initialize data volume ownership'
 fi
 
-exec setpriv --reuid=bun --regid=bun --init-groups -- "$@" || fail 'unable to drop startup privileges'
+exec setpriv --reuid=bun --regid=bun --init-groups -- "$@"
