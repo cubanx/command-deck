@@ -44,3 +44,11 @@ test("deployment bootstrap is installation-token scoped, conditional, and bounde
   expect(headers.every((value) => value.get("authorization") === "Bearer token")).toBeTrue();
   expect(db.query("SELECT state FROM github_deployments WHERE id='7'").get()).toEqual({ state: "success" });
 });
+
+test("deployment bootstrap preserves status evidence on a 304", async () => {
+  const db = openDatabase(); db.query("INSERT INTO installations (id) VALUES ('i')").run();
+  db.query("INSERT INTO github_deployments (installation_id,repository_id,id,state,status_id,updated_at) VALUES ('i','2','7','success','9','2026-01-01')").run();
+  db.query("INSERT INTO etags (request_key,value) VALUES ('installation:i:repo:2:deployment:7:statuses','status-v1')").run();
+  await bootstrapDeployments(db, "i", "2", "token", async (url) => String(url).includes("/statuses") ? new Response(null, { status: 304 }) : Response.json([{ id: 7, environment: "production", ref: "main", sha: "a".repeat(40) }]));
+  expect(db.query("SELECT state,status_id,updated_at FROM github_deployments WHERE id='7'").get()).toEqual({ state: "success", status_id: "9", updated_at: "2026-01-01" });
+});

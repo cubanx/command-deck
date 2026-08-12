@@ -26,6 +26,26 @@ test("unknown events are ignored and a restart drain processes retained pending 
   expect(db.query("SELECT status FROM inbox_deliveries WHERE delivery_id='recover'").get()!.status).toBe("done");
 });
 
+test("failed webhook processing retries with bounded backoff", async () => {
+  const db = openDatabase();
+  const push = JSON.stringify({ installation: { id: 9 }, repository: { id: 2 }, ref: "refs/heads/main", after: "a".repeat(40), commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }] });
+  acceptGitHubDelivery(db, "retry", "push", push);
+  let attempts = 0; const waits: number[] = [];
+  await drainInbox(db, async () => ++attempts < 3 ? null : "## Tasks\n- [x] Restore communications", undefined, async (ms) => waits.push(ms));
+  expect(attempts).toBe(3); expect(waits).toEqual([1000, 2000]);
+  expect(db.query("SELECT status,error,payload FROM inbox_deliveries WHERE delivery_id='retry'").get()).toMatchObject({ status: "done", error: null, payload: null });
+});
+
+test("exhausted webhook retries remain pending for a later drain", async () => {
+  const db = openDatabase();
+  const push = JSON.stringify({ installation: { id: 9 }, repository: { id: 2 }, after: "a".repeat(40), commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }] });
+  acceptGitHubDelivery(db, "retry-later", "push", push);
+  const waits: number[] = [];
+  await drainInbox(db, async () => null, undefined, async (ms) => waits.push(ms));
+  expect(waits).toEqual([1000, 2000]);
+  expect(db.query("SELECT status,error,payload FROM inbox_deliveries WHERE delivery_id='retry-later'").get()).toMatchObject({ status: "pending", error: "OpenSpec artifact fetch failed", payload: push });
+});
+
 test("configured bot comments project review progress without changing formal review state", async () => {
   const db = openDatabase();
   acceptGitHubDelivery(db, "pr", "pull_request", body);

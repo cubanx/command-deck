@@ -72,16 +72,19 @@ async function projectGitHub(db: Db, event: string, raw: string, fetchTasks?: (i
   if (["installation", "push"].includes(event)) return "done";
   return "ignored";
 }
-export async function drainInbox(db: Db, fetchTasks?: (input: { installationId: string; repositoryId: string; path: string; sha: string }) => Promise<string | null>, reviewBot?: ReviewBotConfig) {
+export async function drainInbox(db: Db, fetchTasks?: (input: { installationId: string; repositoryId: string; path: string; sha: string }) => Promise<string | null>, reviewBot?: ReviewBotConfig, sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))) {
   const affected = new Set<string>();
   const rows = db.query("SELECT provider, delivery_id, payload, event_name FROM inbox_deliveries WHERE status IN ('pending', 'pending_verification') ORDER BY received_at").all() as { provider: string; delivery_id: string; payload: string; event_name: string }[];
   for (const row of rows) {
-    try {
-      if (row.provider !== "github") { db.query("UPDATE inbox_deliveries SET status='rejected',error='unsupported provider',payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); continue; }
+    for (let attempt = 0; attempt < 3; attempt++) try {
+      if (row.provider !== "github") { db.query("UPDATE inbox_deliveries SET status='rejected',error='unsupported provider',payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); break; }
       const status = await projectGitHub(db, row.event_name, row.payload, fetchTasks, reviewBot);
       const installation = JSON.parse(row.payload).installation?.id; if (installation) installationUsers(db, String(installation)).forEach((id) => affected.add(id));
-      db.query("UPDATE inbox_deliveries SET status=?, payload=NULL, processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(status, row.provider, row.delivery_id);
-    } catch (error) { db.query("UPDATE inbox_deliveries SET status='error', error=? WHERE provider=? AND delivery_id=?").run(error instanceof Error ? error.message.slice(0, 200) : "processing failed", row.provider, row.delivery_id); }
+      db.query("UPDATE inbox_deliveries SET status=?,error=NULL,payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(status, row.provider, row.delivery_id); break;
+    } catch (error) {
+      db.query("UPDATE inbox_deliveries SET status='pending',error=? WHERE provider=? AND delivery_id=?").run(error instanceof Error ? error.message.slice(0, 200) : "processing failed", row.provider, row.delivery_id);
+      if (attempt < 2) await sleep(1000 * 2 ** attempt);
+    }
   }
   return [...affected];
 }
