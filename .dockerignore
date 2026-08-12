@@ -3,6 +3,7 @@
 .env.*
 data
 node_modules
+.codegraph
 test
 openspec
 README.md

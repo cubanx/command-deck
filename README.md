@@ -36,6 +36,7 @@ openspec validate build-developer-command-center-mvp --strict
 | `NODE_ENV` | Set to `production` only for the hosted service; it enables fail-closed production validation. |
 | `PUBLIC_URL` | Production HTTPS origin with no path, query, fragment, or credentials; must equal `https://${RAILWAY_PUBLIC_DOMAIN}`. |
 | `RAILWAY_PUBLIC_DOMAIN` / `RAILWAY_VOLUME_MOUNT_PATH` | Railway-provided production cross-checks. Mount the single volume at `/data` and set `DATABASE_PATH=/data/command-center.sqlite`. |
+| `RAILWAY_RUN_UID` | Set to `0` so the entrypoint can initialize Railway's root-mounted `/data`; it permanently drops to `bun` before starting the application. |
 | `DCC_LOCAL_DEMO` | Credential-free fixture access. `bun run dev` sets it to `1`; hosted or production environments reject it. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub App OAuth identity flow. The resulting user token is used only during the callback and is never persisted. |
 | `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_PRIVATE_KEY` | Installation flow, App JWTs, and installation-token repository reads. Encode private-key newlines as `\\n` when necessary. |
@@ -49,10 +50,10 @@ Keep values in the environment or a secret manager. Never commit `.env`, App pri
 
 Repository configuration only is covered here; creating a Railway service, volume, domain, GitHub App, secrets, or deployment requires fresh authorization.
 
-1. Run exactly one Railway service and replica from this Dockerfile. Attach one persistent volume at `/data`; set `NODE_ENV=production`, `DATABASE_PATH=/data/command-center.sqlite`, and set `PUBLIC_URL` to the generated HTTPS Railway domain. SQLite and WAL sidecars must stay on that volume.
-2. Set the required server variables by name only: `PUBLIC_URL`, `DATABASE_PATH`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`. Never place resolved values in evidence.
+1. Run exactly one Railway service and replica from this Dockerfile. Attach one persistent volume at `/data`; set `NODE_ENV=production`, `DATABASE_PATH=/data/command-center.sqlite`, `RAILWAY_RUN_UID=0`, and set `PUBLIC_URL` to the generated HTTPS Railway domain. The root entrypoint initializes only an empty or already `bun`-owned mount, then starts the application as `bun`; SQLite and WAL sidecars stay on that volume.
+2. Set the required server variables by name only: `PUBLIC_URL`, `DATABASE_PATH`, `RAILWAY_RUN_UID`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`. Never place resolved values in evidence.
 3. Railway activates only after `/ready` returns `200`; `/health` is liveness only. A volume-backed SQLite service is intentionally single-replica: redeploys briefly interrupt service, but retain the volume.
-4. Roll back by selecting the last known-good deployment while retaining the attached volume. If `/ready` does not recover, stop and investigate the mounted database—never recreate the volume as a rollback shortcut.
+4. Before retrying with an existing volume, inspect its ownership under a separately authorized operational task. If any content is not owned by `bun`, stop for an explicit repair decision; the entrypoint will not recursively change it. Roll back by selecting the last known-good deployment while retaining the attached volume. If `/ready` does not recover, never recreate the volume as a shortcut.
 
 Record redacted evidence only: timestamp, reviewed Git SHA, Railway deployment ID, variable-name checklist, `/health` and `/ready` statuses, OAuth result, GitHub delivery IDs/outcomes, deployment projection result, restart durability, and rollback outcome.
 
