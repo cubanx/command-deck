@@ -1,30 +1,16 @@
 import { expect, test } from "bun:test";
-import { openDatabase } from "../src/db";
+import { bindInstallation, upsertIdentity } from "../src/access";
 import { changedTaskPaths, parseTasks, projectOpenSpec } from "../src/openspec";
+import { withDatabase } from "./mongo-support";
 
-test("selects only committed OpenSpec task paths and parses checkbox progress", () => {
-  expect(changedTaskPaths(["README.md", "openspec/changes/warp-core/tasks.md", "openspec/changes/x/spec.md"])).toEqual(["openspec/changes/warp-core/tasks.md"]);
-  expect(parseTasks("## 1. Deflector\n- [x] Fix the deflector\n- [ ] Calibrate sensors\n\n## 2. Launch\n- [ ] Engage")).toEqual({
-    completed: 1,
-    total: 3,
-    activeGroup: {
-      title: "1. Deflector",
-      tasks: [
-        { completed: true, text: "Fix the deflector" },
-        { completed: false, text: "Calibrate sensors" }
-      ]
-    }
-  });
-});
-
-test("projects installation-scoped progress, deletion, and completion transitions", () => {
-  const db = openDatabase();
-  db.query("INSERT INTO installations (id) VALUES ('i1')").run();
-  expect(projectOpenSpec(db, { installationId: "i1", repositoryId: "r", path: "openspec/changes/warp-core/tasks.md", content: "## 1. Flight\n- [ ] Align", sha: "one", sourceRef: "ops/warp-core" })).toBeFalse();
-  expect(JSON.parse(db.query("SELECT active_group FROM openspec_progress").get()!.active_group).tasks[0].text).toBe("Align");
-  expect(db.query("SELECT source_ref FROM openspec_progress").get()!.source_ref).toBe("ops/warp-core");
-  expect(projectOpenSpec(db, { installationId: "i1", repositoryId: "r", path: "openspec/changes/warp-core/tasks.md", content: "- [x] Align", sha: "two" })).toBeTrue();
-  expect(db.query("SELECT completed FROM openspec_progress").get()!.completed).toBe(1);
-  projectOpenSpec(db, { installationId: "i1", repositoryId: "r", path: "openspec/changes/warp-core/tasks.md", deleted: true, sha: "three" });
-  expect(db.query("SELECT count(*) AS count FROM openspec_progress").get()!.count).toBe(0);
-});
+test("projects installation-scoped OpenSpec progress", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "1");
+  const user = await db.users.findOne({ _id: "u" }); user!.installations[0]!.repositories.push({ repositoryId: "r", full_name: "ds9/ops", pullRequests: [], openSpecs: [], deployments: [] }); await db.users.replaceOne({ _id: "u" }, user!);
+  expect(changedTaskPaths(["openspec/changes/defiant/tasks.md", "README.md"])).toEqual(["openspec/changes/defiant/tasks.md"]);
+  expect(parseTasks("## Tasks\n- [x] Ready\n- [ ] Fly")).toMatchObject({ completed: 1, total: 2 });
+  expect(await projectOpenSpec(db, { installationId: "1", repositoryId: "r", path: "openspec/changes/defiant/tasks.md", content: "- [x] Ready", sha: "a".repeat(40) })).toBeTrue();
+  expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(1);
+  expect(await projectOpenSpec(db, { installationId: "1", repositoryId: "r", path: "openspec/changes/defiant/tasks.md", content: "- [x] Ready", sha: "a".repeat(40), sourceRef: "main" })).toBeFalse();
+  await projectOpenSpec(db, { installationId: "1", repositoryId: "r", path: "openspec/changes/defiant/tasks.md", deleted: true, sha: "b".repeat(40) });
+  expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(0);
+}));

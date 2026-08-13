@@ -1,13 +1,21 @@
 {
   "name": "developer-command-center",
-  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  },
   "license": "MIT",
-  "type": "module",
+  "private": true,
   "scripts": {
     "dev": "NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
     "start": "bun src/server.ts",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "test:mongo": "MONGODB_URI_BASE=${MONGODB_URI_BASE:?MONGODB_URI_BASE is required} MONGODB_DATABASE=dev-command-center-test-$(bun -e 'console.log(crypto.randomUUID())') bun test test/mongodb.test.ts",
+    "seed:bindings": "bun src/seed-bindings.ts"
   },
-  "devDependencies": { "@types/bun": "latest", "typescript": "latest" }
+  "type": "module",
+  "dependencies": {
+    "mongodb": "6.19.0"
+  }
 }
