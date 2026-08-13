@@ -7,18 +7,18 @@ import { openDatabase } from "../src/db";
 import { acceptGitHubDelivery, drainInbox } from "../src/events";
 
 const deployment = (installation = "i1", repository = "r1") => JSON.stringify({
-  installation: { id: installation }, repository: { id: repository, full_name: "cubanx/command-deck" },
+  installation: { id: installation, account: { login: "cubanx" } }, repository: { id: repository, full_name: "cubanx/command-deck" },
   deployment: { id: 42, environment: "production", ref: "main", sha: "a".repeat(40), created_at: "2030-01-01T00:00:00Z" }
 });
 const status = (state: string, installation = "i1", repository = "r1", createdAt = "2030-01-01T01:00:00Z") => JSON.stringify({
-  installation: { id: installation }, repository: { id: repository, full_name: "cubanx/command-deck" },
+  installation: { id: installation, account: { login: "cubanx" } }, repository: { id: repository, full_name: "cubanx/command-deck" },
   deployment: { id: 42, environment: "production", ref: "main", sha: "a".repeat(40) },
   deployment_status: { id: 99, state, created_at: createdAt, target_url: "https://railway.example/deployments/42", log_url: "https://railway.example/logs/42" }
 });
 
 test("signed GitHub deployment deliveries project idempotently and notify only terminal transitions", async () => {
   const db = openDatabase();
-  db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1','sisko')").run(); bindInstallation(db, "u1", "i1");
+  db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1','sisko')").run(); bindInstallation(db, "u1", "i1", "cubanx");
   acceptGitHubDelivery(db, "deployment-1", "deployment", deployment());
   acceptGitHubDelivery(db, "status-1", "deployment_status", status("success"));
   await drainInbox(db);
@@ -31,7 +31,7 @@ test("signed GitHub deployment deliveries project idempotently and notify only t
 });
 
 test("older deployment statuses cannot regress newer state and inactive does not notify", async () => {
-  const db = openDatabase(); db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1','sisko')").run(); bindInstallation(db, "u1", "i1");
+  const db = openDatabase(); db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1','sisko')").run(); bindInstallation(db, "u1", "i1", "cubanx");
   acceptGitHubDelivery(db, "new", "deployment_status", status("success", "i1", "r1", "2030-01-02T01:00:00Z")); await drainInbox(db);
   acceptGitHubDelivery(db, "old", "deployment_status", status("pending", "i1", "r1", "2030-01-01T01:00:00Z")); await drainInbox(db);
   expect(db.query("SELECT state FROM github_deployments WHERE id='42'").get()).toEqual({ state: "success" });
@@ -41,7 +41,7 @@ test("older deployment statuses cannot regress newer state and inactive does not
 });
 
 test("dashboard returns safe deployment target and log links", async () => {
-  const db = openDatabase(); db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1','sisko')").run(); bindInstallation(db, "u1", "i1");
+  const db = openDatabase(); db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1','sisko')").run(); bindInstallation(db, "u1", "i1", "cubanx");
   acceptGitHubDelivery(db, "status-link", "deployment_status", status("success")); await drainInbox(db);
   expect(dashboardForUser(db, "u1").deployments[0]).toMatchObject({ target_url: "https://railway.example/deployments/42", log_url: "https://railway.example/logs/42" });
 });
@@ -49,7 +49,7 @@ test("dashboard returns safe deployment target and log links", async () => {
 test("dashboard deployment rows stay within the user's installation", async () => {
   const db = openDatabase();
   db.query("INSERT INTO users (id,github_id,login) VALUES ('u1','1','sisko'),('u2','2','kira')").run();
-  bindInstallation(db, "u1", "i1"); bindInstallation(db, "u2", "i2");
+  bindInstallation(db, "u1", "i1", "cubanx"); bindInstallation(db, "u2", "i2", "Crisp-Inc");
   acceptGitHubDelivery(db, "i1-status", "deployment_status", status("failure", "i1", "r1"));
   acceptGitHubDelivery(db, "i2-status", "deployment_status", status("success", "i2", "r2")); await drainInbox(db);
   expect(dashboardForUser(db, "u1").deployments.map((row) => row.installation_id)).toEqual(["i1"]);

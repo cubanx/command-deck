@@ -17,7 +17,7 @@ export function openDatabase(path = ":memory:"): Db {
     CREATE TABLE IF NOT EXISTS railway_connections (user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT NOT NULL, service_id TEXT NOT NULL, environment_id TEXT NOT NULL, PRIMARY KEY (user_id, project_id, service_id, environment_id));
     CREATE TABLE IF NOT EXISTS github_deployments (installation_id TEXT NOT NULL REFERENCES installations(id), repository_id TEXT NOT NULL, id TEXT NOT NULL, environment TEXT, ref TEXT, sha TEXT, state TEXT NOT NULL DEFAULT 'pending', status_id TEXT, target_url TEXT, log_url TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (installation_id, repository_id, id));
     CREATE TABLE IF NOT EXISTS inbox_deliveries (provider TEXT NOT NULL, delivery_id TEXT NOT NULL, payload TEXT, event_name TEXT, status TEXT NOT NULL DEFAULT 'pending', error TEXT, received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, processed_at TEXT, PRIMARY KEY (provider, delivery_id));
-    CREATE TABLE IF NOT EXISTS etags (request_key TEXT PRIMARY KEY, value TEXT NOT NULL, checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS etags (request_key TEXT PRIMARY KEY, value TEXT NOT NULL, cached_body TEXT, checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS openspec_progress (installation_id TEXT NOT NULL, repository_id TEXT NOT NULL, change_name TEXT NOT NULL, completed INTEGER NOT NULL, total INTEGER NOT NULL, source_commit TEXT NOT NULL, source_ref TEXT, active_group TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (installation_id, repository_id, change_name));
     CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), transition_key TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (user_id, transition_key));
   `);
@@ -34,5 +34,7 @@ export function openDatabase(path = ":memory:"): Db {
   const deploymentColumns = db.query<{ name: string }, []>("PRAGMA table_info(github_deployments)").all();
   if (!deploymentColumns.some(({ name }) => name === "target_url")) db.exec("ALTER TABLE github_deployments ADD COLUMN target_url TEXT");
   if (!deploymentColumns.some(({ name }) => name === "log_url")) db.exec("ALTER TABLE github_deployments ADD COLUMN log_url TEXT");
+  const etagColumns = db.query<{ name: string }, []>("PRAGMA table_info(etags)").all();
+  if (!etagColumns.some(({ name }) => name === "cached_body")) db.exec("ALTER TABLE etags ADD COLUMN cached_body TEXT");
   return db;
 }

@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
 import type { Db } from "./db";
 import type { ReviewBotConfig } from "./config";
 import { changedTaskPaths, projectOpenSpec } from "./openspec";
+import { approvedInstallationAccount } from "./installations";
 
 export function githubSignatureValid(body: string, signature: string | null, secret: string) {
   if (!signature?.startsWith("sha256=")) return false;
@@ -10,6 +11,8 @@ export function githubSignatureValid(body: string, signature: string | null, sec
   return actual.length === expected.length && timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
 export function acceptGitHubDelivery(db: Db, deliveryId: string, eventName: string, body: string) {
+  try { if (!approvedInstallationAccount((JSON.parse(body) as { installation?: { account?: { login?: unknown } } }).installation?.account?.login)) return false; }
+  catch { return false; }
   return db.query("INSERT INTO inbox_deliveries (provider, delivery_id, payload, event_name) VALUES ('github', ?, ?, ?) ON CONFLICT DO NOTHING").run(deliveryId, body, eventName).changes === 1;
 }
 export function notifyBoundUsers(db: Db, installationId: string, key: string, title: string, body: string) {
@@ -26,11 +29,15 @@ const deploymentId = (value: unknown) => typeof value === "number" || (typeof va
 const providerId = (value: unknown) => typeof value === "string" || typeof value === "number" ? String(value) : null;
 const terminal = new Set(["success", "failure", "error"]);
 const safeUrl = (value: unknown) => { try { const url = new URL(String(value)); return ["http:", "https:"].includes(url.protocol) ? url.toString() : null; } catch { return null; } };
+const projectInstallation = (db: Db, installation: string, accountLogin: unknown) => {
+  if (!approvedInstallationAccount(accountLogin)) return false;
+  db.query("INSERT INTO installations (id,account_login) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET account_login=excluded.account_login").run(installation, accountLogin);
+  return true;
+};
 function projectDeployment(db: Db, event: string, data: any) {
   const installation = providerId(data.installation?.id), repository = providerId(data.repository?.id), deployment = data.deployment;
-  if (!installation || !repository || !deployment || !deploymentId(deployment.id)) return "ignored";
+  if (!installation || !repository || !deployment || !deploymentId(deployment.id) || !projectInstallation(db, installation, data.installation?.account?.login)) return "ignored";
   const id = deploymentId(deployment.id)!;
-  db.query("INSERT INTO installations (id) VALUES (?) ON CONFLICT DO NOTHING").run(installation);
   db.query("INSERT INTO repositories (installation_id,id,full_name) VALUES (?,?,?) ON CONFLICT(installation_id,id) DO UPDATE SET full_name=excluded.full_name").run(installation, repository, data.repository.full_name ?? repository);
   const prior = db.query("SELECT state,updated_at FROM github_deployments WHERE installation_id=? AND repository_id=? AND id=?").get(installation, repository, id) as { state: string; updated_at: string } | null;
   const status = event === "deployment_status" ? String(data.deployment_status?.state ?? "pending").toLowerCase() : prior?.state ?? "pending";
@@ -45,7 +52,7 @@ async function projectGitHub(db: Db, event: string, raw: string, fetchTasks?: (i
   if (event === "deployment" || event === "deployment_status") return projectDeployment(db, event, data);
   if (event === "pull_request" && data.installation?.id && data.repository?.id && data.pull_request) {
     const pr = data.pull_request, installation = String(data.installation.id), repo = String(data.repository.id);
-    db.query("INSERT INTO installations (id) VALUES (?) ON CONFLICT DO NOTHING").run(installation);
+    if (!projectInstallation(db, installation, data.installation?.account?.login)) return "ignored";
     db.query("INSERT INTO repositories (installation_id,id,full_name) VALUES (?,?,?) ON CONFLICT(installation_id,id) DO UPDATE SET full_name=excluded.full_name").run(installation, repo, data.repository.full_name ?? repo);
     const before = db.query("SELECT mergeable FROM pull_requests WHERE installation_id=? AND repository_id=? AND number=?").get(installation, repo, pr.number) as { mergeable: string | null } | null;
     if (data.action === "closed" || pr.state !== "open") db.query("DELETE FROM pull_requests WHERE installation_id=? AND repository_id=? AND number=?").run(installation, repo, pr.number);
@@ -78,6 +85,8 @@ export async function drainInbox(db: Db, fetchTasks?: (input: { installationId: 
   for (const row of rows) {
     for (let attempt = 0; attempt < 3; attempt++) try {
       if (row.provider !== "github") { db.query("UPDATE inbox_deliveries SET status='rejected',error='unsupported provider',payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); break; }
+      const accountLogin = (JSON.parse(row.payload) as { installation?: { account?: { login?: unknown } } }).installation?.account?.login;
+      if (!approvedInstallationAccount(accountLogin)) { db.query("UPDATE inbox_deliveries SET status='ignored',error='unapproved installation',payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(row.provider, row.delivery_id); break; }
       const status = await projectGitHub(db, row.event_name, row.payload, fetchTasks, reviewBot);
       const installation = JSON.parse(row.payload).installation?.id; if (installation) installationUsers(db, String(installation)).forEach((id) => affected.add(id));
       db.query("UPDATE inbox_deliveries SET status=?,error=NULL,payload=NULL,processed_at=CURRENT_TIMESTAMP WHERE provider=? AND delivery_id=?").run(status, row.provider, row.delivery_id); break;

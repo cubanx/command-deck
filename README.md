@@ -92,7 +92,7 @@ GitHub installation bindings determine dashboard visibility. Bootstrap and expli
 
 Normal GitHub pull-request, review, check, workflow, installation, deployment, and deployment-status changes update projections from webhooks without list/search calls. Push events fetch only changed committed `openspec/changes/*/tasks.md` files. Bootstrap, repair, and reconciliation use installation tokens, authenticated ETags, serial requests, rate-limit headers, and bounded backoff. An authorized `304` preserves the projection without consuming the primary REST limit.
 
-The MVP reconciles at most the first 100 repositories, first 100 open pull requests per repository, and 20 recent deployments per repository with one latest-status read each. Pagination is the explicit upgrade when a real installation reaches those ceilings.
+The dashboard shows every authorized open pull request authored by the signed-in developer across bound GitHub App installations, with attention-needed work first. Bootstrap and reconciliation paginate repositories and open pull requests; deployments intentionally remain the newest 20 per repository.
 
 ## MVP limits and operational gate
 

@@ -12,7 +12,7 @@ test("webhooks reject oversized bodies before inbox persistence", async () => {
 
 test("GitHub signatures use the exact UTF-8 bytes across stream chunks", async () => {
   const db = openDatabase(); const app = createApp(db, { port: 0, databasePath: ":memory:", githubWebhookSecret: "secret" });
-  const body = JSON.stringify({ installation: { id: 9 }, repository: { id: 2, full_name: "ds9/ops" }, pull_request: { number: 7, title: "Café on the Promenade", user: { login: "sisko" }, state: "open" } });
+  const body = JSON.stringify({ installation: { id: 9, account: { login: "cubanx" } }, repository: { id: 2, full_name: "ds9/ops" }, pull_request: { number: 7, title: "Café on the Promenade", user: { login: "sisko" }, state: "open" } });
   const bytes = new TextEncoder().encode(body), marker = new TextEncoder().encode("é"), split = bytes.findIndex((_, index) => bytes[index] === marker[0] && bytes[index + 1] === marker[1]) + 1;
   const stream = new ReadableStream({ start(controller) { controller.enqueue(bytes.slice(0, split)); controller.enqueue(bytes.slice(split)); controller.close(); } });
   const signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;

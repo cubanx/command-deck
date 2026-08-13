@@ -1,9 +1,15 @@
 import { expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import { openDatabase } from "../src/db";
 import { LOCAL_DEMO_USER, createOAuthState } from "../src/access";
+import { reconcileInstallations } from "../src/github";
 import { createApp } from "../src/server";
 
 const config = { port: 0, hostname: undefined, databasePath: ":memory:", localDemo: false };
+const privateKey = async () => {
+  const { privateKey } = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+  return `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64").match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----`;
+};
 test("public PWA assets are available but authenticated snapshot and stream are isolated", async () => {
   const db = openDatabase(); const app = createApp(db, config);
   expect((await app.fetch(new Request("http://local/manifest.webmanifest"))).headers.get("content-type")).toContain("application/manifest");
@@ -61,11 +67,61 @@ test("GitHub callback binds only a verified installation", async () => {
   const app = createApp(db, { ...config, githubClientId: "client", githubClientSecret: "secret" });
   const state = createOAuthState(db);
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => String(input).includes("access_token") ? Response.json({ access_token: "token" }) : Response.json({ id: 1702, login: "kira" });
+  globalThis.fetch = async (input) => String(input) === "https://github.com/login/oauth/access_token" ? Response.json({ access_token: "token" }) : Response.json({ id: 1702, login: "kira" });
   try {
     expect((await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}`))).status).toBe(302);
     expect(db.query("SELECT installation_id FROM user_installations").all()).toEqual([]);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("GitHub callback verifies the requested installation on a later page", async () => {
+  const db = openDatabase(), app = createApp(db, { ...config, githubClientId: "client", githubClientSecret: "secret", githubAppId: "1", githubAppPrivateKey: await privateKey() }), state = createOAuthState(db), originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => { const url = String(input); if (url === "https://github.com/login/oauth/access_token") return Response.json({ access_token: "token" }); if (url.endsWith("/user")) return Response.json({ id: 1703, login: "garak" }); if (url.includes("page=2")) { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer token"); return Response.json({ installations: [{ id: 99, account: { login: "Crisp-Inc" } }] }); } if (url.includes("access_tokens")) return Response.json({ token: "installation-token" }); if (url.endsWith("/installation")) { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer installation-token"); return Response.json({ account: { login: "Crisp-Inc" } }); } if (url.includes("installation/repositories")) { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer installation-token"); return Response.json({ repositories: [] }); } return Response.json({ installations: [{ id: 1, account: { login: "cubanx" } }] }, { headers: { link: '<https://api.github.com/user/installations?per_page=100&page=2>; rel="next"' } }); };
+  try { expect((await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=99`))).status).toBe(302); expect(db.query("SELECT installation_id FROM user_installations").all()).toEqual([{ installation_id: "99" }]); await app.bootstrap; } finally { globalThis.fetch = originalFetch; }
+});
+
+test("GitHub callback redirects before its durable binding bootstrap finishes", async () => {
+  const db = openDatabase(), app = createApp(db, { ...config, githubClientId: "client", githubClientSecret: "secret", githubAppId: "1", githubAppPrivateKey: await privateKey() }), state = createOAuthState(db), originalFetch = globalThis.fetch;
+  let releaseRepositories!: () => void, repositoriesStarted!: () => void;
+  const repositoriesPending = new Promise<void>((resolve) => { repositoriesStarted = resolve; });
+  globalThis.fetch = async (input, init) => { const url = String(input); if (url === "https://github.com/login/oauth/access_token") return Response.json({ access_token: "oauth-token" }); if (url.endsWith("/user")) return Response.json({ id: 1704, login: "kira" }); if (url.includes("user/installations")) return Response.json({ installations: [{ id: 100, account: { login: "Crisp-Inc" } }] }); if (url.includes("access_tokens")) return Response.json({ token: "installation-token" }); if (url.endsWith("/installation")) { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer installation-token"); return Response.json({ account: { login: "Crisp-Inc" } }); } if (url.includes("installation/repositories")) { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer installation-token"); repositoriesStarted(); return new Promise<Response>((resolve) => { releaseRepositories = () => resolve(Response.json({ repositories: [{ id: 7, full_name: "Crisp-Inc/defiant" }] })); }); } if (url.includes("/pulls")) { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer installation-token"); return Response.json([{ number: 3, title: "Hold the line", html_url: "https://github.com/Crisp-Inc/defiant/pull/3", user: { login: "kira" }, state: "open", updated_at: "2026-08-13T00:00:00.000Z" }]); } return Response.json([]); };
+  try {
+    const response = await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=100`));
+    expect(response.status).toBe(302);
+    expect(db.query("SELECT installation_id FROM user_installations").all()).toEqual([{ installation_id: "100" }]);
+    await repositoriesPending;
+    expect(db.query("SELECT count(*) AS count FROM repositories").get()).toEqual({ count: 0 });
+    releaseRepositories();
+    await app.bootstrap;
+    expect(db.query("SELECT full_name FROM repositories").all()).toEqual([{ full_name: "Crisp-Inc/defiant" }]);
+    expect(db.query("SELECT title FROM pull_requests").all()).toEqual([{ title: "Hold the line" }]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("GitHub callback retains a binding when background bootstrap is unavailable", async () => {
+  const db = openDatabase(), app = createApp(db, { ...config, githubClientId: "client", githubClientSecret: "secret", githubAppId: "1", githubAppPrivateKey: await privateKey() }), state = createOAuthState(db), originalFetch = globalThis.fetch, originalError = console.error, errors: string[] = [];
+  let bootstrapAvailable = false;
+  console.error = (...values: unknown[]) => { errors.push(values.join(" ")); };
+  globalThis.fetch = async (input) => { const url = String(input); if (url === "https://github.com/login/oauth/access_token") return Response.json({ access_token: "oauth-token" }); if (url.endsWith("/user")) return Response.json({ id: 1705, login: "odo" }); if (url.includes("user/installations")) return Response.json({ installations: [{ id: 101, account: { login: "cubanx" } }] }); if (url.includes("access_tokens")) return Response.json({ token: "installation-token" }); if (url.endsWith("/installation")) return bootstrapAvailable ? Response.json({ account: { login: "cubanx" } }) : new Response("unavailable", { status: 503 }); if (url.includes("installation/repositories")) return Response.json({ repositories: [{ id: 8, full_name: "cubanx/terok-nor" }] }); if (url.includes("/pulls")) return Response.json([{ number: 9, title: "Constable's report", html_url: "https://github.com/cubanx/terok-nor/pull/9", user: { login: "odo" }, state: "open", updated_at: "2026-08-13T00:00:00.000Z" }]); return Response.json([]); };
+  try {
+    expect((await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=101`))).status).toBe(302);
+    await app.bootstrap;
+    expect(db.query("SELECT installation_id FROM user_installations").all()).toEqual([{ installation_id: "101" }]);
+    expect(db.query("SELECT count(*) AS count FROM repositories").get()).toEqual({ count: 0 });
+    expect(db.query("SELECT count(*) AS count FROM pull_requests").get()).toEqual({ count: 0 });
+    expect(db.query("SELECT count(*) AS count FROM github_deployments").get()).toEqual({ count: 0 });
+    expect(errors).toEqual(["GitHub callback bootstrap failed: GitHub installation verification failed"]);
+    bootstrapAvailable = true;
+    await reconcileInstallations(db, async () => "recovered-token");
+    expect(db.query("SELECT full_name FROM repositories").all()).toEqual([{ full_name: "cubanx/terok-nor" }]);
+    expect(db.query("SELECT title FROM pull_requests").all()).toEqual([{ title: "Constable's report" }]);
+  } finally { console.error = originalError; globalThis.fetch = originalFetch; }
+});
+
+test("signed webhooks ignore missing or unapproved installation accounts before persistence", async () => {
+  const db = openDatabase(), app = createApp(db, { ...config, githubWebhookSecret: "secret" });
+  for (const [delivery, login] of [["missing", undefined], ["bad", "ferengi"]] as const) { const body = JSON.stringify({ installation: { id: 9, ...(login ? { account: { login } } : {}) } }), signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`; expect((await app.fetch(new Request("http://local/webhooks/github", { method: "POST", headers: { "x-github-delivery": delivery, "x-github-event": "push", "x-hub-signature-256": signature }, body }))).status).toBe(202); }
+  expect(db.query("SELECT count(*) AS count FROM inbox_deliveries").get()).toEqual({ count: 0 });
 });
 
 test("startup drain recovers pending OpenSpec push deliveries", async () => {
@@ -73,7 +129,7 @@ test("startup drain recovers pending OpenSpec push deliveries", async () => {
   const { privateKey } = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
   const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64").match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----`;
   db.query("INSERT INTO installations (id) VALUES ('9')").run();
-  db.query("INSERT INTO inbox_deliveries (provider,delivery_id,payload,event_name) VALUES ('github','push',?,'push')").run(JSON.stringify({ installation: { id: 9 }, repository: { id: 2 }, ref: "refs/heads/ops/defiant", after: "a".repeat(40), commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }] }));
+  db.query("INSERT INTO inbox_deliveries (provider,delivery_id,payload,event_name) VALUES ('github','push',?,'push')").run(JSON.stringify({ installation: { id: 9, account: { login: "cubanx" } }, repository: { id: 2 }, ref: "refs/heads/ops/defiant", after: "a".repeat(40), commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }] }));
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => String(input).includes("access_tokens") ? Response.json({ token: "installation-token" }) : new Response("- [ ] Launch Defiant");
   try {
