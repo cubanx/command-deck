@@ -39,5 +39,5 @@
 - [x] 6.1 Run the full Bun suite against the guarded isolated MongoDB database, then run repository typecheck and every declared static validation.
 - [x] 6.2 Run `git diff --check` and strict OpenSpec validation for `replace-sqlite-with-mongodb`; inspect the final diff for secrets, swallowed exceptions, SQLite runtime remnants, unrelated edits, and untested behavior.
 - [x] 6.3 Confirm the `dcc/show-all-authored-pull-requests` worktree remains untouched and record which storage-independent contracts and tests must be reapplied after the MongoDB cutover.
-- [ ] 6.4 Obtain current read-only provider evidence that merging this PR cannot automatically deploy the incompatible runtime; if that cannot be proven, leave merge blocked and request a separately authorized pre-merge provider-safety action.
+- [x] 6.4 Obtain current read-only provider evidence that merging this PR cannot automatically deploy the incompatible runtime; if that cannot be proven, leave merge blocked and request a separately authorized pre-merge provider-safety action.
 - [x] 6.5 Stop for human review with changed files, validation evidence, remaining gates, and a recommended conventional commit message; do not commit, push, merge, deploy, seed production, or execute the cutover from this change.
