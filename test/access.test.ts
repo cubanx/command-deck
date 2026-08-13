@@ -36,7 +36,8 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
   user!.installations[0]!.repositories.push({ repositoryId: "2", full_name: "ds9/ops", pullRequests: [
     { number: 1, title: "Urgent", author_login: "sisko", state: "open", checks_state: "failure", updated_at: "2030-01-01", url: "javascript:alert(1)", head_sha: sha, head_ref: "shared" },
     { number: 2, title: "Branch", author_login: "sisko", state: "open", updated_at: "2030-01-03", head_ref: "unique" },
-    { number: 3, title: "Ambiguous", author_login: "sisko", state: "open", updated_at: "2030-01-02", head_ref: "shared" }
+    { number: 3, title: "Ambiguous branch", author_login: "sisko", state: "open", updated_at: "2030-01-02", head_ref: "shared" },
+    { number: 4, title: "Ambiguous commit", author_login: "sisko", state: "open", updated_at: "2030-01-01T01:00:00Z", head_sha: sha, head_ref: "other" }
   ], openSpecs: [
     { change_name: "sha-match", completed: 2, total: 2, source_commit: sha, source_ref: "other" },
     { change_name: "branch-match", completed: 2, total: 2, source_ref: "unique" },
@@ -49,9 +50,10 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
     { id: "success", state: "success", updated_at: "2030-01-02T21:00:00Z" }
   ] }); await db.users.replaceOne({ _id: "u" }, user!);
   const dashboard = await dashboardForUser(db, "u", now);
-  expect(dashboard.pullRequests.map((pr: any) => pr.number)).toEqual([1, 2, 3]);
-  expect(dashboard.pullRequests[0]).toMatchObject({ url: "https://github.com/ds9/ops/pull/1", open_spec: { change_name: "sha-match", source_url: `https://github.com/ds9/ops/blob/${sha}/openspec/changes/sha-match/tasks.md` } });
-  expect(dashboard.pullRequests[1]?.open_spec).toMatchObject({ change_name: "branch-match" }); expect(dashboard.pullRequests[2]?.open_spec).toBeNull();
+  expect(dashboard.pullRequests.map((pr: any) => pr.number)).toEqual([1, 2, 3, 4]);
+  const pullRequests = new Map(dashboard.pullRequests.map((pr: any) => [pr.number, pr]));
+  expect(pullRequests.get(1)).toMatchObject({ url: "https://github.com/ds9/ops/pull/1", open_spec: null });
+  expect(pullRequests.get(2)?.open_spec).toMatchObject({ change_name: "branch-match" }); expect(pullRequests.get(3)?.open_spec).toBeNull(); expect(pullRequests.get(4)?.open_spec).toBeNull();
   expect(dashboard.deployments.map((deployment: any) => deployment.id)).toEqual(["pending", "failure", "success"]);
 }));
 
@@ -78,7 +80,15 @@ test("aggregate CAS preserves concurrent data and rejects oversized replacement"
   await upsertIdentity(db, "9", "kira"); await bindInstallation(db, "9", "1");
   await mutateUser(db, "9", (user) => { user.installations[0]!.repositories.push({ repositoryId: "r", full_name: "ds9/ops", pullRequests: [{ number: 1 }], openSpecs: [], deployments: [] }); });
   expect((await db.users.findOne({ _id: "9" }))?.installations[0]?.repositories[0]?.pullRequests).toHaveLength(1);
-  await expect(mutateUser(db, "9", (user) => { user.github.avatarUrl = "x".repeat(13 * 1024 * 1024); })).rejects.toThrow("exceeds");
+  await expect(mutateUser(db, "9", (user) => { user.github.avatarUrl = "x".repeat(13 * 1024 * 1024); })).rejects.toThrow("user 9 installations 1 exceeds");
+  expect((await db.users.findOne({ _id: "9" }))?.github.avatarUrl).toBeUndefined();
+}));
+
+test("identity upserts are atomic and preserve seeded bindings", () => withDatabase(async (db) => {
+  await seedBindings(db, { userId: "9", bindings: [{ installationId: "1", accountLogin: "cubanx" }] });
+  await Promise.all(Array.from({ length: 8 }, () => upsertIdentity(db, "9", "kira", "https://example.test/kira.png")));
+  expect(await db.users.countDocuments({ _id: "9" })).toBe(1);
+  expect(await db.users.findOne({ _id: "9" })).toMatchObject({ revision: 8, github: { login: "kira", avatarUrl: "https://example.test/kira.png" }, installations: [{ installationId: "1", accountLogin: "cubanx" }] });
 }));
 
 test("aggregate CAS retries conflicts and preserves multiple bindings", () => withDatabase(async (db) => {

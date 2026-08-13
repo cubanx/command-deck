@@ -13,7 +13,7 @@ test("GitHub verifies, dedupes, fans out, and clears successful deliveries", () 
   expect(await acceptGitHubDelivery(db, "d1", "pull_request", body)).toBeTrue(); expect(await acceptGitHubDelivery(db, "d1", "pull_request", body)).toBeFalse();
   expect(await drainInbox(db)).toEqual(["u1", "u2"]);
   expect((await db.users.findOne({ _id: "u1" }))?.installations[0]?.repositories[0]?.pullRequests[0]).toMatchObject({ title: "Keep station online", draft: 1 });
-  expect((await db.inboxDeliveries.findOne({ _id: "github:d1" }))?.payload).toBeNull();
+  expect((await db.inboxDeliveries.findOne({ _id: "github:d1" }))?.payload).toBeUndefined();
 }));
 
 test("closed pull requests remove their projection", () => withDatabase(async (db) => {
@@ -30,8 +30,10 @@ test("webhook retries retain payload and bot plus OpenSpec updates preserve form
   await acceptGitHubDelivery(db, "bot-deleted", "issue_comment", comment.replace('"created"', '"deleted"').replace("started review", "review complete")); await drainInbox(db, undefined, { login: "claude[bot]", startMarker: "started review", doneMarker: "review complete" });
   expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]).toMatchObject({ bot_review_state: "in_progress" });
   const push = JSON.stringify({ installation: { id: 9 }, repository: { id: 2 }, ref: "refs/heads/main", after: "a".repeat(40), commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }] });
-  await acceptGitHubDelivery(db, "push", "push", push); const waits: number[] = []; await drainInbox(db, async () => null, undefined, async (ms) => waits.push(ms));
-  expect(waits).toEqual([1000, 2000]); expect((await db.inboxDeliveries.findOne({ _id: "github:push" }))?.payload).toBe(push);
+  await acceptGitHubDelivery(db, "push", "push", push); await acceptGitHubDelivery(db, "after-push", "pull_request", body);
+  const waits: number[] = []; let now = new Date("2030-01-01T00:00:00Z");
+  await drainInbox(db, async () => null, undefined, async (ms) => { waits.push(ms); expect((await db.inboxDeliveries.findOne({ _id: "github:after-push" }))?.status).toBe("done"); now = new Date(now.getTime() + ms); }, () => now);
+  expect(waits).toEqual([1000, 2000]); expect(await db.inboxDeliveries.findOne({ _id: "github:push" })).toMatchObject({ status: "rejected", attempts: 3, payload: push });
 }));
 
 test("webhook branches reject whitespace, overlong, and dotdot refs", () => withDatabase(async (db) => {

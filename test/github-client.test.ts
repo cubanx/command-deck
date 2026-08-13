@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bindInstallation, upsertIdentity } from "../src/access";
-import { bootstrapDeployments, bootstrapInstallation, conditionalGet, reconcileInstallations, reconcileSerial } from "../src/github";
+import { bindInstallation, dashboardForUser, upsertIdentity } from "../src/access";
+import { bootstrapDeployments, bootstrapInstallation, conditionalGet, reconcileInstallations, reconcileSerial, retryDelay } from "../src/github";
 import { withDatabase } from "./mongo-support";
 
 test("conditional reads retain ETags and surface 304", () => withDatabase(async (db) => {
@@ -10,6 +10,13 @@ test("conditional reads retain ETags and surface 304", () => withDatabase(async 
   expect(await conditionalGet(db, "repos/1", "https://example.test/a", async (_, init) => { headers = new Headers(init?.headers); return new Response(null, { status: 304 }); })).toMatchObject({ kind: "changed", body: {} });
   expect(headers!.get("if-none-match")).toBe("v1");
 }));
+
+test("provider retries honor reset headers and reject ordinary forbidden responses", () => {
+  const now = 1_700_000_000_000;
+  expect(retryDelay(new Response(null, { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1700000005" } }), 0, now)).toBe(5000);
+  expect(retryDelay(new Response(null, { status: 429, headers: { "retry-after": "7" } }), 0, now)).toBe(7000);
+  expect(retryDelay(new Response(null, { status: 403 }), 0, now)).toBeUndefined();
+});
 
 test("serial reconciliation and complete bootstrap use installation tokens", () => withDatabase(async (db) => {
   let calls = 0; const waits: number[] = [];
@@ -69,4 +76,13 @@ test("installation reconciliation obtains tokens and bootstraps serially in stab
   await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "10"); await bindInstallation(db, "u", "9"); const tokens: string[] = [];
   const results = await reconcileInstallations(db, async (installationId) => { tokens.push(installationId); return `token-${installationId}`; }, async (url) => String(url).includes("installation/repositories") ? Response.json({ repositories: [] }) : Response.json([]));
   expect(tokens).toEqual(["10", "9"]); expect(results.map((result) => result.installationId)).toEqual(["10", "9"]); expect(results.every((result) => result.result.kind === "changed")).toBeTrue();
+}));
+
+test("installation reconciliation marks stale projections and rejects visibly", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9");
+  await expect(reconcileInstallations(db, async () => "token", async () => new Response("down", { status: 500 }))).rejects.toThrow("reconciliation failed for installations 9");
+  expect((await db.users.findOne({ _id: "u" }))?.installations[0]).toMatchObject({ lastSyncError: "GitHub request failed (500)" });
+  expect((await dashboardForUser(db, "u")).stale).toBeTrue();
+  await reconcileInstallations(db, async () => "token", async (url) => String(url).includes("installation/repositories") ? Response.json({ repositories: [] }) : Response.json([]));
+  expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.lastSyncError).toBeUndefined(); expect((await dashboardForUser(db, "u")).stale).toBeFalse();
 }));

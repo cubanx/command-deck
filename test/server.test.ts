@@ -6,7 +6,7 @@ import { withDatabase, testConfig } from "./mongo-support";
 
 test("public PWA assets and streams are isolated", () => withDatabase(async (db) => {
   const app = createApp(db, testConfig);
-  expect((await app.fetch(new Request("http://local/manifest.webmanifest"))).status).toBe(200); expect((await app.fetch(new Request("http://local/sw.js"))).headers.get("cache-control")).toContain("no-cache"); expect(await (await app.fetch(new Request("http://local/"))).text()).toContain("/app.js?v=4"); expect(await (await app.fetch(new Request("http://local/app.js"))).text()).toContain("showDirectoryPicker");
+  expect((await app.fetch(new Request("http://local/manifest.webmanifest"))).status).toBe(200); expect((await app.fetch(new Request("http://local/sw.js"))).headers.get("cache-control")).toContain("no-cache"); expect(await (await app.fetch(new Request("http://local/"))).text()).toContain("/app.js?v=4"); const javascript = await (await app.fetch(new Request("http://local/app.js"))).text(); expect(javascript).toContain("showDirectoryPicker"); expect(javascript).toContain("Provider reconciliation is stale.");
   expect((await app.fetch(new Request("http://local/api/snapshot"))).status).toBe(401); expect((await app.fetch(new Request("http://local/events"))).status).toBe(401);
 }));
 
@@ -53,5 +53,5 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
   await db.inboxDeliveries.insertOne({ _id: "github:push", provider: "github", deliveryId: "push", eventName: "push", payload: JSON.stringify({ installation: { id: 9 }, repository: { id: 2 }, ref: "refs/heads/main", after: "a".repeat(40), commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }] }), status: "pending", attempts: 0, receivedAt: new Date() });
   const { privateKey } = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]); const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64").match(/.{1,64}/g)!.join("\n")}\n-----END PRIVATE KEY-----`;
   const original = globalThis.fetch; globalThis.fetch = async (input) => String(input).includes("access_tokens") ? Response.json({ token: "installation" }) : new Response("- [x] Launch");
-  try { const app = createApp(db, { ...testConfig, githubAppId: "1", githubAppPrivateKey: pem }); await app.drain(); expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(1); expect((await db.inboxDeliveries.findOne({ _id: "github:push" }))?.payload).toBeNull(); } finally { globalThis.fetch = original; }
+  try { const app = createApp(db, { ...testConfig, githubAppId: "1", githubAppPrivateKey: pem }); await app.drain(); expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(1); expect((await db.inboxDeliveries.findOne({ _id: "github:push" }))?.payload).toBeUndefined(); } finally { globalThis.fetch = original; }
 }));
