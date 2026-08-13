@@ -94,7 +94,7 @@ GitHub installation bindings determine dashboard visibility. Bootstrap and expli
 ## Trust and data boundaries
 
 - GitHub requests are size-limited and HMAC-verified against the raw body before durable inbox insertion. Delivery IDs are unique and redelivery-safe.
-- Accepted payloads are persisted before `202`, processed serially, retried after restart, and cleared after successful projection.
+- Accepted payloads are persisted before `202`, processed serially, retried after restart, and cleared after successful projection. Inbox draining assumes one application process; multi-replica operation requires atomic delivery claims.
 - GitHub deployment status transitions are idempotent and only terminal state changes notify installation-bound users.
 - Dashboard queries join the current developer to GitHub installations; pull requests are additionally filtered to the signed-in GitHub author.
 - Sessions are high-entropy opaque tokens; only SHA-256 hashes are stored in MongoDB and cookies are secure, HTTP-only, and same-site.
