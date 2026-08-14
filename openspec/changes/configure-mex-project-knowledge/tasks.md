@@ -8,6 +8,6 @@ Stop after Group 1 for human review of the raw generated scaffold, claim audit, 
 
 ## 2. Retain and validate minimal project knowledge
 
-- [ ] 2.1 Apply the approved dispositions and minimally curate the router plus architecture, stack, conventions, decisions, setup, and reusable-pattern knowledge; add a thin root instruction pointer only if the validated Mex workflow requires it.
-- [ ] 2.2 Run the release's native Mex validation command when available, verify all retained routing targets, and execute focused checks for unapproved generated files, secrets, absolute local paths, application dependency changes, deployment-input changes, and `.codegraph/` changes.
-- [ ] 2.3 Run `bun run typecheck`, `bun test`, `openspec validate configure-mex-project-knowledge --strict`, and `git diff --check`; document any environment-only limitation without weakening a failed repository check.
+- [x] 2.1 Apply the approved dispositions and minimally curate the router plus architecture, stack, conventions, decisions, setup, and reusable-pattern knowledge; add a thin root instruction pointer only if the validated Mex workflow requires it.
+- [x] 2.2 Run the release's native Mex validation command when available, verify all retained routing targets, and execute focused checks for unapproved generated files, secrets, absolute local paths, application dependency changes, deployment-input changes, and `.codegraph/` changes.
+- [x] 2.3 Run `bun run typecheck`, `bun test`, `openspec validate configure-mex-project-knowledge --strict`, and `git diff --check`; document any environment-only limitation without weakening a failed repository check.

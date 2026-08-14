@@ -46,3 +46,10 @@ No prompts, caches, logs, event files, hooks, or other local artifacts were gene
 - Generated repository paths contain no `/Users/` absolute paths.
 - No credential-shaped assignments were found in the generated artifacts.
 - Setup performed no deployment, provider mutation, credential access, production action, Git hook installation, global Mex installation, or unrelated MongoDB work.
+
+## Group 2 result
+
+- Applied every approved disposition: curated the retained knowledge, removed `.mex/SETUP.md` and `.mex/SYNC.md`, and ignored `.mex/graph.db`.
+- Preserved CodeGraph-first structural lookup and kept Mex as curated project memory.
+- Native Mex 0.7.0 validation reports a drift score of 100 with no issues.
+- Typecheck, the 48-test disposable-MongoDB suite, strict OpenSpec validation, and `git diff --check` pass.
