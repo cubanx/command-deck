@@ -1,7 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
-
 export type Config = {
-  port: number; hostname?: string; databasePath: string; localDemo: boolean; githubClientId?: string; githubClientSecret?: string;
+  port: number; hostname?: string; mongoUriBase: string; mongoDatabase: string; localDemo: boolean; githubClientId?: string; githubClientSecret?: string;
   githubAppId?: string; githubAppSlug?: string; githubAppPrivateKey?: string; githubWebhookSecret?: string; reviewBot?: ReviewBotConfig; reconcileIntervalMs?: number; production: boolean; publicUrl?: string; oauthCallbackUrl?: string; secureCookies: boolean;
 };
 
@@ -21,20 +19,20 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (login && (!/^[A-Za-z0-9][A-Za-z0-9_\-\[\]]*$/.test(login) || login.length > 100)) throw new Error("review bot login is invalid");
   if ((startMarker && startMarker.length > 200) || (doneMarker && doneMarker.length > 200)) throw new Error("review bot markers must be at most 200 characters");
   const reviewBot = login && startMarker && doneMarker ? { login, startMarker, doneMarker } : undefined;
-  const databasePath = env.DATABASE_PATH ?? "./data/command-center.sqlite";
+  const mongoUriBase = env.MONGODB_URI_BASE?.trim() ?? "mongodb://127.0.0.1:27017";
+  const mongoDatabase = env.MONGODB_DATABASE?.trim() ?? `dev-command-center-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(mongoDatabase)) throw new Error("MONGODB_DATABASE is invalid");
   let publicUrl: string | undefined, oauthCallbackUrl: string | undefined;
   if (production) {
-    const required = ["PUBLIC_URL", "DATABASE_PATH", "GITHUB_APP_ID", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] as const;
+    const required = ["PUBLIC_URL", "MONGODB_URI_BASE", "MONGODB_DATABASE", "GITHUB_APP_ID", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] as const;
     for (const name of required) if (!env[name]?.trim() || /^(changeme|replace|example|placeholder|your)([-_\s]|$)/i.test(env[name]!.trim())) throw new Error(`${name} is required`);
     let origin: URL;
     try { origin = new URL(env.PUBLIC_URL!); } catch { throw new Error("PUBLIC_URL must be an HTTPS origin"); }
     if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || origin.host !== env.RAILWAY_PUBLIC_DOMAIN) throw new Error("PUBLIC_URL must match RAILWAY_PUBLIC_DOMAIN as an HTTPS origin");
-    if (!env.RAILWAY_VOLUME_MOUNT_PATH || !isAbsolute(env.RAILWAY_VOLUME_MOUNT_PATH)) throw new Error("DATABASE_PATH requires RAILWAY_VOLUME_MOUNT_PATH");
-    if (!isAbsolute(databasePath) || databasePath === ":memory:" || relative(resolve(env.RAILWAY_VOLUME_MOUNT_PATH), resolve(databasePath)).startsWith("..") || isAbsolute(relative(resolve(env.RAILWAY_VOLUME_MOUNT_PATH), resolve(databasePath)))) throw new Error("DATABASE_PATH must be inside RAILWAY_VOLUME_MOUNT_PATH");
     publicUrl = origin.origin;
     oauthCallbackUrl = new URL("/auth/github/callback", origin).toString();
   }
-  return { port, hostname: localDemo ? "127.0.0.1" : undefined, databasePath, localDemo, production, publicUrl, oauthCallbackUrl, secureCookies: true,
+  return { port, hostname: localDemo ? "127.0.0.1" : undefined, mongoUriBase, mongoDatabase, localDemo, production, publicUrl, oauthCallbackUrl, secureCookies: true,
     githubClientId: env.GITHUB_CLIENT_ID, githubClientSecret: env.GITHUB_CLIENT_SECRET, githubAppId: env.GITHUB_APP_ID, githubAppSlug: env.GITHUB_APP_SLUG,
     githubAppPrivateKey: env.GITHUB_APP_PRIVATE_KEY, githubWebhookSecret: env.GITHUB_WEBHOOK_SECRET, reviewBot,
     reconcileIntervalMs };

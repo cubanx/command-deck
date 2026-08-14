@@ -27,7 +27,7 @@ test("automated review signals are configured together", () => {
 
 const production = (overrides: Record<string, string | undefined> = {}) => ({
   NODE_ENV: "production", PORT: "3000", PUBLIC_URL: "https://command-center.up.railway.app", RAILWAY_PUBLIC_DOMAIN: "command-center.up.railway.app",
-  RAILWAY_VOLUME_MOUNT_PATH: "/data", DATABASE_PATH: "/data/command-center.sqlite", GITHUB_APP_ID: "1701", GITHUB_CLIENT_ID: "client-id",
+  MONGODB_URI_BASE: "mongodb://mongo.example", MONGODB_DATABASE: "dev-command-center-production", GITHUB_APP_ID: "1701", GITHUB_CLIENT_ID: "client-id",
   GITHUB_CLIENT_SECRET: "client-secret", GITHUB_APP_PRIVATE_KEY: "private-key", GITHUB_WEBHOOK_SECRET: "webhook-secret", ...overrides
 });
 
@@ -38,8 +38,8 @@ test("production requires real secrets, one HTTPS Railway origin, and secure coo
   }
 });
 
-test("production SQLite stays inside the Railway volume", () => {
-  for (const env of [production({ RAILWAY_VOLUME_MOUNT_PATH: undefined }), production({ DATABASE_PATH: ":memory:" }), production({ DATABASE_PATH: "data.sqlite" }), production({ DATABASE_PATH: "/tmp/data.sqlite" }), production({ DATABASE_PATH: "/data/../tmp/data.sqlite" })]) {
-    expect(() => loadConfig(env)).toThrow("DATABASE_PATH");
+test("production requires MongoDB configuration", () => {
+  for (const env of [production({ MONGODB_URI_BASE: undefined }), production({ MONGODB_DATABASE: undefined }), production({ MONGODB_DATABASE: "bad name" })]) {
+    expect(() => loadConfig(env)).toThrow();
   }
 });

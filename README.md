@@ -2,18 +2,22 @@
 
 A small, installable command center for a developer's open pull requests, checks, reviews, GitHub deployment status, and committed OpenSpec progress.
 
-The service treats authenticated webhooks plus SQLite projections as the incremental source. Provider API calls are limited to explicit bootstrap/repair, targeted OpenSpec file reads, and six-hour conditional reconciliation.
+The service treats authenticated webhooks plus MongoDB user projections as the incremental source. Provider API calls are limited to explicit bootstrap/repair, targeted OpenSpec file reads, and six-hour conditional reconciliation.
 
 ## Local setup
 
 Requirement: [Bun](https://bun.sh/).
 
+MongoDB is also required for tests and runtime. Set `MONGODB_URI_BASE` to an isolated local MongoDB endpoint, then run:
+
 ```bash
 bun install
 bun run dev
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun test
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test:mongo
 ```
 
-Open `http://localhost:3000`. The development command binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and SQLite paths without provider credentials or cookies.
+Open `http://localhost:3000`. The development command binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
 
 Use **Connect local checkout** to grant the browser read-only access to a repository. The PWA reads only `.git/HEAD` and `openspec/changes/*/tasks.md`, matches that evidence to a PR, presents the complete current unfinished group inside the PR card, and can open the selected task file without uploading its path or contents. Browsers without the native directory picker continue to show committed GitHub projections.
 
@@ -23,7 +27,7 @@ Local validation:
 
 ```bash
 bun run typecheck
-bun test
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun test
 openspec validate build-developer-command-center-mvp --strict
 ```
 
@@ -32,11 +36,10 @@ openspec validate build-developer-command-center-mvp --strict
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP port; defaults to `3000`. |
-| `DATABASE_PATH` | SQLite path; defaults to `./data/command-center.sqlite`. |
+| `MONGODB_URI_BASE` / `MONGODB_DATABASE` | MongoDB connection URI base and database name. |
 | `NODE_ENV` | Set to `production` only for the hosted service; it enables fail-closed production validation. |
 | `PUBLIC_URL` | Production HTTPS origin with no path, query, fragment, or credentials; must equal `https://${RAILWAY_PUBLIC_DOMAIN}`. |
-| `RAILWAY_PUBLIC_DOMAIN` / `RAILWAY_VOLUME_MOUNT_PATH` | Railway-provided production cross-checks. Mount the single volume at `/data` and set `DATABASE_PATH=/data/command-center.sqlite`. |
-| `RAILWAY_RUN_UID` | Set to `0` so the entrypoint can initialize Railway's root-mounted `/data`; it permanently drops to `bun` before starting the application. |
+| `RAILWAY_PUBLIC_DOMAIN` | Railway-provided production cross-check for `PUBLIC_URL`. |
 | `DCC_LOCAL_DEMO` | Credential-free fixture access. `bun run dev` sets it to `1`; hosted or production environments reject it. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub App OAuth identity flow. The resulting user token is used only during the callback and is never persisted. |
 | `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_PRIVATE_KEY` | Installation flow, App JWTs, and installation-token repository reads. Encode private-key newlines as `\\n` when necessary. |
@@ -46,14 +49,23 @@ openspec validate build-developer-command-center-mvp --strict
 
 Keep values in the environment or a secret manager. Never commit `.env`, App private keys, webhook secrets, or provider tokens.
 
+## Existing binding handoff
+
+The post-merge cutover may seed only existing installation bindings, never SQLite data or provider projections:
+
+```bash
+bun run seed:bindings <github-user-id> <installation-id:account-login> [...]
+```
+
+Only the exact account logins `cubanx`, `Crisp-Inc`, and `hudson-law` are accepted. Run it with the approved production Environment only during the separate cutover OpenSpec.
+
 ## Production rollout contract
 
-Repository configuration only is covered here; creating a Railway service, volume, domain, GitHub App, secrets, or deployment requires fresh authorization.
+Repository configuration only is covered here; creating a Railway service, MongoDB deployment, domain, GitHub App, secrets, or deployment requires fresh authorization.
 
-1. Run exactly one Railway service and replica from this Dockerfile. Attach one persistent volume at `/data`; set `NODE_ENV=production`, `DATABASE_PATH=/data/command-center.sqlite`, `RAILWAY_RUN_UID=0`, and set `PUBLIC_URL` to the generated HTTPS Railway domain. The root entrypoint initializes only an empty or already `bun`-owned mount, then starts the application as `bun`; SQLite and WAL sidecars stay on that volume.
-2. Set the required server variables by name only: `PUBLIC_URL`, `DATABASE_PATH`, `RAILWAY_RUN_UID`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Railway supplies `PORT`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_VOLUME_MOUNT_PATH`. Never place resolved values in evidence.
-3. Railway activates only after `/ready` returns `200`; `/health` is liveness only. A volume-backed SQLite service is intentionally single-replica: redeploys briefly interrupt service, but retain the volume.
-4. Before retrying with an existing volume, inspect its ownership under a separately authorized operational task. If any content is not owned by `bun`, stop for an explicit repair decision; the entrypoint will not recursively change it. Roll back by selecting the last known-good deployment while retaining the attached volume. If `/ready` does not recover, never recreate the volume as a shortcut.
+1. The dependent `operate-developer-command-center-mongodb-cutover` OpenSpec owns Atlas configuration, deployment, and the narrow binding handoff. Do not deploy this storage change directly.
+2. Set the required server variables by name only: `PUBLIC_URL`, `MONGODB_URI_BASE`, `MONGODB_DATABASE`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Railway supplies `PORT` and `RAILWAY_PUBLIC_DOMAIN`. Never place resolved values in evidence.
+3. Railway activates only after `/ready` returns `200`; `/health` is liveness only. MongoDB connectivity and idempotent index initialization are the readiness dependency.
 
 Record redacted evidence only: timestamp, reviewed Git SHA, Railway deployment ID, variable-name checklist, `/health` and `/ready` statuses, OAuth result, GitHub delivery IDs/outcomes, deployment projection result, restart durability, and rollback outcome.
 
@@ -82,23 +94,23 @@ GitHub installation bindings determine dashboard visibility. Bootstrap and expli
 ## Trust and data boundaries
 
 - GitHub requests are size-limited and HMAC-verified against the raw body before durable inbox insertion. Delivery IDs are unique and redelivery-safe.
-- Accepted payloads are persisted before `202`, processed serially, retried after restart, and cleared after successful projection.
+- Accepted payloads are persisted before `202`, processed serially, retried after restart, and cleared after successful projection. Inbox draining assumes one application process; multi-replica operation requires atomic delivery claims.
 - GitHub deployment status transitions are idempotent and only terminal state changes notify installation-bound users.
 - Dashboard queries join the current developer to GitHub installations; pull requests are additionally filtered to the signed-in GitHub author.
-- Sessions are high-entropy opaque tokens; only SHA-256 hashes are stored in SQLite and cookies are secure, HTTP-only, and same-site.
+- Sessions are high-entropy opaque tokens; only SHA-256 hashes are stored in MongoDB and cookies are secure, HTTP-only, and same-site.
 - Provider text is escaped before browser rendering. The service worker caches only public shell assets, never authenticated API or webhook traffic.
 
 ## API-budget behavior
 
 Normal GitHub pull-request, review, check, workflow, installation, deployment, and deployment-status changes update projections from webhooks without list/search calls. Push events fetch only changed committed `openspec/changes/*/tasks.md` files. Bootstrap, repair, and reconciliation use installation tokens, authenticated ETags, serial requests, rate-limit headers, and bounded backoff. An authorized `304` preserves the projection without consuming the primary REST limit.
 
-The dashboard shows every authorized open pull request authored by the signed-in developer across bound GitHub App installations, with attention-needed work first. Bootstrap and reconciliation paginate repositories and open pull requests; deployments intentionally remain the newest 20 per repository.
+Reconciliation follows GitHub Link pagination for repositories, open pull requests, and deployment lists. The dashboard retains the newest 20 deployment projections per repository with one latest-status read each. Deployment target and log links are retained only when they are safe HTTP(S) URLs.
 
 ## MVP limits and operational gate
 
 - Notifications reach authenticated active clients through SSE and the browser Notification API. Closed-PWA Web Push is deferred.
 - The service presents committed OpenSpec task files only; uncommitted worktree reporting is deferred.
-- SQLite assumes one service process and one persistent volume. Postgres, Redis, queues, teams, invitations, admin/RBAC screens, Electron, local tunnels, and offline-first data sync are out of scope.
+- MongoDB uses a bounded user aggregate with a 12 MiB application guard. Postgres, Redis, queues, teams, invitations, admin/RBAC screens, Electron, local tunnels, and offline-first data sync are out of scope.
 - This checkout does not create credentials, register an App, configure webhooks, deploy, or mutate external systems. Those actions require a separate reviewed operational OpenSpec and explicit authorization.
 
 ## License

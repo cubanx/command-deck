@@ -1,40 +1,41 @@
-import { Database } from "bun:sqlite";
+import { BSON, MongoClient, type Collection, type Db as MongoDb } from "mongodb";
 
-export type Db = Database;
+export const MAX_USER_BSON_BYTES = 12 * 1024 * 1024;
+const MAX_CAS_RETRIES = 3;
+export type PullRequest = Record<string, unknown>;
+export type Repository = { repositoryId: string; full_name: string; pullRequests: PullRequest[]; openSpecs: Record<string, unknown>[]; deployments: Record<string, unknown>[] };
+export type Installation = { installationId: string; accountLogin?: string; boundAt: Date; repositories: Repository[]; lastSuccessfulSyncAt?: Date; lastSyncError?: string };
+export type UserAggregate = { _id: string; schemaVersion: 1; revision: number; github: { login?: string; avatarUrl?: string }; installations: Installation[]; createdAt: Date; updatedAt: Date };
+export type Session = { _id: string; userId: string; expiresAt: Date };
+export type OAuthState = { _id: string; expiresAt: Date };
+export type InboxDelivery = { _id: string; provider: string; deliveryId: string; payload?: string; eventName: string; status: "pending" | "pending_verification" | "done" | "ignored" | "rejected"; attempts: number; nextAttemptAt?: Date; error?: string; receivedAt: Date; processedAt?: Date };
+export type ProviderCache = { _id: string; etag?: string; body?: unknown; nextUrl?: string; updatedAt: Date };
+export type Notification = { _id: string; userId: string; transitionKey: string; title: string; body: string; link?: string; createdAt: Date };
+export type Db = { mongo: MongoDb; users: Collection<UserAggregate>; sessions: Collection<Session>; oauthStates: Collection<OAuthState>; inboxDeliveries: Collection<InboxDelivery>; providerCache: Collection<ProviderCache>; notifications: Collection<Notification>; client: MongoClient };
 
-export function openDatabase(path = ":memory:"): Db {
-  const db = new Database(path, { create: true });
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, github_id TEXT NOT NULL UNIQUE, login TEXT NOT NULL, avatar_url TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), token_hash TEXT NOT NULL UNIQUE, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS oauth_states (state_hash TEXT PRIMARY KEY, expires_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS installations (id TEXT PRIMARY KEY, account_login TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS user_installations (user_id TEXT NOT NULL REFERENCES users(id), installation_id TEXT NOT NULL REFERENCES installations(id), PRIMARY KEY (user_id, installation_id));
-    CREATE TABLE IF NOT EXISTS repositories (installation_id TEXT NOT NULL REFERENCES installations(id), id TEXT NOT NULL, full_name TEXT NOT NULL, PRIMARY KEY (installation_id, id));
-    CREATE TABLE IF NOT EXISTS pull_requests (installation_id TEXT NOT NULL, repository_id TEXT NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL, url TEXT, author_login TEXT, state TEXT NOT NULL, draft INTEGER NOT NULL DEFAULT 0, head_ref TEXT, head_sha TEXT, mergeable TEXT, review_state TEXT, bot_review_actor TEXT, bot_review_state TEXT, bot_review_updated_at TEXT, checks_state TEXT, workflow_state TEXT, updated_at TEXT, PRIMARY KEY (installation_id, repository_id, number));
-    CREATE TABLE IF NOT EXISTS deployments (installation_id TEXT, project_id TEXT NOT NULL, service_id TEXT NOT NULL, environment_id TEXT NOT NULL, id TEXT NOT NULL, status TEXT NOT NULL, verification_state TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (project_id, service_id, environment_id, id));
-    CREATE TABLE IF NOT EXISTS railway_connections (user_id TEXT NOT NULL REFERENCES users(id), project_id TEXT NOT NULL, service_id TEXT NOT NULL, environment_id TEXT NOT NULL, PRIMARY KEY (user_id, project_id, service_id, environment_id));
-    CREATE TABLE IF NOT EXISTS github_deployments (installation_id TEXT NOT NULL REFERENCES installations(id), repository_id TEXT NOT NULL, id TEXT NOT NULL, environment TEXT, ref TEXT, sha TEXT, state TEXT NOT NULL DEFAULT 'pending', status_id TEXT, target_url TEXT, log_url TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (installation_id, repository_id, id));
-    CREATE TABLE IF NOT EXISTS inbox_deliveries (provider TEXT NOT NULL, delivery_id TEXT NOT NULL, payload TEXT, event_name TEXT, status TEXT NOT NULL DEFAULT 'pending', error TEXT, received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, processed_at TEXT, PRIMARY KEY (provider, delivery_id));
-    CREATE TABLE IF NOT EXISTS etags (request_key TEXT PRIMARY KEY, value TEXT NOT NULL, cached_body TEXT, checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-    CREATE TABLE IF NOT EXISTS openspec_progress (installation_id TEXT NOT NULL, repository_id TEXT NOT NULL, change_name TEXT NOT NULL, completed INTEGER NOT NULL, total INTEGER NOT NULL, source_commit TEXT NOT NULL, source_ref TEXT, active_group TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (installation_id, repository_id, change_name));
-    CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), transition_key TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (user_id, transition_key));
-  `);
-  const openSpecColumns = db.query<{ name: string }, []>("PRAGMA table_info(openspec_progress)").all();
-  if (!openSpecColumns.some(({ name }) => name === "active_group")) db.exec("ALTER TABLE openspec_progress ADD COLUMN active_group TEXT");
-  if (!openSpecColumns.some(({ name }) => name === "source_ref")) db.exec("ALTER TABLE openspec_progress ADD COLUMN source_ref TEXT");
-  const pullRequestColumns = db.query<{ name: string }, []>("PRAGMA table_info(pull_requests)").all();
-  if (!pullRequestColumns.some(({ name }) => name === "draft")) db.exec("ALTER TABLE pull_requests ADD COLUMN draft INTEGER NOT NULL DEFAULT 0");
-  if (!pullRequestColumns.some(({ name }) => name === "head_ref")) db.exec("ALTER TABLE pull_requests ADD COLUMN head_ref TEXT");
-  if (!pullRequestColumns.some(({ name }) => name === "head_sha")) db.exec("ALTER TABLE pull_requests ADD COLUMN head_sha TEXT");
-  if (!pullRequestColumns.some(({ name }) => name === "bot_review_actor")) db.exec("ALTER TABLE pull_requests ADD COLUMN bot_review_actor TEXT");
-  if (!pullRequestColumns.some(({ name }) => name === "bot_review_state")) db.exec("ALTER TABLE pull_requests ADD COLUMN bot_review_state TEXT");
-  if (!pullRequestColumns.some(({ name }) => name === "bot_review_updated_at")) db.exec("ALTER TABLE pull_requests ADD COLUMN bot_review_updated_at TEXT");
-  const deploymentColumns = db.query<{ name: string }, []>("PRAGMA table_info(github_deployments)").all();
-  if (!deploymentColumns.some(({ name }) => name === "target_url")) db.exec("ALTER TABLE github_deployments ADD COLUMN target_url TEXT");
-  if (!deploymentColumns.some(({ name }) => name === "log_url")) db.exec("ALTER TABLE github_deployments ADD COLUMN log_url TEXT");
-  const etagColumns = db.query<{ name: string }, []>("PRAGMA table_info(etags)").all();
-  if (!etagColumns.some(({ name }) => name === "cached_body")) db.exec("ALTER TABLE etags ADD COLUMN cached_body TEXT");
-  return db;
+let cached: { key: string; promise: Promise<Db> } | undefined;
+export function databaseName(env: Record<string, string | undefined> = process.env) {
+  if (env.MONGODB_DATABASE) return env.MONGODB_DATABASE;
+  if (env.NODE_ENV === "production") return "dev-command-center-production";
+  if (env.RAILWAY_ENVIRONMENT_NAME) return `dev-command-center-${env.RAILWAY_ENVIRONMENT_NAME.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
+  if (env.NODE_ENV === "test") return `dev-command-center-test-${crypto.randomUUID()}`;
+  return `dev-command-center-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
 }
+export function mongoConfig(env: Record<string, string | undefined> = process.env) {
+  const uriBase = env.MONGODB_URI_BASE?.trim(), database = databaseName(env);
+  if (!uriBase) throw new Error("MONGODB_URI_BASE is required");
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/i.test(database)) throw new Error("MONGODB_DATABASE is invalid");
+  return { uriBase, database };
+}
+export function testDatabaseGuard(database: string) { if (!/^dev-command-center-test-[a-f0-9-]{36}$/i.test(database)) throw new Error("MONGODB_DATABASE must be an explicitly isolated non-production dev-command-center-test UUID database"); }
+export async function openDatabase(config = mongoConfig()): Promise<Db> {
+  const key = `${config.uriBase}/${config.database}`;
+  if (cached?.key === key) return cached.promise;
+  const promise = (async () => { const client = new MongoClient(config.uriBase, { serverSelectionTimeoutMS: 5_000 }); await client.connect(); const mongo = client.db(config.database); return { client, mongo, users: mongo.collection<UserAggregate>("users"), sessions: mongo.collection<Session>("sessions"), oauthStates: mongo.collection<OAuthState>("oauth_states"), inboxDeliveries: mongo.collection<InboxDelivery>("inbox_deliveries"), providerCache: mongo.collection<ProviderCache>("provider_cache"), notifications: mongo.collection<Notification>("notifications") }; })();
+  cached = { key, promise }; promise.catch(() => { if (cached?.promise === promise) cached = undefined; }); return promise;
+}
+export async function initializeDatabase(db: Db) { await Promise.all([db.users.createIndex({ "installations.installationId": 1 }), db.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }), db.oauthStates.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }), db.inboxDeliveries.createIndex({ status: 1, nextAttemptAt: 1 }), db.notifications.createIndex({ userId: 1, transitionKey: 1 }, { unique: true }), db.notifications.createIndex({ userId: 1, createdAt: -1 })]); }
+export async function databaseReady(db: Db) { await db.mongo.command({ ping: 1 }); await initializeDatabase(db); }
+export async function closeDatabase(db: Db) { await db.client.close(); cached = undefined; }
+export async function mutateUser(db: Db, userId: string, mutate: (user: UserAggregate) => void) { for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) { const existing = await db.users.findOne({ _id: userId }); if (!existing) throw new Error("user aggregate not found"); const next = structuredClone(existing); mutate(next); next.revision++; next.updatedAt = new Date(); if (BSON.serialize(next).byteLength > MAX_USER_BSON_BYTES) throw new Error(`user ${userId} installations ${next.installations.map((item) => item.installationId).join(",") || "none"} exceeds ${MAX_USER_BSON_BYTES} byte limit`); // ponytail: whole-document CAS is enough today; use targeted positional updates if measured write amplification matters.
+    if ((await db.users.replaceOne({ _id: userId, revision: existing.revision }, next)).modifiedCount === 1) return next; } throw new Error("user aggregate changed concurrently"); }
