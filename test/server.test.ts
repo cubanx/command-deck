@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createOAuthState } from "../src/access";
+import { createOAuthState, createSession } from "../src/access";
 import { bindInstallation, upsertIdentity } from "../src/access";
 import { createApp } from "../src/server";
 import { reconcileInstallations } from "../src/github";
@@ -47,6 +47,15 @@ test("OAuth rejects an unverified installation without binding it", () => withDa
   const app = createApp(db, { ...testConfig, githubClientId: "client", githubClientSecret: "secret" }), original = globalThis.fetch;
   globalThis.fetch = async (input) => String(input).includes("access_token") ? Response.json({ access_token: "oauth-token" }) : String(input).includes("user/installations") ? Response.json({ installations: [{ id: 99, account: { login: "Crisp-Inc" } }] }) : Response.json({ id: 9, login: "kira" });
   try { const state = await createOAuthState(db); expect((await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`))).status).toBe(403); expect((await db.users.findOne({ _id: "9" }))?.installations).toHaveLength(0); } finally { globalThis.fetch = original; }
+}));
+
+test("OAuth installation pagination rejects unsafe and looping next links without forwarding its token", () => withDatabase(async (db) => {
+  for (const link of ['<https://evil.example/page>; rel="next"', '<https://api.github.com/user/installations?per_page=100>; rel="next"']) { const app = createApp(db, { ...testConfig, githubClientId: "client", githubClientSecret: "secret" }), original = globalThis.fetch; const calls: string[] = []; globalThis.fetch = async (input) => { const url = String(input); calls.push(url); if (url.includes("access_token")) return Response.json({ access_token: "oauth-token" }); if (url.endsWith("/user")) return Response.json({ id: 9, login: "kira" }); if (url.includes("user/installations")) return Response.json({ installations: [] }, { headers: { link } }); throw new Error(`unexpected ${url}`); }; try { const state = await createOAuthState(db); expect((await app.fetch(new Request(`http://local/auth/github/callback?code=x&state=${state}&installation_id=12`))).status).toBe(502); expect(calls.some((call) => call.includes("evil.example"))).toBeFalse(); } finally { globalThis.fetch = original; } }
+}));
+
+test("repair permits legacy and canonical bindings but rejects unapproved ones", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "kira"); const session = await createSession(db, "u"); const user = await db.users.findOne({ _id: "u" }); user!.installations.push({ installationId: "12", boundAt: new Date(), repositories: [] }); await db.users.replaceOne({ _id: "u" }, user!); const app = createApp(db, testConfig), request = () => new Request("http://local/api/installations/12/repair", { method: "POST", headers: { cookie: `dcc_session=${session.token}` } });
+  expect((await app.fetch(request())).status).toBe(503); const current = await db.users.findOne({ _id: "u" }); current!.installations[0]!.accountLogin = "CUBANX"; await db.users.replaceOne({ _id: "u" }, current!); expect((await app.fetch(request())).status).toBe(503); current!.installations[0]!.accountLogin = "external"; await db.users.replaceOne({ _id: "u" }, current!); expect((await app.fetch(request())).status).toBe(404);
 }));
 
 test("OAuth binding redirects before its background bootstrap projects the allowed installation", () => withDatabase(async (db) => {

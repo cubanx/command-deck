@@ -38,8 +38,14 @@ test("dashboard shows every open authored PR across allowed installations, atten
   ], openSpecs: [], deployments: [] });
   await db.users.replaceOne({ _id: "u" }, user!);
   const dashboard = await dashboardForUser(db, "u");
-  expect(dashboard.pullRequests.map((pr: any) => [pr.number, pr.title, pr.needs_attention])).toEqual([[2, "Needs attention", true], [1, "Newest healthy", false]]);
+  expect(dashboard.pullRequests.map((pr: any) => [pr.number, pr.title, pr.needs_attention])).toEqual([[2, "Needs attention", true], [1, "Newest healthy", false], [1, "Older healthy", false]]);
   expect((await dashboardForUser(db, "other")).pullRequests).toEqual([]);
+}));
+
+test("dashboard deduplicates renamed stable repositories and matches authors case-insensitively", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "Sisko"); await bindInstallation(db, "u", "1", "cubanx"); await bindInstallation(db, "u", "2", "Crisp-Inc"); const user = await db.users.findOne({ _id: "u" });
+  user!.installations[0]!.repositories.push({ repositoryId: "r", full_name: "ds9/old", pullRequests: [{ number: 1, title: "old", author_login: "sisko", state: "open", updated_at: "2030-01-01" }], openSpecs: [], deployments: [] }); user!.installations[1]!.repositories.push({ repositoryId: "r", full_name: "ds9/new", pullRequests: [{ number: 1, title: "new", author_login: "SISKO", state: "open", updated_at: "2030-01-02" }], openSpecs: [], deployments: [] }, { repositoryId: "other", full_name: "ds9/old", pullRequests: [{ number: 1, title: "other", author_login: "SiSkO", state: "open" }], openSpecs: [], deployments: [] }); await db.users.replaceOne({ _id: "u" }, user!);
+  expect((await dashboardForUser(db, "u")).pullRequests.map((pr: any) => pr.title).sort()).toEqual(["new", "other"]);
 }));
 
 test("local demo projections are deterministic and isolated", () => withDatabase(async (db) => {

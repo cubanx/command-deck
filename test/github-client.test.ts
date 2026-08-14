@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "../src/access";
-import { bootstrapDeployments, bootstrapInstallation, conditionalGet, reconcileInstallations, reconcileSerial, retryDelay } from "../src/github";
+import { bootstrapDeployments, bootstrapInstallation, conditionalGet, githubNextLink, reconcileInstallations, reconcileSerial, retryDelay } from "../src/github";
 import { withDatabase } from "./mongo-support";
 
 test("conditional reads retain ETags and surface 304", () => withDatabase(async (db) => {
@@ -17,6 +17,18 @@ test("provider retries honor reset headers and reject ordinary forbidden respons
   expect(retryDelay(new Response(null, { status: 429, headers: { "retry-after": "7" } }), 0, now)).toBe(7000);
   expect(retryDelay(new Response(null, { status: 403 }), 0, now)).toBeUndefined();
 });
+
+test("GitHub pagination rejects unsafe and looping links before credentialed fetches", () => {
+  expect(() => githubNextLink('<https://evil.example/page>; rel="next"', new Set())).toThrow("not GitHub API");
+  const seen = new Set(["https://api.github.com/page"]);
+  expect(() => githubNextLink('<https://api.github.com/page>; rel="next"', seen)).toThrow("loop");
+});
+
+test("legacy bindings backfill only after approved authoritative identity", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "SISKO"); const user = await db.users.findOne({ _id: "u" }); user!.installations.push({ installationId: "9", boundAt: new Date(), repositories: [] }); await db.users.replaceOne({ _id: "u" }, user!);
+  let repos = 0; await bootstrapInstallation(db, "9", "token", async (url) => String(url).endsWith("/installation") ? Response.json({ account: { login: "Crisp-Inc" } }) : String(url).includes("installation/repositories") ? (repos++, Response.json({ repositories: [] })) : Response.json([]));
+  expect(repos).toBe(1); expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.accountLogin).toBe("Crisp-Inc");
+}));
 
 test("serial reconciliation and complete bootstrap use installation tokens", () => withDatabase(async (db) => {
   let calls = 0; const waits: number[] = [];

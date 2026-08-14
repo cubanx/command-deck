@@ -4,6 +4,16 @@ import { bindInstallation, upsertIdentity } from "../src/access";
 import { acceptGitHubDelivery, drainInbox, githubSignatureValid } from "../src/events";
 import { withDatabase } from "./mongo-support";
 
+test("malformed signed webhook bodies are ignored without an inbox row", () => withDatabase(async (db) => {
+  expect(await acceptGitHubDelivery(db, "bad-json", "pull_request", "{" )).toBeFalse();
+  expect(await db.inboxDeliveries.countDocuments({})).toBe(0);
+}));
+
+test("webhook author matching is case-insensitive", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "Sisko"); await bindInstallation(db, "u", "9", "cubanx"); await acceptGitHubDelivery(db, "case", "pull_request", JSON.stringify({ action: "opened", installation: { id: 9, account: { login: "CUBANX" } }, repository: { id: 2 }, pull_request: { number: 1, title: "Case", state: "open", user: { login: "sisko" } } })); await drainInbox(db);
+  expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toHaveLength(1);
+}));
+
 const body = JSON.stringify({ installation: { id: 9, account: { login: "cubanx" } }, repository: { id: 2, full_name: "ds9/ops" }, pull_request: { number: 7, title: "Keep station online", html_url: "https://github.com/ds9/ops/pull/7", user: { login: "sisko" }, state: "open", draft: true, head: { ref: "ops/keep", sha: "a".repeat(40) }, updated_at: "2026-01-01" } });
 const sign = (value: string) => `sha256=${createHmac("sha256", "secret").update(value).digest("hex")}`;
 
@@ -57,7 +67,7 @@ test("event notifications are user-scoped and transition-deduplicated", () => wi
   const deployment = JSON.stringify({ installation: { id: 1, account: { login: "cubanx" } }, repository: { id: 2, full_name: "ds9/ops" }, deployment: { id: 7 }, deployment_status: { state: "success", created_at: "2030-01-01" } });
   await acceptGitHubDelivery(db, "d1", "deployment_status", deployment); await acceptGitHubDelivery(db, "d2", "deployment_status", deployment); await drainInbox(db);
   expect(await db.notifications.countDocuments({ userId: "9", transitionKey: "github-deployment:2:7:success" })).toBe(1); expect(await db.notifications.countDocuments({ userId: "10" })).toBe(0);
-  const review = JSON.stringify({ action: "review_requested", installation: { id: 1, account: { login: "cubanx" } }, repository: { id: 2 }, pull_request: { number: 7, title: "Review", state: "open", user: { login: "sisko" }, mergeable: true }, requested_reviewer: { id: 10 } });
+  await bindInstallation(db, "10", "1", "CUBANX"); const review = JSON.stringify({ action: "review_requested", installation: { id: 1, account: { login: "cubanx" } }, repository: { id: 2 }, pull_request: { number: 7, title: "Review", state: "open", user: { login: "sisko" }, mergeable: true }, requested_reviewer: { id: 10 } });
   await acceptGitHubDelivery(db, "review-request", "pull_request", review); await drainInbox(db); expect(await db.notifications.countDocuments({ userId: "10", title: "Review requested" })).toBe(1); expect(await db.notifications.countDocuments({ userId: "9", title: "Mergeability changed" })).toBe(0);
   const changed = review.replace('"mergeable":true', '"mergeable":false'); await acceptGitHubDelivery(db, "merge-change", "pull_request", changed); await acceptGitHubDelivery(db, "merge-repeat", "pull_request", changed); await drainInbox(db); expect(await db.notifications.countDocuments({ userId: "9", title: "Mergeability changed" })).toBe(1);
   await acceptGitHubDelivery(db, "check", "check_run", JSON.stringify({ installation: { id: 1, account: { login: "cubanx" } }, repository: { id: 2 }, check_run: { conclusion: "failure", pull_requests: [{ number: 7 }] } })); await drainInbox(db); expect(await db.notifications.countDocuments({ userId: "9", title: "Checks failed" })).toBe(1); expect(await db.notifications.countDocuments({ userId: "10", title: "Checks failed" })).toBe(0);

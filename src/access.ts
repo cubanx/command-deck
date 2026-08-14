@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Db, Installation, UserAggregate } from "./db";
 import { mutateUser } from "./db";
-import { approvedInstallationAccount } from "./installations";
+import { approvedInstallationAccount, sameLogin } from "./installations";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export const LOCAL_DEMO_USER = { id: "local-demo-user", login: "sisko" } as const;
@@ -45,8 +45,8 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
   const installations = user.installations.filter((installation) => approvedInstallationAccount(installation.accountLogin));
   const repositories = installations.flatMap((installation) => installation.repositories.map((repository) => ({ ...repository, installationId: installation.installationId })));
   const openSpecs: any[] = repositories.flatMap((repository) => repository.openSpecs.map((spec) => ({ ...spec, installation_id: repository.installationId, repository_id: repository.repositoryId, full_name: repository.full_name, source_url: openSpecUrl(repository.full_name, spec.source_commit, spec.change_name) })));
-  const projectedPullRequests: any[] = repositories.flatMap((repository) => repository.pullRequests.filter((pr) => pr.author_login === user.github.login).map((pr) => ({ ...pr, installation_id: repository.installationId, repository_id: repository.repositoryId, full_name: repository.full_name })));
-  const byIdentity = new Map<string, any>(); for (const pr of projectedPullRequests.filter((pr) => pr.state === "open")) { const key = `${pr.full_name}:${pr.number}`; const previous = byIdentity.get(key); if (!previous || String(pr.updated_at ?? "") > String(previous.updated_at ?? "")) byIdentity.set(key, pr); }
+  const projectedPullRequests: any[] = repositories.flatMap((repository) => repository.pullRequests.filter((pr) => sameLogin(pr.author_login, user.github.login)).map((pr) => ({ ...pr, installation_id: repository.installationId, repository_id: repository.repositoryId, full_name: repository.full_name })));
+  const byIdentity = new Map<string, any>(); for (const pr of projectedPullRequests.filter((pr) => pr.state === "open")) { const key = `${pr.repository_id}:${pr.number}`; const previous = byIdentity.get(key); if (!previous || String(pr.updated_at ?? "") > String(previous.updated_at ?? "")) byIdentity.set(key, pr); }
   const openPullRequests = [...byIdentity.values()];
   const pullRequests = openPullRequests.map((pr) => { const candidates = openSpecs.filter((item) => item.installation_id === pr.installation_id && item.repository_id === pr.repository_id); const matches = candidates.filter((item) => pr.head_sha && item.source_commit === pr.head_sha); const branches = matches.length ? [] : candidates.filter((item) => pr.head_ref && item.source_ref === pr.head_ref); const uniqueCommit = openPullRequests.filter((item) => item.installation_id === pr.installation_id && item.repository_id === pr.repository_id && pr.head_sha && item.head_sha === pr.head_sha).length === 1; const uniqueBranch = openPullRequests.filter((item) => item.installation_id === pr.installation_id && item.repository_id === pr.repository_id && pr.head_ref && item.head_ref === pr.head_ref).length === 1; const openSpec = matches.length === 1 && uniqueCommit ? matches[0] : branches.length === 1 && uniqueBranch ? branches[0] : null; return { ...pr, url: pullRequestUrl(pr.full_name, pr.number), open_spec: openSpec, needs_attention: needsAttention(pr) || Boolean(openSpec && Number(openSpec.completed) < Number(openSpec.total)) }; }).sort((a, b) => Number(b.needs_attention) - Number(a.needs_attention) || String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
   const cutoff = now.getTime() - 48 * 60 * 60_000;
