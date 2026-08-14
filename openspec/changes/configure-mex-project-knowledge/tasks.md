@@ -15,4 +15,4 @@ Stop after Group 1 for human review of the raw generated scaffold, claim audit, 
 ## 3. Enforce knowledge freshness
 
 - [x] 3.1 Add the pinned native `knowledge:check` command and a check-only `tooling-freshness` workflow for every push and pull request, matching the proven Internal Apps stale thresholds without adding a dependency or update automation.
-- [x] 3.2 Run `bun run knowledge:check`, focused workflow boundary checks, strict OpenSpec validation, and `git diff --check`.
+- [x] 3.2 Run `bun run knowledge:check` without machine-local graph data, focused workflow boundary checks, strict OpenSpec validation, and `git diff --check`.
