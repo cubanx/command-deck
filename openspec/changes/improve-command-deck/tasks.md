@@ -25,12 +25,12 @@ Dependency satisfied: the PR-owned `establish-code-quality-safety` change is com
 
 ## 3. Sticky pull-request controls and Actions failure detail
 
-- [ ] 3.1 Add focused behavioral/accessibility tests for the sticky controls, final result count, one Clear action, `/` focus, Escape clearing, focus order, keyboard use, and narrow wrapping.
-- [ ] 3.2 Add tests for exact Mergeable/Ready for review/Draft precedence including a mergeable draft, default bucket order, and PR number descending within every bucket.
-- [ ] 3.3 Add tests for dependency-free search ranking, exact numeric PR matching, every approved search field, searchable multi-repository selection, and combined search/status/repository filtering.
-- [ ] 3.4 Add event/rendering tests that keep Actions and Checks distinct, retain authoritative failed-workflow names and safe run links, clear later-successful failures, and never invent job or step detail.
-- [ ] 3.5 Implement one derived client-side pull-request view with native sticky controls and the smallest deterministic matcher, plus signed `workflow_run` failure projection and linked rendering; defer jobs and steps.
-- [ ] 3.6 Run focused dashboard/access/event tests, typecheck, strict OpenSpec validation, and diff check.
+- [x] 3.1 Add focused behavioral/accessibility tests for the sticky controls, final result count, one Clear action, `/` focus, Escape clearing, focus order, keyboard use, and narrow wrapping.
+- [x] 3.2 Add tests for exact Mergeable/Ready for review/Draft precedence including a mergeable draft, default bucket order, and PR number descending within every bucket.
+- [x] 3.3 Add tests for dependency-free search ranking, exact numeric PR matching, every approved search field, searchable multi-repository selection, and combined search/status/repository filtering.
+- [x] 3.4 Add event/rendering tests that keep Actions and Checks distinct, retain authoritative failed-workflow names and safe run links, clear later-successful failures, and never invent job or step detail.
+- [x] 3.5 Implement one derived client-side pull-request view with native sticky controls and the smallest deterministic matcher, plus signed `workflow_run` failure projection and linked rendering; defer jobs and steps.
+- [x] 3.6 Run focused dashboard/access/event tests, typecheck, strict OpenSpec validation, and diff check.
 
 Checkpoint: stop for user review after Group 3.
 

@@ -102,6 +102,13 @@ const safeUrl = (value: unknown) =>
 	["http:", "https:"].includes(new URL(String(value)).protocol)
 		? new URL(String(value)).toString()
 		: undefined;
+const safeGitHubRunUrl = (value: unknown) => {
+	if (!URL.canParse(String(value))) return undefined;
+	const url = new URL(String(value));
+	return url.protocol === "https:" && url.hostname === "github.com"
+		? url.toString()
+		: undefined;
+};
 const branch = (value: unknown) =>
 	typeof value === "string" &&
 	value.length <= 255 &&
@@ -206,9 +213,32 @@ const projectPullRequestSignal = (
 	if (event === "check_run" || event === "check_suite")
 		target.checks_state =
 			data.check_run?.conclusion ?? data.check_suite?.conclusion ?? "pending";
-	if (event === "workflow_run")
-		target.workflow_state =
-			data.workflow_run?.conclusion ?? data.workflow_run?.status ?? "pending";
+	if (event === "workflow_run") {
+		const workflow = data.workflow_run,
+			workflowId = id(workflow?.id),
+			name =
+				typeof workflow?.name === "string" && workflow.name.trim().length <= 255
+					? workflow.name.trim()
+					: undefined,
+			url = safeGitHubRunUrl(workflow?.html_url),
+			state = workflow?.conclusion ?? workflow?.status ?? "pending",
+			failures = Array.isArray(target.workflow_failures)
+				? target.workflow_failures.filter((item) => item.id !== workflowId)
+				: [];
+		target.workflow_state = state;
+		if (
+			workflowId &&
+			name &&
+			url &&
+			["failure", "timed_out", "cancelled", "action_required"].includes(
+				String(state),
+			)
+		)
+			failures.push({ id: workflowId, name, url });
+		target.workflow_failures = failures.sort((left, right) =>
+			String(left.name).localeCompare(String(right.name)),
+		);
+	}
 };
 
 const projectBotReview = (

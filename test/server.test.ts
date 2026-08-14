@@ -164,6 +164,20 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain('aria-label="Pull requests"');
 		expect(javascript).not.toContain("Your open pull requests");
 		expect(javascript).not.toContain("Pull requests needing attention");
+		expect(javascript).toContain('id="pr-search"');
+		expect(javascript).toContain('class="pr-controls"');
+		expect(javascript).toContain('aria-live="polite"');
+		expect(javascript).toContain("Clear");
+		expect(javascript).toContain('event.key === "/"');
+		expect(javascript).toContain('event.key === "Escape"');
+		expect(javascript).toContain("workflow_failures");
+		expect(javascript).not.toContain("failed_jobs");
+		expect(javascript).not.toContain("failed_steps");
+		const css = await (
+			await app.fetch(new Request("http://local/app.css"))
+		).text();
+		expect(css).toContain("position: sticky");
+		expect(css).toContain("flex-wrap: wrap");
 	}));
 
 test("local demo serves snapshot and SSE without a session and exposes no Railway routes", () =>

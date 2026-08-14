@@ -254,6 +254,9 @@ test("review, check, and workflow deliveries mutate the stable pull-request proj
 				"workflow_run",
 				{
 					workflow_run: {
+						id: 1701,
+						name: "Quality",
+						html_url: "https://github.com/ds9/ops/actions/runs/1701",
 						conclusion: "failure",
 						pull_requests: [{ number: 7 }],
 					},
@@ -278,7 +281,60 @@ test("review, check, and workflow deliveries mutate the stable pull-request proj
 			review_state: "changes_requested",
 			checks_state: "failure",
 			workflow_state: "failure",
+			workflow_failures: [
+				{
+					id: "1701",
+					name: "Quality",
+					url: "https://github.com/ds9/ops/actions/runs/1701",
+				},
+			],
 		});
+		await acceptGitHubDelivery(
+			db,
+			"workflow-success",
+			"workflow_run",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				workflow_run: {
+					id: 1701,
+					name: "Quality",
+					html_url: "https://github.com/ds9/ops/actions/runs/1701",
+					conclusion: "success",
+					pull_requests: [{ number: 7 }],
+				},
+			}),
+		);
+		await drainInbox(db);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0],
+		).toMatchObject({
+			checks_state: "failure",
+			workflow_state: "success",
+			workflow_failures: [],
+		});
+		await acceptGitHubDelivery(
+			db,
+			"workflow-unsafe",
+			"workflow_run",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				workflow_run: {
+					id: 1702,
+					name: "Deploy",
+					html_url: "javascript:alert(1)",
+					conclusion: "failure",
+					pull_requests: [{ number: 7 }],
+				},
+			}),
+		);
+		await drainInbox(db);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0]?.workflow_failures,
+		).toEqual([]);
 	}));
 
 test("event notifications are user-scoped and transition-deduplicated", () =>

@@ -55,6 +55,65 @@ p {
 	padding-top: 12px;
 	margin-top: 12px;
 }
+.pr-controls {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin: -8px -8px 12px;
+	padding: 8px;
+	border-bottom: 1px solid #d9e0e7;
+	background: #fff;
+}
+.pr-controls fieldset {
+	display: flex;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+.pr-controls legend {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+}
+.filter-pill,
+.repository-options label {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+.filter-pill {
+	padding: 5px 8px;
+	border: 1px solid #cbd5e1;
+	border-radius: 99px;
+}
+.repository-filter {
+	position: relative;
+}
+.repository-filter > :not(summary) {
+	display: block;
+	margin-top: 7px;
+}
+.repository-filter[open] {
+	padding: 7px;
+	border: 1px solid #cbd5e1;
+	border-radius: 6px;
+	background: #fff;
+}
+.repository-options {
+	max-height: 180px;
+	overflow: auto;
+}
+.workflow-failures {
+	margin: 8px 0 0;
+	padding-left: 20px;
+}
 .status {
 	font-size: 12px;
 	padding: 2px 7px;
@@ -114,7 +173,9 @@ button {
 	cursor: pointer;
 }
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+input:focus-visible,
+summary:focus-visible {
 	outline: 3px solid #2563eb;
 	outline-offset: 2px;
 }
