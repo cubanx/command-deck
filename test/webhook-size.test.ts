@@ -11,8 +11,8 @@ test("webhooks reject oversized bodies before persistence", () => withDatabase(a
 }));
 
 test("webhook HMAC uses exact UTF-8 bytes across stream chunks", () => withDatabase(async (db) => {
-  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9");
-  const payload = JSON.stringify({ installation: { id: 9 }, repository: { id: 2, full_name: "ds9/ops" }, pull_request: { number: 7, title: "Café", user: { login: "sisko" }, state: "open" } });
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9", "cubanx");
+  const payload = JSON.stringify({ installation: { id: 9, account: { login: "cubanx" } }, repository: { id: 2, full_name: "ds9/ops" }, pull_request: { number: 7, title: "Café", user: { login: "sisko" }, state: "open" } });
   const bytes = Buffer.from(payload), split = bytes.indexOf(0xc3) + 1;
   const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes.subarray(0, split)); controller.enqueue(bytes.subarray(split)); controller.close(); } });
   const signature = `sha256=${createHmac("sha256", "secret").update(bytes).digest("hex")}`;
