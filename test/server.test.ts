@@ -11,6 +11,17 @@ test("public PWA assets and streams are isolated", () => withDatabase(async (db)
   expect((await app.fetch(new Request("http://local/api/snapshot"))).status).toBe(401); expect((await app.fetch(new Request("http://local/events"))).status).toBe(401);
 }));
 
+test("dashboard shell uses compact OpenSpec disclosure and an accessible PR section name", () => withDatabase(async (db) => {
+  const app = createApp(db, testConfig);
+  const javascript = await (await app.fetch(new Request("http://local/app.js"))).text();
+  expect(javascript).toContain("<details");
+  expect(javascript).toContain("<summary");
+  expect(javascript).toContain("Open tasks");
+  expect(javascript).toContain('aria-label="Pull requests"');
+  expect(javascript).not.toContain("Your open pull requests");
+  expect(javascript).not.toContain("Pull requests needing attention");
+}));
+
 test("local demo serves snapshot and SSE without a session and exposes no Railway routes", () => withDatabase(async (db) => {
   const app = createApp(db, { ...testConfig, localDemo: true, hostname: "127.0.0.1" });
   expect((await (await app.fetch(new Request("http://local/api/snapshot"))).json()).pullRequests).toHaveLength(1); const stream = await app.fetch(new Request("http://local/events")); expect(stream.status).toBe(200); await stream.body?.cancel();
