@@ -21,47 +21,60 @@ Checkpoint: stop for user review after Group 1.
 
 Checkpoint: stop for user review after Group 2.
 
-## 3. Unified configuration, appearance, and Reconcile now
+Dependency satisfied: the PR-owned `establish-code-quality-safety` change is complete and locally validated. Group 3 is unblocked; both changes still publish together in intended PR #8.
 
-- [ ] 3.1 Add behavioral/accessibility tests that both top actions open one configuration section containing checkout, existing notification, System/Dark/Light, and authenticated Reconcile now controls.
-- [ ] 3.2 Add tests for browser-local appearance persistence, live System scheme changes, explicit overrides, semantic colors, focus, and contrast hooks.
-- [ ] 3.3 Add server tests for authenticated user-scoped reconciliation, foreign/no installation rejection, one shared scheduled/manual in-flight guard, success refresh, running state, and sanitized failure.
-- [ ] 3.4 Implement the hash-addressed configuration section, relocate the existing notification control unchanged, and implement native browser-local appearance preferences.
-- [ ] 3.5 Add the minimal user-bound approved-installation selector and `POST /api/reconcile` route that reuse installation bootstrap behind the shared in-flight reconciliation guard.
-- [ ] 3.6 Run focused server/dashboard tests, typecheck, and diff check.
+## 3. Sticky pull-request controls and Actions failure detail
+
+- [ ] 3.1 Add focused behavioral/accessibility tests for the sticky controls, final result count, one Clear action, `/` focus, Escape clearing, focus order, keyboard use, and narrow wrapping.
+- [ ] 3.2 Add tests for exact Mergeable/Ready for review/Draft precedence including a mergeable draft, default bucket order, and PR number descending within every bucket.
+- [ ] 3.3 Add tests for dependency-free search ranking, exact numeric PR matching, every approved search field, searchable multi-repository selection, and combined search/status/repository filtering.
+- [ ] 3.4 Add event/rendering tests that keep Actions and Checks distinct, retain authoritative failed-workflow names and safe run links, clear later-successful failures, and never invent job or step detail.
+- [ ] 3.5 Implement one derived client-side pull-request view with native sticky controls and the smallest deterministic matcher, plus signed `workflow_run` failure projection and linked rendering; defer jobs and steps.
+- [ ] 3.6 Run focused dashboard/access/event tests, typecheck, strict OpenSpec validation, and diff check.
 
 Checkpoint: stop for user review after Group 3.
 
-## 4. Browser-local multi-checkout mapping
+## 4. Unified configuration, appearance, and Reconcile now
 
-- [ ] 4.1 Add focused browser-script tests for IndexedDB directory-handle persistence, reload permission revalidation, account-root resolution, explicit resolved/unresolved states, exact override validation, and unsupported-browser fallback.
-- [ ] 4.2 Add collision tests proving same-named branches in different repositories cannot share local OpenSpec evidence and ambiguous/unverified folders remain unassociated.
-- [ ] 4.3 Implement the smallest IndexedDB handle store keyed by installation account and stable repository ID, with exact-name automatic resolution and verified repository overrides.
-- [ ] 4.4 Extend local checkout parsing only enough to read repository identity, HEAD, and OpenSpec tasks; keep every handle/path/file/branch/OpenSpec value client-only.
-- [ ] 4.5 Associate each resolved checkout with only its repository's pull requests and expose accessible permission/resolution/error states.
-- [ ] 4.6 Run focused local-evidence/dashboard tests, typecheck, and diff check.
+- [ ] 4.1 Add behavioral/accessibility tests that both top actions open one configuration section containing checkout, existing notification, System/Dark/Light, and authenticated Reconcile now controls.
+- [ ] 4.2 Add tests for browser-local appearance persistence, live System scheme changes, explicit overrides, semantic colors, focus, and contrast hooks.
+- [ ] 4.3 Add server tests for authenticated user-scoped reconciliation, foreign/no installation rejection, one shared scheduled/manual in-flight guard, success refresh, running state, and sanitized failure.
+- [ ] 4.4 Implement the hash-addressed configuration section, relocate the existing notification control unchanged, and implement native browser-local appearance preferences.
+- [ ] 4.5 Add the minimal user-bound approved-installation selector and `POST /api/reconcile` route that reuse installation bootstrap behind the shared in-flight reconciliation guard.
+- [ ] 4.6 Run focused server/dashboard tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 4.
 
-## 5. Guarded per-PR Merge control
+## 5. Browser-local multi-checkout mapping
 
-- [ ] 5.1 Add focused disabled-permission and accessibility tests showing an unavailable Merge control and reason under current read-only installation permissions.
-- [ ] 5.2 Add authorization tests for session-bound single-use merge OAuth intent, identity mismatch, missing/foreign installation or repository, insufficient current user role, and non-persistence of the request-local user token.
-- [ ] 5.3 Add eligibility tests for closed/draft PRs, mergeability, protections/rulesets, required checks/reviews, allowed merge method, and existing OpenSpec completion policy.
-- [ ] 5.4 Add exact-head race, action-time confirmation, protected-state refusal, permission absence, sanitized conflict, immediate refresh, and success tests.
-- [ ] 5.5 Implement action-time user reauthorization and role proof before minting installation authority; fail closed if role proof requires an unapproved OAuth scope change.
-- [ ] 5.6 Implement authoritative eligibility re-fetch and confirmation bound to repository, PR number/title, exact head SHA, and `MERGE`, rechecking all mutable gates before mutation.
-- [ ] 5.7 Implement GraphQL `mergePullRequest` with `expectedHeadOid` and `mergeMethod: MERGE`, sanitized outcome categories, and immediate projection refresh.
-- [ ] 5.8 Render the per-card Merge control while leaving it unavailable until the separate operational permission rollout succeeds.
-- [ ] 5.9 Run focused authorization/merge tests, typecheck, and diff check.
+- [ ] 5.1 Add focused browser-script tests for IndexedDB directory-handle persistence, reload permission revalidation, account-root resolution, explicit resolved/unresolved states, exact override validation, and unsupported-browser fallback.
+- [ ] 5.2 Add collision tests proving same-named branches in different repositories cannot share local OpenSpec evidence and ambiguous/unverified folders remain unassociated.
+- [ ] 5.3 Implement the smallest IndexedDB handle store keyed by installation account and stable repository ID, with exact-name automatic resolution and verified repository overrides.
+- [ ] 5.4 Extend local checkout parsing only enough to read repository identity, HEAD, and OpenSpec tasks; keep every handle/path/file/branch/OpenSpec value client-only.
+- [ ] 5.5 Associate each resolved checkout with only its repository's pull requests and expose accessible permission/resolution/error states.
+- [ ] 5.6 Run focused local-evidence/dashboard tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 5.
 
-## 6. Integrated validation and handoff
+## 6. Guarded per-PR Merge control
 
-- [ ] 6.1 Run the full test suite, typecheck, focused accessibility checks, and `git diff --check` with no new dependencies.
-- [ ] 6.2 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
-- [ ] 6.3 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
-- [ ] 6.4 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
+- [ ] 6.1 Add focused disabled-permission and accessibility tests showing an unavailable Merge control and reason under current read-only installation permissions.
+- [ ] 6.2 Add authorization tests for session-bound single-use merge OAuth intent, identity mismatch, missing/foreign installation or repository, insufficient current user role, and non-persistence of the request-local user token.
+- [ ] 6.3 Add eligibility tests for closed/draft PRs, mergeability, protections/rulesets, required checks/reviews, allowed merge method, and existing OpenSpec completion policy.
+- [ ] 6.4 Add exact-head race, action-time confirmation, protected-state refusal, permission absence, sanitized conflict, immediate refresh, and success tests.
+- [ ] 6.5 Implement action-time user reauthorization and role proof before minting installation authority; fail closed if role proof requires an unapproved OAuth scope change.
+- [ ] 6.6 Implement authoritative eligibility re-fetch and confirmation bound to repository, PR number/title, exact head SHA, and `MERGE`, rechecking all mutable gates before mutation.
+- [ ] 6.7 Implement GraphQL `mergePullRequest` with `expectedHeadOid` and `mergeMethod: MERGE`, sanitized outcome categories, and immediate projection refresh.
+- [ ] 6.8 Render the per-card Merge control while leaving it unavailable until the separate operational permission rollout succeeds.
+- [ ] 6.9 Run focused authorization/merge tests, typecheck, and diff check.
+
+Checkpoint: stop for user review after Group 6.
+
+## 7. Integrated validation and handoff
+
+- [ ] 7.1 Run the full test suite, typecheck, focused accessibility checks, and `git diff --check` with no new dependencies.
+- [ ] 7.2 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
+- [ ] 7.3 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
+- [ ] 7.4 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
 
 Checkpoint: stop for final user review before any commit, push, pull request, deployment, provider change, or production action.

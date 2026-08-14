@@ -6,6 +6,8 @@ Deployment bootstrap currently takes the first record from a one-record statuses
 
 Current GitHub App installations are read-only. GitHub documents `mergePullRequest` with `expectedHeadOid` and `mergeMethod`, while GraphQL App permission requirements must be proven in operation. Current repository settings allow merge commits, squash, and rebase, and every merged code PR on `main` uses a two-parent merge commit, so `MERGE` is the established method.
 
+The observed live page currently renders 16 pull-request cards and 35 deployment rows. All 16 pull requests are drafts, including some with authoritative `mergeable=true`; expanded OpenSpec checklists dominate the page height. This makes compact evidence and persistent PR controls necessary, and makes status precedence a data rule rather than a visual guess.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -21,6 +23,8 @@ Current GitHub App installations are read-only. GitHub documents `mergePullReque
 - Broadening notification triggers, GitHub OAuth token persistence, installation accounts, or App permissions in PR #8.
 - Provider configuration, permission approval, deployment, production verification, or a real merge.
 - Supporting browsers that cannot persist File System Access handles; committed projections remain the fallback.
+- Compacting or deduplicating deployment history; the observed row count does not authorize a new deployment UX.
+- Fetching GitHub Actions job or step failure detail; that requires additional endpoint polling, pagination, and projection schema beyond the signed workflow event.
 
 ## Decisions
 
@@ -29,6 +33,22 @@ Current GitHub App installations are read-only. GitHub documents `mergePullReque
 Render OpenSpec evidence with collapsed `<details>` and `<summary>` elements. Replace both top actions with links to the same `#configuration` section, preserving browser history, focus, and no-framework operation. The dashboard section keeps a non-visual accessible name through the existing ARIA or visually-hidden convention.
 
 Alternatives rejected: a custom accordion/state component duplicates native accessibility; separate checkout, notification, and appearance views fragment a small application; a modal traps a configuration surface that should be linkable.
+
+### Derive one filtered pull-request view with native controls
+
+Keep a compact controls bar sticky while the pull-request list scrolls. Use a labeled search input, clickable status pills, a searchable native disclosure containing repository checkboxes, a visible final result count, and one Clear action. Preserve DOM focus order and let native controls wrap on narrow screens. `/` focuses search; Escape clears it while focused.
+
+Classify each pull request once with exact precedence: Mergeable when the authoritative projection is `mergeable=true` or clean, even when draft; Ready for review for remaining non-drafts; Draft for remaining drafts. Default ordering is those three buckets, then PR number descending inside each bucket. Status pills filter those same mutually exclusive buckets.
+
+Use a small dependency-free scorer across title, owner/repository, branch, and linked OpenSpec change name. Rank exact, prefix, and substring matches before typo-tolerant matches. A numeric query matches only the exact PR number. Search, status, and repository filters compose before the result count is calculated.
+
+Alternatives rejected: a UI framework or fuzzy-search dependency is unnecessary for the current list size; one repository pill per repository does not scale; attention sorting conflicts with the approved mutually exclusive buckets.
+
+### Project authoritative Actions failure links without job polling
+
+Keep Actions as the `workflow_run` aggregate and Checks as the independent `check_run`/`check_suite` aggregate. From signed `workflow_run` payloads, retain only the authoritative workflow ID, name, safe GitHub run URL, and failed conclusion needed to render failed workflow links. A later event replaces or clears that workflow's failure state; scalar conclusions never synthesize names or URLs.
+
+Job and step details are deferred. They are absent from `workflow_run` payloads and would require jobs-endpoint polling, pagination, and broader projection machinery even though the current App already has Actions read permission.
 
 ### Persist directory handles in IndexedDB and scalar appearance in localStorage
 
@@ -75,10 +95,13 @@ Use Sina Schulz's OpenMoji control-knobs artwork under CC BY-SA 4.0, recolor it 
 - [Action-time OAuth adds a redirect] → Bind a short-lived intent and return to the exact PR card; accept the redirect to avoid stored user authority.
 - [GraphQL App permission mapping is not fully documented] → Keep the control disabled and require the operational proof before requesting permission.
 - [Repository merge policy changes] → Re-fetch allowed methods and fail closed if `MERGE` is unavailable.
+- [Fuzzy matches obscure exact results] → Use deterministic score tiers and keep numeric PR queries exact.
+- [Sticky controls crowd narrow screens] → Let native controls wrap in DOM order and keep every label and action keyboard reachable.
 
 ## Migration Plan
 
-1. Land PR #8 with browser-local storage migration from no saved configuration, the Merge control disabled under existing permissions, and focused tests.
-2. Deploy through the existing separately authorized production workflow; no provider mutation is part of this change.
-3. Execute `operate-command-deck-merge-permission` only after the exact PR #8 merge SHA is verified on current `main` and deployed healthy.
-4. Roll back application code normally; browser-local configuration can remain inert. Disable the merge capability before changing permissions if any authorization gate fails.
+1. The PR-owned `establish-code-quality-safety` change is complete and locally validated, so this change may resume after Group 2.
+2. Land PR #8 with browser-local storage migration from no saved configuration, the Merge control disabled under existing permissions, and focused tests.
+3. Deploy through the existing separately authorized production workflow; no provider mutation is part of this change.
+4. Execute `operate-command-deck-merge-permission` only after the exact PR #8 merge SHA is verified on current `main` and deployed healthy.
+5. Roll back application code normally; browser-local configuration can remain inert. Disable the merge capability before changing permissions if any authorization gate fails.
