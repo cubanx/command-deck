@@ -1,5 +1,7 @@
 .env
 data/
 node_modules/
+coverage/
+.ts-crap-cache/
 .mex/graph.db
 .DS_Store

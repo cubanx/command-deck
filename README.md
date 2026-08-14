@@ -11,11 +11,14 @@ Requirement: [Bun](https://bun.sh/).
 MongoDB is also required for tests and runtime. Set `MONGODB_URI_BASE` to an isolated local MongoDB endpoint, then run:
 
 ```bash
+docker run --detach --rm --name dcc-mongodb-test --publish 127.0.0.1:27018:27017 mongo:8
 bun install
 bun run dev
-MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun test
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test
 MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test:mongo
 ```
+
+Stop the disposable test database with `docker stop dcc-mongodb-test`. Tests create UUID-named guarded databases and drop only those databases.
 
 Open `http://localhost:3000`. The development command binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
 
@@ -26,10 +29,28 @@ For real provider integration, copy `.env.example` to `.env`, supply a developme
 Local validation:
 
 ```bash
+bun run format
+bun run check
 bun run typecheck
-MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun test
-openspec validate build-developer-command-center-mvp --strict
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run quality
+openspec validate establish-code-quality-safety --strict
+openspec validate improve-command-deck --strict
 ```
+
+### Quality baseline
+
+PR #8 adopts the portable Quality CI contract verified from Crisp Internal Apps commit `1a102a492d8f1de692023d977afb9d48c00d9457`:
+
+- Biome `2.5.6`: tabs, double quotes, import organization, recommended lint rules, and Git-ignore awareness.
+- CrapTS `0.1.1`: V8/Istanbul JSON coverage with a maximum CRAP score of `30` and at most `20` violations.
+- Vitest and `@vitest/coverage-v8` `4.1.10`: the single test runner and coverage producer required by CrapTS.
+- Existing TypeScript typechecking, the complete Mongo-backed test suite, frozen-lockfile installation, and Docker image construction remain required.
+
+Only authored source and configuration are in scope. Narrow exclusions cover generated, vendored, binary, coverage, build, CodeGraph, and CC-licensed image assets where the applicable tool cannot inspect them meaningfully. The project does not copy Internal Apps' React/Vite generated-route, environment-contract, server-boundary, component/E2E, change-classification, deployment, or provider-specific jobs because those contracts do not exist here.
+
+Use `bun run format` before review. `bun run check` verifies formatting, lint, and imports without changing files. `bun run test:coverage` writes V8 coverage to `coverage/unit/coverage-final.json`; `bun run check:crap` runs that suite and enforces `--max 30 --limit 20`; `bun run quality` is the same Biome, typecheck, coverage, test, and strict CrapTS gate used by Quality CI.
+
+Quality CI installs from `bun.lock`, caches only Bun's package cache, uses an isolated MongoDB service, and builds the production Dockerfile after the quality gate. The workflow file does not make itself a provider-side required check; changing GitHub rulesets or branch protection remains a separately authorized repository operation.
 
 ## Configuration
 

@@ -1,22 +1,32 @@
 {
-  "name": "developer-command-center",
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "latest"
-  },
-  "license": "MIT",
-  "private": true,
-  "scripts": {
-    "dev": "NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
-    "start": "bun src/server.ts",
-    "test": "bun test",
-    "typecheck": "bunx tsc --noEmit",
-    "knowledge:check": "MEX_TELEMETRY=0 npx --yes mex-agent@0.7.0 check --stale-warn-days 75 --stale-error-days 90 --stale-warn-commits 1000000 --stale-error-commits 1000000",
-    "test:mongo": "MONGODB_URI_BASE=${MONGODB_URI_BASE:?MONGODB_URI_BASE is required} MONGODB_DATABASE=dev-command-center-test-$(bun -e 'console.log(crypto.randomUUID())') bun test test/mongodb.test.ts",
-    "seed:bindings": "bun src/seed-bindings.ts"
-  },
-  "type": "module",
-  "dependencies": {
-    "mongodb": "6.19.0"
-  }
+	"name": "developer-command-center",
+	"devDependencies": {
+		"@biomejs/biome": "2.5.6",
+		"@types/bun": "latest",
+		"@vitest/coverage-v8": "4.1.10",
+		"crap-ts": "0.1.1",
+		"typescript": "latest",
+		"vitest": "4.1.10"
+	},
+	"license": "MIT",
+	"private": true,
+	"scripts": {
+		"format": "biome format --write .",
+		"lint": "biome lint .",
+		"check": "biome check .",
+		"dev": "NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
+		"start": "bun src/server.ts",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"check:crap": "bun run test:coverage && crap-ts score src --coverage-file coverage/unit/coverage-final.json --max 30 --limit 20",
+		"quality": "bun run check && bun run typecheck && bun run check:crap",
+		"typecheck": "bunx tsc --noEmit",
+		"knowledge:check": "MEX_TELEMETRY=0 npx --yes mex-agent@0.7.0 check --stale-warn-days 75 --stale-error-days 90 --stale-warn-commits 1000000 --stale-error-commits 1000000",
+		"test:mongo": "MONGODB_URI_BASE=${MONGODB_URI_BASE:?MONGODB_URI_BASE is required} MONGODB_DATABASE=dev-command-center-test-$(bun -e 'console.log(crypto.randomUUID())') vitest run test/mongodb.test.ts",
+		"seed:bindings": "bun src/seed-bindings.ts"
+	},
+	"type": "module",
+	"dependencies": {
+		"mongodb": "6.19.0"
+	}
 }

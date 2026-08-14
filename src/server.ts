@@ -1,86 +1,550 @@
+import { readFileSync } from "node:fs";
+import {
+	bindInstallation,
+	consumeOAuthState,
+	createOAuthState,
+	createSession,
+	dashboardForUser,
+	LOCAL_DEMO_USER,
+	seedLocalDemo,
+	sessionUser,
+	upsertIdentity,
+} from "./access";
 import type { Config } from "./config";
 import { loadConfig } from "./config";
 import type { Db } from "./db";
 import { databaseReady, initializeDatabase, openDatabase } from "./db";
-import { LOCAL_DEMO_USER, bindInstallation, consumeOAuthState, createOAuthState, createSession, dashboardForUser, seedLocalDemo, sessionUser, upsertIdentity } from "./access";
-import { acceptGitHubDelivery, drainInbox, githubSignatureValid } from "./events";
-import { githubAppJwt, installationToken, bootstrapInstallation, reconcileInstallations, githubNextLink } from "./github";
+import {
+	acceptGitHubDelivery,
+	drainInbox,
+	githubSignatureValid,
+} from "./events";
+import {
+	bootstrapInstallation,
+	githubAppJwt,
+	githubNextLink,
+	installationToken,
+	reconcileInstallations,
+} from "./github";
 import { approvedInstallationAccount } from "./installations";
 
-const cookie = (request: Request) => request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];
-const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#18212f"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon-adaptive.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="stylesheet" href="/app.css?v=4"><title>Command center</title></head><body><main id="app" aria-live="polite"><p>Loading command center…</p></main><script type="module" src="/app.js?v=4"></script></body></html>`;
-const css = `:root{font:14px system-ui;color:#172033;background:#f5f7f9}*{box-sizing:border-box}body{margin:0}main{max-width:1280px;margin:auto;padding:24px}header,.brand,.actions,.statuses,.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.brand-icon{width:44px;height:44px;flex:none}header{justify-content:space-between;margin-bottom:16px}h1,h2,h3,p{margin-top:0}.grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:12px}.card{border:1px solid #d9e0e7;border-radius:8px;background:#fff;padding:16px}.stack>*+*{border-top:1px solid #e7ebef;padding-top:12px;margin-top:12px}.status{font-size:12px;padding:2px 7px;border-radius:99px;background:#e8eef5}.green{background:#dcfae6;color:#067647}.red{background:#fee4e2;color:#b42318}.yellow{background:#fef0c7;color:#b54708}.blue{background:#dbeafe;color:#1d4ed8}.muted{color:#667085;font-size:13px}.error{color:#b42318}.openspec{margin-top:12px;padding:12px;border:1px solid #d9e0e7;border-radius:6px;background:#f8fafc}.tasks{padding:0;list-style:none}.tasks li{margin:7px 0}.tasks input{margin:0 7px 0 0;accent-color:#2563eb}button,a{color:#175cd3}button{border:1px solid #cbd5e1;border-radius:6px;background:#fff;padding:7px 10px;cursor:pointer}button:focus-visible,a:focus-visible{outline:3px solid #2563eb;outline-offset:2px}@media(max-width:760px){main{padding:12px}.grid{grid-template-columns:1fr}}`;
-const js = String.raw`
-const root=document.querySelector('#app');
-const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-const tone=value=>/success|complete|clean|approved/i.test(value)?'green':/fail|error|conflict|change/i.test(value)?'red':/pending|unknown|stale/i.test(value)?'yellow':'blue';
-const badge=(label,value)=>'<span class="status '+tone(value)+'">'+esc(label)+': '+esc(value??'unknown')+'</span>';
-let known=null,current=null,localSpecs=[],localFiles=new Map();
-const parseTasks=content=>{const groups=[];let title='Tasks';for(const line of content.split(/\r?\n/)){const heading=line.match(/^#{1,6}\s+(.+?)\s*$/);if(heading){title=heading[1];continue}const task=line.match(/^\s*- \[([ xX])\]\s+(.+?)\s*$/);if(!task)continue;let group=groups.at(-1);if(!group||group.title!==title){group={title,tasks:[]};groups.push(group)}group.tasks.push({completed:task[1].toLowerCase()==='x',text:task[2]})}const tasks=groups.flatMap(group=>group.tasks);return{completed:tasks.filter(task=>task.completed).length,total:tasks.length,active_group:groups.find(group=>group.tasks.some(task=>!task.completed))??null}};
-const groupFor=item=>{if(!item.active_group)return null;if(typeof item.active_group==='object')return item.active_group;try{return JSON.parse(item.active_group)}catch(error){console.error('OpenSpec group parse failed',error?.name??'invalid JSON');return null}};
-const sourceFor=item=>item.source_type==='local'?'<a href="#" data-local-source="'+esc(item.change_name)+'">Open local tasks</a>':item.source_url?'<a href="'+esc(item.source_url)+'" target="_blank" rel="noopener noreferrer">Open tasks</a>':'';
-const localSpecFor=(pr,pullRequests)=>{const commitMatches=localSpecs.filter(item=>item.source_commit&&item.source_commit===pr.head_sha),branchMatches=commitMatches.length?[]:localSpecs.filter(item=>item.source_ref&&item.source_ref===pr.head_ref),uniqueCommit=pullRequests.filter(item=>pr.head_sha&&item.head_sha===pr.head_sha).length===1,uniqueBranch=pullRequests.filter(item=>pr.head_ref&&item.head_ref===pr.head_ref).length===1;return commitMatches.length===1&&uniqueCommit?commitMatches[0]:branchMatches.length===1&&uniqueBranch?branchMatches[0]:null};
-const specFor=(pr,pullRequests)=>localSpecFor(pr,pullRequests)??pr.open_spec;
-const openSpecMarkup=item=>{if(!item)return'';const group=groupFor(item),title=group?.title??'Complete';return'<details class="openspec"><summary><strong>OpenSpec · '+esc(item.change_name)+' · '+esc(item.completed)+'/'+esc(item.total)+' · '+esc(title)+'</strong> '+sourceFor(item)+'</summary>'+(group?'<ul class="tasks">'+group.tasks.map(task=>'<li><label><input type="checkbox" disabled '+(task.completed?'checked':'')+'> '+esc(task.text)+'</label></li>').join('')+'</ul>':'<p class="muted">All tasks complete.</p>')+'</details>'};
-const render=x=>{current=x;if(x.error){root.innerHTML='<div class="card error">'+esc(x.error)+' <a href="/auth/github">Sign in</a></div>';return}const rows=(items,empty,fn)=>items.length?'<div class="stack">'+items.map(fn).join('')+'</div>':'<p class="muted">'+empty+'</p>';const prs=x.pullRequests.map(pr=>({pr,spec:specFor(pr,x.pullRequests)}));root.innerHTML='<header><div class="brand"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command center</h1><p class="muted">Open pull requests you authored.</p></div></div><div class="actions"><button id="checkout">Connect local checkout</button><button id="notify">Enable notifications</button></div></header>'+(x.stale?'<p class="card error">Provider reconciliation is stale.</p>':'')+'<div class="grid"><section class="card" aria-label="Pull requests">'+rows(prs,'No open authored pull requests.',item=>{const pr=item.pr;return'<article><h3><a href="'+esc(pr.url)+'" target="_blank" rel="noopener noreferrer">#'+esc(pr.number)+' · '+esc(pr.title)+'</a></h3><div class="statuses">'+badge('attention',pr.needs_attention?'needs attention':'healthy')+badge('draft',pr.draft?'draft':'ready')+badge('Actions',pr.workflow_state)+badge('checks',pr.checks_state)+badge('review',pr.review_state)+(pr.bot_review_state?badge('review · '+pr.bot_review_actor,pr.bot_review_state):'')+badge('mergeable',pr.mergeable)+'</div>'+openSpecMarkup(item.spec)+'</article>'})+'</section><section class="card"><h2>GitHub deployments · last 48 hours</h2>'+rows(x.deployments,'No recent deployment evidence.',deployment=>'<article><h3>'+esc(deployment.full_name)+' · '+esc(deployment.environment)+' · '+esc(deployment.id)+'</h3><div class="statuses">'+badge('status',deployment.state)+'</div>'+(deployment.target_url?'<p><a href="'+esc(deployment.target_url)+'" target="_blank" rel="noopener noreferrer">Deployment</a>'+(deployment.log_url?' · <a href="'+esc(deployment.log_url)+'" target="_blank" rel="noopener noreferrer">Logs</a>':'')+'</p>':'')+'</article>')+'</section></div>';
-document.querySelector('#notify')?.addEventListener('click',()=>globalThis.Notification?.requestPermission());document.querySelector('#checkout')?.addEventListener('click',connectCheckout);document.querySelectorAll('[data-local-source]').forEach(link=>link.addEventListener('click',openLocalSource))};
-async function connectCheckout(){if(!globalThis.showDirectoryPicker){alert('This browser does not support local directory access. Committed GitHub OpenSpecs remain available.');return}try{const checkout=await showDirectoryPicker({id:'dcc-checkout',mode:'read'});let source_ref=null,source_commit=null;try{const git=await checkout.getDirectoryHandle('.git'),head=await(await git.getFileHandle('HEAD')).getFile(),value=(await head.text()).trim(),ref=value.match(/^ref: refs\/heads\/([A-Za-z0-9._/-]+)$/);if(ref&&!ref[1].includes('..'))source_ref=ref[1];else if(/^[0-9a-f]{40}$/i.test(value))source_commit=value}catch(error){if(!['NotFoundError','TypeMismatchError'].includes(error?.name))console.error('Local Git head read failed',error?.name??'unknown error')}const changes=await(await checkout.getDirectoryHandle('openspec')).getDirectoryHandle('changes');const specs=[],files=new Map();for await(const[name,directory]of changes.entries()){if(directory.kind!=='directory'||!/^[A-Za-z0-9._-]+$/.test(name))continue;try{const handle=await directory.getFileHandle('tasks.md'),file=await handle.getFile(),progress=parseTasks(await file.text());specs.push({change_name:name,...progress,source_ref,source_commit,source_type:'local'});files.set(name,handle)}catch(error){if(error?.name!=='NotFoundError')console.error('Local OpenSpec read failed',error?.name??'unknown error')}}localSpecs=specs;localFiles=files;render(current)}catch(error){if(error?.name!=='AbortError'){console.error('Local checkout access failed',error?.name??'unknown error');alert('Could not read that checkout. Select a repository containing openspec/changes.')}}}
-async function openLocalSource(event){event.preventDefault();const handle=localFiles.get(event.currentTarget.dataset.localSource);if(!handle)return;try{const file=await handle.getFile(),url=URL.createObjectURL(new Blob([await file.text()],{type:'text/plain'})),link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.click();setTimeout(()=>URL.revokeObjectURL(url),60000)}catch(error){console.error('Local OpenSpec open failed',error?.name??'unknown error')}}
-const load=()=>fetch('/api/snapshot').then(response=>response.ok?response.json():Promise.reject(response.status)).then(data=>{const ids=new Set(data.notifications.map(item=>item.id));if(known&&globalThis.Notification?.permission==='granted')navigator.serviceWorker?.ready.then(worker=>data.notifications.filter(item=>!known.has(item.id)).forEach(item=>worker.showNotification(item.title,{body:item.body})));known=ids;render(data);return true}).catch(()=>{render({error:navigator.onLine?'Sign in to view your command center.':'Offline: live command-center data is unavailable.'});return false});
-load().then(ok=>{if(ok)new EventSource('/events').addEventListener('refresh',load)});navigator.serviceWorker?.register('/sw.js');`;
-const manifest = JSON.stringify({ name: "Developer Command Center", short_name: "Command Center", start_url: "/", display: "standalone", background_color: "#f5f7f9", theme_color: "#18212f", icons: [{ src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" }, { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" }, { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }] });
-const worker = `const CACHE='dcc-shell-v6';const ASSETS=['/','/app.css?v=4','/app.js?v=4','/manifest.webmanifest','/icon.svg','/icon-adaptive.svg','/favicon-32.png','/apple-touch-icon.png','/icon-192.png','/icon-512.png','/icon-maskable-512.png'];const PATHS=new Set(ASSETS.map(value=>new URL(value,self.location).pathname));self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)))});self.addEventListener('activate',e=>e.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))),self.clients.claim()])));self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method==='GET'&&PATHS.has(u.pathname))e.respondWith(caches.match(e.request).then(x=>x||fetch(e.request)));});`;
+const cookie = (request: Request) =>
+	request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];
+const webAsset = (name: string) =>
+	readFileSync(new URL(`./web/${name}`, import.meta.url), "utf8");
+const html = webAsset("index.html");
+const css = webAsset("app.css");
+const js = webAsset("app.js");
+const manifest = webAsset("manifest.webmanifest");
+const worker = webAsset("sw.js");
+
+type SessionIdentity = { id: string; login?: string };
+type AppContext = {
+	db: Db;
+	config: Config;
+	initialized: Promise<unknown>;
+	streams: Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>;
+	encoder: TextEncoder;
+	authenticated(request: Request): Promise<SessionIdentity | null>;
+	scheduleDrain(): Promise<void>;
+};
+
+const textAssets = new Map<string, [string, string, HeadersInit?]>([
+	["/", [html, "text/html; charset=utf-8"]],
+	["/app.css", [css, "text/css"]],
+	["/app.js", [js, "text/javascript"]],
+	["/manifest.webmanifest", [manifest, "application/manifest+json"]],
+	["/sw.js", [worker, "text/javascript", { "cache-control": "no-cache" }]],
+]);
+const iconAssets = new Map<string, [string, string]>([
+	["/icon.svg", ["icon.svg", "image/svg+xml"]],
+	["/icon-adaptive.svg", ["icon-adaptive.svg", "image/svg+xml"]],
+	["/favicon-32.png", ["favicon-32.png", "image/png"]],
+	["/apple-touch-icon.png", ["apple-touch-icon.png", "image/png"]],
+	["/icon-192.png", ["icon-192.png", "image/png"]],
+	["/icon-512.png", ["icon-512.png", "image/png"]],
+	["/icon-maskable-512.png", ["icon-maskable-512.png", "image/png"]],
+]);
+
+const publicResponse = (path: string) => {
+	const text = textAssets.get(path);
+	if (text)
+		return new Response(text[0], {
+			headers: { "content-type": text[1], ...text[2] },
+		});
+	const icon = iconAssets.get(path);
+	return icon
+		? new Response(
+				readFileSync(new URL(`../assets/${icon[0]}`, import.meta.url)),
+				{
+					headers: { "content-type": icon[1] },
+				},
+			)
+		: undefined;
+};
+
+const boundedBody = async (request: Request, limit = 1_000_000) => {
+	if (Number(request.headers.get("content-length") ?? 0) > limit) return null;
+	const reader = request.body?.getReader();
+	if (!reader) return "";
+	const decoder = new TextDecoder();
+	let size = 0;
+	let text = "";
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) return text + decoder.decode();
+		size += value.byteLength;
+		if (size > limit) return null;
+		text += decoder.decode(value, { stream: true });
+	}
+};
+
+const trustedOrigin = (request: Request, config: Config) => {
+	if (!config.production) return true;
+	if (!config.publicUrl) return false;
+	const origin = new URL(config.publicUrl);
+	const header = (name: string) =>
+		request.headers.get(name)?.split(",", 1)[0]?.trim();
+	return (
+		header("x-forwarded-proto") === "https" &&
+		header("x-forwarded-host") === origin.host
+	);
+};
+
+const readyResponse = async (context: AppContext) => {
+	try {
+		await context.initialized;
+		await databaseReady(context.db);
+		return Response.json({ ok: true });
+	} catch (error) {
+		console.error(
+			"MongoDB readiness failed",
+			error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+		);
+		return new Response("not ready", { status: 503 });
+	}
+};
+
+const sessionRoute = async (
+	context: AppContext,
+	request: Request,
+	path: string,
+) => {
+	if (path === "/api/snapshot") {
+		const user = await context.authenticated(request);
+		return user
+			? Response.json(await dashboardForUser(context.db, user.id))
+			: new Response("unauthenticated", { status: 401 });
+	}
+	if (path !== "/events") return undefined;
+	const user = await context.authenticated(request);
+	if (!user) return new Response("unauthenticated", { status: 401 });
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			const set = context.streams.get(user.id) ?? new Set();
+			set.add(controller);
+			context.streams.set(user.id, set);
+			controller.enqueue(
+				context.encoder.encode("event: refresh\\ndata: {}\\n\\n"),
+			);
+			request.signal.addEventListener("abort", () => {
+				set.delete(controller);
+				if (!set.size) context.streams.delete(user.id);
+			});
+		},
+	});
+	return new Response(stream, {
+		headers: {
+			"content-type": "text/event-stream",
+			"cache-control": "no-cache",
+			connection: "keep-alive",
+		},
+	});
+};
+
+const beginOAuth = async (context: AppContext, request: Request) => {
+	if (!trustedOrigin(request, context.config))
+		return new Response("invalid public origin", { status: 400 });
+	if (!context.config.githubClientId)
+		return new Response("GitHub OAuth is not configured", { status: 503 });
+	const state = await createOAuthState(context.db);
+	const redirect = context.config.oauthCallbackUrl
+		? `&redirect_uri=${encodeURIComponent(context.config.oauthCallbackUrl)}`
+		: "";
+	return Response.redirect(
+		`https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(context.config.githubClientId)}&state=${encodeURIComponent(state)}${redirect}`,
+		302,
+	);
+};
+
+const beginInstall = async (context: AppContext, request: Request) => {
+	const user = await context.authenticated(request);
+	if (!user || !context.config.githubAppSlug)
+		return new Response("GitHub App installation is not configured", {
+			status: 503,
+		});
+	const state = await createOAuthState(context.db);
+	return Response.redirect(
+		`https://github.com/apps/${encodeURIComponent(context.config.githubAppSlug)}/installations/new?state=${encodeURIComponent(state)}`,
+		302,
+	);
+};
+
+type VerifiedInstallation = { id: number; account?: { login?: string } };
+const verifyInstallation = async (
+	accessToken: string,
+	installationId: string,
+) => {
+	const headers = {
+		authorization: `Bearer ${accessToken}`,
+		accept: "application/vnd.github+json",
+	};
+	let next: string | undefined =
+		"https://api.github.com/user/installations?per_page=100";
+	let verified: VerifiedInstallation | undefined;
+	const seen = new Set([next]);
+	for (let pages = 0; next && pages < 100; pages++) {
+		const response: Response = await fetch(next, { headers });
+		if (!response.ok) return { failed: true };
+		const body = (await response.json()) as {
+			installations?: VerifiedInstallation[];
+		};
+		verified =
+			body.installations?.find((item) => String(item.id) === installationId) ??
+			verified;
+		try {
+			next = githubNextLink(response.headers.get("link"), seen);
+		} catch {
+			return { failed: true };
+		}
+		if (verified) break;
+	}
+	return { failed: false, verified };
+};
+
+const queueBootstrap = (context: AppContext, installationId: string) => {
+	const { githubAppId, githubAppPrivateKey } = context.config;
+	if (!githubAppId || !githubAppPrivateKey) return;
+	queueMicrotask(() => {
+		void installationToken(
+			githubAppJwt(githubAppId, githubAppPrivateKey.replace(/\\n/g, "\n")),
+			installationId,
+		)
+			.then((token) => bootstrapInstallation(context.db, installationId, token))
+			.then((result) => {
+				if (result.kind === "error")
+					console.error(
+						"installation bootstrap failed",
+						result.message.slice(0, 200),
+					);
+			})
+			.catch((error) =>
+				console.error(
+					"installation bootstrap failed",
+					error instanceof Error
+						? error.message.slice(0, 200)
+						: "unknown error",
+				),
+			);
+	});
+};
+
+const oauthCallback = async (
+	context: AppContext,
+	request: Request,
+	url: URL,
+) => {
+	const code = url.searchParams.get("code");
+	const state = url.searchParams.get("state");
+	const installationId = url.searchParams.get("installation_id");
+	const { githubClientId, githubClientSecret } = context.config;
+	if (
+		!trustedOrigin(request, context.config) ||
+		!code ||
+		!state ||
+		!(await consumeOAuthState(context.db, state)) ||
+		!githubClientId ||
+		!githubClientSecret
+	)
+		return new Response("invalid OAuth callback", { status: 400 });
+	const tokenResponse = await fetch(
+		"https://github.com/login/oauth/access_token",
+		{
+			method: "POST",
+			headers: {
+				accept: "application/json",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				client_id: githubClientId,
+				client_secret: githubClientSecret,
+				code,
+			}),
+		},
+	);
+	const accessToken = (
+		(await tokenResponse.json()) as { access_token?: string }
+	).access_token;
+	if (!accessToken)
+		return new Response("GitHub sign-in failed", { status: 502 });
+	const headers = {
+		authorization: `Bearer ${accessToken}`,
+		accept: "application/vnd.github+json",
+	};
+	const identity = (await (
+		await fetch("https://api.github.com/user", { headers })
+	).json()) as { id: number; login: string; avatar_url?: string };
+	const userId = String(identity.id);
+	await upsertIdentity(context.db, userId, identity.login, identity.avatar_url);
+	if (installationId && /^\d+$/.test(installationId)) {
+		const verification = await verifyInstallation(accessToken, installationId);
+		if (verification.failed)
+			return new Response("GitHub installation verification failed", {
+				status: 502,
+			});
+		if (!verification.verified)
+			return new Response("unverified installation", { status: 403 });
+		if (
+			!approvedInstallationAccount(verification.verified.account?.login) ||
+			!(await bindInstallation(
+				context.db,
+				userId,
+				installationId,
+				verification.verified.account?.login,
+			))
+		)
+			return new Response("unapproved installation", { status: 403 });
+		queueBootstrap(context, installationId);
+	}
+	const session = await createSession(context.db, userId);
+	return new Response(null, {
+		status: 302,
+		headers: {
+			location: context.config.publicUrl ?? new URL("/", url).toString(),
+			"set-cookie": `dcc_session=${session.token}; HttpOnly;${context.config.secureCookies ? " Secure;" : ""} SameSite=Lax; Path=/; Max-Age=2592000`,
+		},
+	});
+};
+
+const authRoute = (
+	context: AppContext,
+	request: Request,
+	url: URL,
+): Promise<Response> | Response | undefined => {
+	switch (url.pathname) {
+		case "/auth/github":
+			return beginOAuth(context, request);
+		case "/install/github":
+			return beginInstall(context, request);
+		case "/auth/github/callback":
+			return oauthCallback(context, request, url);
+		case "/auth/github/setup":
+			return new Response("unverified installation binding is not supported", {
+				status: 410,
+			});
+	}
+};
+
+const webhookRoute = async (
+	context: AppContext,
+	request: Request,
+	path: string,
+) => {
+	if (path !== "/webhooks/github" || request.method !== "POST")
+		return undefined;
+	const body = await boundedBody(request);
+	const delivery = request.headers.get("x-github-delivery");
+	const event = request.headers.get("x-github-event");
+	if (body === null) return new Response("payload too large", { status: 413 });
+	if (
+		!delivery ||
+		!event ||
+		!context.config.githubWebhookSecret ||
+		!githubSignatureValid(
+			body,
+			request.headers.get("x-hub-signature-256"),
+			context.config.githubWebhookSecret,
+		)
+	)
+		return new Response("invalid GitHub webhook", { status: 401 });
+	const inserted = await acceptGitHubDelivery(
+		context.db,
+		delivery,
+		event,
+		body,
+	);
+	if (inserted) queueMicrotask(() => void context.scheduleDrain());
+	return new Response(null, { status: 202 });
+};
+
+const repairRoute = async (
+	context: AppContext,
+	request: Request,
+	path: string,
+) => {
+	const repair = path.match(
+		/^\/api\/installations\/(\d+)\/(bootstrap|repair)$/,
+	);
+	if (!repair || request.method !== "POST") return undefined;
+	const user = await context.authenticated(request);
+	const installationId = repair[1];
+	const binding =
+		user &&
+		(
+			await context.db.users.findOne(
+				{ _id: user.id },
+				{ projection: { installations: 1 } },
+			)
+		)?.installations.find((item) => item.installationId === installationId);
+	if (
+		!binding ||
+		(binding.accountLogin && !approvedInstallationAccount(binding.accountLogin))
+	)
+		return new Response("not found", { status: 404 });
+	const { githubAppId, githubAppPrivateKey } = context.config;
+	if (!githubAppId || !githubAppPrivateKey)
+		return new Response("GitHub App is not configured", { status: 503 });
+	const token = await installationToken(
+		githubAppJwt(githubAppId, githubAppPrivateKey.replace(/\\n/g, "\n")),
+		installationId,
+	);
+	return Response.json(
+		await bootstrapInstallation(context.db, installationId, token),
+	);
+};
+
+const handleRequest = async (context: AppContext, request: Request) => {
+	const url = new URL(request.url);
+	const path = url.pathname;
+	const publicAsset = publicResponse(path);
+	if (publicAsset) return publicAsset;
+	if (path === "/health") return Response.json({ ok: true });
+	if (path === "/ready") return readyResponse(context);
+	await context.initialized;
+	return (
+		(await sessionRoute(context, request, path)) ??
+		(await authRoute(context, request, url)) ??
+		(await webhookRoute(context, request, path)) ??
+		(await repairRoute(context, request, path)) ??
+		new Response("not found", { status: 404 })
+	);
+};
 
 export function createApp(db: Db, config: Config) {
-  const initialized = initializeDatabase(db).then(() => config.localDemo ? seedLocalDemo(db) : undefined);
-  const streams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
-  const encoder = new TextEncoder();
-  const refresh = (userId: string) => { for (const controller of streams.get(userId) ?? []) controller.enqueue(encoder.encode("event: refresh\ndata: {}\n\n")); };
-  let draining = Promise.resolve();
-  const boundedBody = async (request: Request, limit = 1_000_000) => { if (Number(request.headers.get("content-length") ?? 0) > limit) return null; const reader = request.body?.getReader(); if (!reader) return ""; const decoder = new TextDecoder(); let size = 0, text = ""; while (true) { const { done, value } = await reader.read(); if (done) return text + decoder.decode(); size += value.byteLength; if (size > limit) return null; text += decoder.decode(value, { stream: true }); } };
-  const githubTasks = async (input: { installationId: string; repositoryId: string; path: string; sha: string }) => { if (!config.githubAppId || !config.githubAppPrivateKey) return null; const token = await installationToken(githubAppJwt(config.githubAppId, config.githubAppPrivateKey.replace(/\\n/g, "\n")), input.installationId); const response = await fetch(`https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github.raw" } }); return response.ok ? response.text() : null; };
-  const scheduleDrain = () => { draining = draining.then(async () => { await initialized; return drainInbox(db, githubTasks, config.reviewBot).then((users) => users.forEach(refresh)); }).catch((error) => console.error("webhook drain failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error")); return draining; };
-  const authenticated = async (request: Request) => config.localDemo ? LOCAL_DEMO_USER : (cookie(request) ? sessionUser(db, cookie(request)!) : null);
-  const trustedOrigin = (request: Request) => {
-    if (!config.production) return true;
-    const origin = new URL(config.publicUrl!);
-    const header = (name: string) => request.headers.get(name)?.split(",", 1)[0]?.trim();
-    return header("x-forwarded-proto") === "https" && header("x-forwarded-host") === origin.host;
-  };
-  return { drain: scheduleDrain, async fetch(request: Request) {
-    const url = new URL(request.url), path = url.pathname;
-    const asset = (value: string, type: string, headers: HeadersInit = {}) => new Response(value, { headers: { "content-type": type, ...headers } });
-    const iconAsset = (name: string, type: string) => new Response(Bun.file(new URL(`../assets/${name}`, import.meta.url)), { headers: { "content-type": type } });
-    if (path === "/") return asset(html, "text/html; charset=utf-8");
-    if (path === "/app.css") return asset(css, "text/css"); if (path === "/app.js") return asset(js, "text/javascript"); if (path === "/manifest.webmanifest") return asset(manifest, "application/manifest+json"); if (path === "/icon.svg") return iconAsset("icon.svg", "image/svg+xml"); if (path === "/icon-adaptive.svg") return iconAsset("icon-adaptive.svg", "image/svg+xml"); if (path === "/favicon-32.png") return iconAsset("favicon-32.png", "image/png"); if (path === "/apple-touch-icon.png") return iconAsset("apple-touch-icon.png", "image/png"); if (path === "/icon-192.png") return iconAsset("icon-192.png", "image/png"); if (path === "/icon-512.png") return iconAsset("icon-512.png", "image/png"); if (path === "/icon-maskable-512.png") return iconAsset("icon-maskable-512.png", "image/png"); if (path === "/sw.js") return asset(worker, "text/javascript", { "cache-control": "no-cache" });
-    if (path === "/health") return Response.json({ ok: true });
-    if (path === "/ready") { try { await initialized; await databaseReady(db); return Response.json({ ok: true }); } catch (error) { console.error("MongoDB readiness failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); return new Response("not ready", { status: 503 }); } }
-    await initialized;
-    if (path === "/api/snapshot") { const user = await authenticated(request); return user ? Response.json(await dashboardForUser(db, user.id)) : new Response("unauthenticated", { status: 401 }); }
-    if (path === "/events") { const user = await authenticated(request); if (!user) return new Response("unauthenticated", { status: 401 }); const stream = new ReadableStream<Uint8Array>({ start(controller) { const set = streams.get(user.id) ?? new Set(); set.add(controller); streams.set(user.id, set); controller.enqueue(encoder.encode("event: refresh\ndata: {}\n\n")); request.signal.addEventListener("abort", () => { set.delete(controller); if (!set.size) streams.delete(user.id); }); } }); return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" } }); }
-    if (path === "/auth/github") { if (!trustedOrigin(request)) return new Response("invalid public origin", { status: 400 }); if (!config.githubClientId) return new Response("GitHub OAuth is not configured", { status: 503 }); const state = await createOAuthState(db); const redirect = config.oauthCallbackUrl ? `&redirect_uri=${encodeURIComponent(config.oauthCallbackUrl)}` : ""; return Response.redirect(`https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(config.githubClientId)}&state=${encodeURIComponent(state)}${redirect}`, 302); }
-    if (path === "/install/github") { const user = await authenticated(request); if (!user || !config.githubAppSlug) return new Response("GitHub App installation is not configured", { status: 503 }); const state = await createOAuthState(db); return Response.redirect(`https://github.com/apps/${encodeURIComponent(config.githubAppSlug)}/installations/new?state=${encodeURIComponent(state)}`, 302); }
-    if (path === "/auth/github/callback") {
-      const code = url.searchParams.get("code"), state = url.searchParams.get("state"), installation = url.searchParams.get("installation_id");
-      if (!trustedOrigin(request) || !code || !state || !await consumeOAuthState(db, state) || !config.githubClientId || !config.githubClientSecret) return new Response("invalid OAuth callback", { status: 400 });
-      const tokenResponse = await fetch("https://github.com/login/oauth/access_token", { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify({ client_id: config.githubClientId, client_secret: config.githubClientSecret, code }) });
-      const accessToken = (await tokenResponse.json() as { access_token?: string }).access_token; if (!accessToken) return new Response("GitHub sign-in failed", { status: 502 });
-      const headers = { authorization: `Bearer ${accessToken}`, accept: "application/vnd.github+json" };
-      const identity = await (await fetch("https://api.github.com/user", { headers })).json() as { id: number; login: string; avatar_url?: string };
-      const id = String(identity.id); await upsertIdentity(db, id, identity.login, identity.avatar_url);
-      if (installation && /^\d+$/.test(installation)) {
-        let next: string | undefined = "https://api.github.com/user/installations?per_page=100", verified: { id: number; account?: { login?: string } } | undefined; const seen = new Set([next]);
-        for (let pages = 0; next && pages < 100; pages++) { const response: Response = await fetch(next, { headers }); if (!response.ok) return new Response("GitHub installation verification failed", { status: 502 }); const body = await response.json() as { installations?: Array<{ id: number; account?: { login?: string } }> }; verified = body.installations?.find((item) => String(item.id) === installation) ?? verified; try { next = githubNextLink(response.headers.get("link"), seen); } catch { return new Response("GitHub installation verification failed", { status: 502 }); } if (verified) break; }
-        if (!verified) return new Response("unverified installation", { status: 403 });
-        if (!approvedInstallationAccount(verified.account?.login) || !await bindInstallation(db, id, installation, verified.account?.login)) return new Response("unapproved installation", { status: 403 });
-        if (config.githubAppId && config.githubAppPrivateKey) queueMicrotask(() => void installationToken(githubAppJwt(config.githubAppId!, config.githubAppPrivateKey!.replace(/\\n/g, "\n")), installation).then((token) => bootstrapInstallation(db, installation, token)).then((result) => { if (result.kind === "error") console.error("installation bootstrap failed", result.message.slice(0, 200)); }).catch((error) => console.error("installation bootstrap failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error")));
-      }
-      const session = await createSession(db, id); return new Response(null, { status: 302, headers: { location: config.publicUrl ?? new URL("/", url).toString(), "set-cookie": `dcc_session=${session.token}; HttpOnly;${config.secureCookies ? " Secure;" : ""} SameSite=Lax; Path=/; Max-Age=2592000` } });
-    }
-    if (path === "/auth/github/setup") return new Response("unverified installation binding is not supported", { status: 410 });
-    if (path === "/webhooks/github" && request.method === "POST") { const body = await boundedBody(request), delivery = request.headers.get("x-github-delivery"), event = request.headers.get("x-github-event"); if (body === null) return new Response("payload too large", { status: 413 }); if (!delivery || !event || !config.githubWebhookSecret || !githubSignatureValid(body, request.headers.get("x-hub-signature-256"), config.githubWebhookSecret)) return new Response("invalid GitHub webhook", { status: 401 }); const inserted = await acceptGitHubDelivery(db, delivery, event, body); if (inserted) queueMicrotask(() => void scheduleDrain()); return new Response(null, { status: 202 }); }
-    const repair = path.match(/^\/api\/installations\/(\d+)\/(bootstrap|repair)$/); if (repair && request.method === "POST") { const user = await authenticated(request), installationId = repair[1], binding = user && (await db.users.findOne({ _id: user.id }, { projection: { installations: 1 } }))?.installations.find((item) => item.installationId === installationId); if (!binding || binding.accountLogin && !approvedInstallationAccount(binding.accountLogin)) return new Response("not found", { status: 404 }); if (!config.githubAppId || !config.githubAppPrivateKey) return new Response("GitHub App is not configured", { status: 503 }); const token = await installationToken(githubAppJwt(config.githubAppId, config.githubAppPrivateKey.replace(/\\n/g, "\n")), installationId); return Response.json(await bootstrapInstallation(db, installationId, token)); }
-    return new Response("not found", { status: 404 });
-  } };
+	const initialized = initializeDatabase(db).then(() =>
+		config.localDemo ? seedLocalDemo(db) : undefined,
+	);
+	const streams = new Map<
+		string,
+		Set<ReadableStreamDefaultController<Uint8Array>>
+	>();
+	const encoder = new TextEncoder();
+	const refresh = (userId: string) => {
+		for (const controller of streams.get(userId) ?? [])
+			controller.enqueue(encoder.encode("event: refresh\\ndata: {}\\n\\n"));
+	};
+	let draining = Promise.resolve();
+	const githubTasks = async (input: {
+		installationId: string;
+		repositoryId: string;
+		path: string;
+		sha: string;
+	}) => {
+		if (!config.githubAppId || !config.githubAppPrivateKey) return null;
+		const token = await installationToken(
+			githubAppJwt(
+				config.githubAppId,
+				config.githubAppPrivateKey.replace(/\\n/g, "\n"),
+			),
+			input.installationId,
+		);
+		const response = await fetch(
+			`https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`,
+			{
+				headers: {
+					authorization: `Bearer ${token}`,
+					accept: "application/vnd.github.raw",
+				},
+			},
+		);
+		return response.ok ? response.text() : null;
+	};
+	const context = {
+		db,
+		config,
+		initialized,
+		streams,
+		encoder,
+		authenticated: async (request: Request) => {
+			if (config.localDemo) return LOCAL_DEMO_USER;
+			const token = cookie(request);
+			return token ? sessionUser(db, token) : null;
+		},
+		scheduleDrain: async () => {},
+	} satisfies AppContext;
+	context.scheduleDrain = () => {
+		draining = draining
+			.then(async () => {
+				await initialized;
+				const users = await drainInbox(db, githubTasks, config.reviewBot);
+				for (const user of users) refresh(user);
+			})
+			.catch((error) =>
+				console.error(
+					"webhook drain failed",
+					error instanceof Error
+						? error.message.slice(0, 200)
+						: "unknown error",
+				),
+			);
+		return draining;
+	};
+	return {
+		drain: context.scheduleDrain,
+		fetch: (request: Request) => handleRequest(context, request),
+	};
 }
-if (import.meta.main) { const config = loadConfig(); void openDatabase({ uriBase: config.mongoUriBase, database: config.mongoDatabase }).then((db) => { const app = createApp(db, config); Bun.serve({ port: config.port, hostname: config.hostname, fetch: app.fetch }); void app.drain(); if (config.githubAppId && config.githubAppPrivateKey) { const reconcile = () => reconcileInstallations(db, (id) => installationToken(githubAppJwt(config.githubAppId!, config.githubAppPrivateKey!.replace(/\\n/g, "\n")), id)).catch((error) => console.error("reconciliation failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error")); setInterval(reconcile, config.reconcileIntervalMs); } }).catch((error) => { console.error("MongoDB startup failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); process.exitCode = 1; }); }
+if (import.meta.main) {
+	const config = loadConfig();
+	void openDatabase({
+		uriBase: config.mongoUriBase,
+		database: config.mongoDatabase,
+	})
+		.then((db) => {
+			const app = createApp(db, config);
+			Bun.serve({
+				port: config.port,
+				hostname: config.hostname,
+				fetch: app.fetch,
+			});
+			void app.drain();
+			const { githubAppId, githubAppPrivateKey } = config;
+			if (githubAppId && githubAppPrivateKey) {
+				const reconcile = () =>
+					reconcileInstallations(db, (id) =>
+						installationToken(
+							githubAppJwt(
+								githubAppId,
+								githubAppPrivateKey.replace(/\\n/g, "\n"),
+							),
+							id,
+						),
+					).catch((error) =>
+						console.error(
+							"reconciliation failed",
+							error instanceof Error
+								? error.message.slice(0, 200)
+								: "unknown error",
+						),
+					);
+				setInterval(reconcile, config.reconcileIntervalMs);
+			}
+		})
+		.catch((error) => {
+			console.error(
+				"MongoDB startup failed",
+				error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+			);
+			process.exitCode = 1;
+		});
+}
