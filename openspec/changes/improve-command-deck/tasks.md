@@ -45,36 +45,45 @@ Checkpoint: stop for user review after Group 3.
 
 Checkpoint: stop for user review after Group 4.
 
-## 5. Browser-local multi-checkout mapping
+## 5. Deterministic pull-request ordering
 
-- [ ] 5.1 Add focused browser-script tests for IndexedDB directory-handle persistence, reload permission revalidation, account-root resolution, explicit resolved/unresolved states, exact override validation, and unsupported-browser fallback.
-- [ ] 5.2 Add collision tests proving same-named branches in different repositories cannot share local OpenSpec evidence and ambiguous/unverified folders remain unassociated.
-- [ ] 5.3 Implement the smallest IndexedDB handle store keyed by installation account and stable repository ID, with exact-name automatic resolution and verified repository overrides.
-- [ ] 5.4 Extend local checkout parsing only enough to read repository identity, HEAD, and OpenSpec tasks; keep every handle/path/file/branch/OpenSpec value client-only.
-- [ ] 5.5 Associate each resolved checkout with only its repository's pull requests and expose accessible permission/resolution/error states.
-- [ ] 5.6 Run focused local-evidence/dashboard tests, typecheck, and diff check.
+- [ ] 5.1 Add focused failing tests for the six independent unresolved-gate categories, one-count-per-category behavior, visible blocker labels, Closest-to-merge ordering, OpenSpec-progress tie-breaks, and pull-request-number ties.
+- [ ] 5.2 Add focused tests for every approved sort mode and direction, null-last deterministic fallbacks, browser-local restoration and invalid-value fallback, Clear preserving sort, and the accessible unavailable Codex-activity option without activity-file or network behavior.
+- [ ] 5.3 Implement the smallest native sort selector and direction control in the existing derived client view, persist one allowlisted scalar preference, show exact blocker evidence, and keep status, Actions, Checks, search, and repository controls as filters.
+- [ ] 5.4 Run focused pull-request/dashboard tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
 
 Checkpoint: stop for user review after Group 5.
 
-## 6. Guarded per-PR Merge control
+## 6. Browser-local multi-checkout mapping
 
-- [ ] 6.1 Add focused disabled-permission and accessibility tests showing an unavailable Merge control and reason under current read-only installation permissions.
-- [ ] 6.2 Add authorization tests for session-bound single-use merge OAuth intent, identity mismatch, missing/foreign installation or repository, insufficient current user role, and non-persistence of the request-local user token.
-- [ ] 6.3 Add eligibility tests for closed/draft PRs, mergeability, protections/rulesets, required checks/reviews, allowed merge method, and existing OpenSpec completion policy.
-- [ ] 6.4 Add exact-head race, action-time confirmation, protected-state refusal, permission absence, sanitized conflict, immediate refresh, and success tests.
-- [ ] 6.5 Implement action-time user reauthorization and role proof before minting installation authority; fail closed if role proof requires an unapproved OAuth scope change.
-- [ ] 6.6 Implement authoritative eligibility re-fetch and confirmation bound to repository, PR number/title, exact head SHA, and `MERGE`, rechecking all mutable gates before mutation.
-- [ ] 6.7 Implement GraphQL `mergePullRequest` with `expectedHeadOid` and `mergeMethod: MERGE`, sanitized outcome categories, and immediate projection refresh.
-- [ ] 6.8 Render the per-card Merge control while leaving it unavailable until the separate operational permission rollout succeeds.
-- [ ] 6.9 Run focused authorization/merge tests, typecheck, and diff check.
+- [ ] 6.1 Add focused browser-script tests for IndexedDB directory-handle persistence, reload permission revalidation, account-root resolution, explicit resolved/unresolved states, exact override validation, and unsupported-browser fallback.
+- [ ] 6.2 Add collision tests proving same-named branches in different repositories cannot share local OpenSpec evidence and ambiguous/unverified folders remain unassociated.
+- [ ] 6.3 Implement the smallest IndexedDB handle store keyed by installation account and stable repository ID, with exact-name automatic resolution and verified repository overrides.
+- [ ] 6.4 Extend local checkout parsing only enough to read repository identity, HEAD, and OpenSpec tasks; keep every handle/path/file/branch/OpenSpec value client-only.
+- [ ] 6.5 Associate each resolved checkout with only its repository's pull requests and expose accessible permission/resolution/error states.
+- [ ] 6.6 Run focused local-evidence/dashboard tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 6.
 
-## 7. Integrated validation and handoff
+## 7. Guarded per-PR Merge control
 
-- [ ] 7.1 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
-- [ ] 7.2 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
-- [ ] 7.3 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
-- [ ] 7.4 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
+- [ ] 7.1 Add focused disabled-permission and accessibility tests showing an unavailable Merge control and reason under current read-only installation permissions.
+- [ ] 7.2 Add authorization tests for session-bound single-use merge OAuth intent, identity mismatch, missing/foreign installation or repository, insufficient current user role, and non-persistence of the request-local user token.
+- [ ] 7.3 Add eligibility tests for closed/draft PRs, mergeability, protections/rulesets, required checks/reviews, allowed merge method, and existing OpenSpec completion policy.
+- [ ] 7.4 Add exact-head race, action-time confirmation, protected-state refusal, permission absence, sanitized conflict, immediate refresh, and success tests.
+- [ ] 7.5 Implement action-time user reauthorization and role proof before minting installation authority; fail closed if role proof requires an unapproved OAuth scope change.
+- [ ] 7.6 Implement authoritative eligibility re-fetch and confirmation bound to repository, PR number/title, exact head SHA, and `MERGE`, rechecking all mutable gates before mutation.
+- [ ] 7.7 Implement GraphQL `mergePullRequest` with `expectedHeadOid` and `mergeMethod: MERGE`, sanitized outcome categories, and immediate projection refresh.
+- [ ] 7.8 Render the per-card Merge control while leaving it unavailable until the separate operational permission rollout succeeds.
+- [ ] 7.9 Run focused authorization/merge tests, typecheck, and diff check.
+
+Checkpoint: stop for user review after Group 7.
+
+## 8. Integrated validation and handoff
+
+- [ ] 8.1 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
+- [ ] 8.2 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
+- [ ] 8.3 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
+- [ ] 8.4 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
 
 Checkpoint: stop for final user review before any commit, push, pull request, deployment, provider change, or production action.

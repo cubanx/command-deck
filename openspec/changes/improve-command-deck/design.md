@@ -25,6 +25,7 @@ The observed live page currently renders 16 pull-request cards and 35 deployment
 - Supporting browsers that cannot persist File System Access handles; committed projections remain the fallback.
 - Compacting or deduplicating deployment history; the observed row count does not authorize a new deployment UX.
 - Fetching GitHub Actions job or step failure detail; that requires additional endpoint polling, pagination, and projection schema beyond the signed workflow event.
+- Producing or consuming Codex activity ordering data. PR #8 exposes only an unavailable sort affordance; `mirror-codex-activity-order` owns later activation after PR #8 merges.
 
 ## Decisions
 
@@ -36,13 +37,19 @@ Alternatives rejected: a custom accordion/state component duplicates native acce
 
 ### Derive one filtered pull-request view with native controls
 
-Keep a compact controls bar sticky while the pull-request list scrolls. Use a labeled search input, clickable status pills, a searchable native disclosure containing repository checkboxes, a visible final result count, and one Clear action. Preserve DOM focus order and let native controls wrap on narrow screens. `/` focuses search; Escape clears it while focused.
+Keep a compact controls bar sticky while the pull-request list scrolls. Use a labeled search input, clickable status pills, a searchable native disclosure containing repository checkboxes, a labeled native sort selector and direction control, a visible final result count, and one Clear action. Preserve DOM focus order and let native controls wrap on narrow screens. `/` focuses search; Escape clears it while focused.
 
-Classify each pull request once with exact precedence: Mergeable when the authoritative projection is `mergeable=true` or clean, even when draft; Ready for review for remaining non-drafts; Draft for remaining drafts. Default ordering is those three buckets, then PR number descending inside each bucket. Status pills filter those same mutually exclusive buckets.
+Classify each pull request once with exact precedence: Mergeable when the authoritative projection is `mergeable=true` or clean, even when draft; Ready for review for remaining non-drafts; Draft for remaining drafts. These buckets, Actions, and Checks remain filters and do not duplicate sort modes.
 
-Use a small dependency-free scorer across title, owner/repository, branch, and linked OpenSpec change name. Rank exact, prefix, and substring matches before typo-tolerant matches. A numeric query matches only the exact PR number. Search, status, and repository filters compose before the result count is calculated.
+Use a small dependency-free scorer across title, owner/repository, branch, and linked OpenSpec change name. Exact, prefix, and substring matches qualify before typo-tolerant matches; a numeric query matches only the exact PR number. Search, status, and repository filters compose into one eligible set before the selected sort orders it and the result count is calculated.
 
-Alternatives rejected: a UI framework or fuzzy-search dependency is unnecessary for the current list size; one repository pill per repository does not scale; attention sorting conflicts with the approved mutually exclusive buckets.
+Default to Closest to merge. Count each unresolved merge-gate category at most once: draft state; `changes_requested` review state; failed Actions aggregate; failed Checks aggregate; blocked, conflicting, dirty, false, or unmergeable mergeability; and linked OpenSpec with `completed < total`. Use the existing normalized failed-state sets so canceled, cancelled, action-required, failed, failure, and timed-out Actions or Checks each contribute one aggregate blocker. Missing, pending, unknown, neutral, skipped, bot-review progress, individual failed workflows, and an absent OpenSpec do not prove a blocker. Show the count and the exact blocker labels on every card.
+
+Closest to merge compares blocker count in the selected direction, defaulting to fewest first, then valid linked OpenSpec completion ratio descending, unavailable progress last, then PR number descending. Other modes are: Recently updated by valid provider timestamp with missing values last; PR number newest or oldest; OpenSpec progress by exact completed/total ratio with unavailable values last; and Repository by normalized owner/repository code-point order. Each non-default mode uses Closest to merge and then PR number descending as deterministic fallback except PR number, which uses repository identity to break cross-repository collisions. Direction reverses only the selected mode's primary key; unavailable values remain last and deterministic fallback order remains fixed.
+
+Persist one allowlisted `{ mode, direction }` pair in `localStorage`. Missing, corrupt, or obsolete values fall back to Closest to merge with fewest blockers first. Clear resets search and filters without discarding the saved sort. Render Codex activity as a disabled native option with an accessible explanation in PR #8 and read no activity file or producer data. When the separate Codex-activity contract later supplies valid ordering, matched pull requests precede unmatched pull requests; unmatched and tied entries fall back to the exact Closest-to-merge comparator and then PR number descending.
+
+Alternatives rejected: a UI framework or fuzzy-search dependency is unnecessary for the current list size; one repository pill per repository does not scale; an opaque weighted score cannot explain why one pull request sorts ahead of another; and filter categories are not useful duplicate sort modes.
 
 ### Project authoritative Actions failure links without job polling
 

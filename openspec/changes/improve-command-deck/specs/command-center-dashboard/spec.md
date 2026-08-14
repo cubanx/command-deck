@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Personal operational summary
-The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a guarded Merge control, and branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The default pull-request order SHALL use the mutually exclusive Mergeable, Ready for review, and Draft buckets followed by pull-request number descending within each bucket.
+The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a guarded Merge control, and branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The default pull-request order SHALL be Closest to merge using the visible deterministic unresolved-gate count, followed by OpenSpec progress and pull-request number descending.
 
 #### Scenario: Developer opens the command center
 - **WHEN** a signed-in developer has projected state across one or more bound GitHub installations
@@ -51,7 +51,7 @@ The system SHALL present every authorized open pull request authored by the sign
 ## ADDED Requirements
 
 ### Requirement: Sticky pull-request controls
-The dashboard SHALL keep a compact controls bar visible while scrolling the pull-request list, SHALL use native accessible controls with labeled focus order and keyboard operation, and SHALL remain usable when controls wrap on narrow screens. The bar SHALL contain fuzzy search, status filters, repository filtering, the final visible result count, and one Clear action for all search and filter state.
+The dashboard SHALL keep a compact controls bar visible while scrolling the pull-request list, SHALL use native accessible controls with labeled focus order and keyboard operation, and SHALL remain usable when controls wrap on narrow screens. The bar SHALL contain fuzzy search, status filters, repository filtering, a sort-mode selector, a direction control, the final visible result count, and one Clear action for all search and filter state.
 
 #### Scenario: Developer scrolls or narrows the pull-request list
 - **WHEN** the pull-request list extends beyond the viewport or the viewport is narrow
@@ -66,7 +66,7 @@ The dashboard SHALL filter immediately as the developer types using a small depe
 
 #### Scenario: Developer searches pull-request evidence
 - **WHEN** a query matches a title, owner/repository, branch, or linked OpenSpec change name
-- **THEN** matching cards appear in deterministic match-quality order within their status bucket
+- **THEN** matching cards enter the eligible result set and the selected pull-request sort orders that set deterministically
 
 #### Scenario: Developer searches by pull-request number
 - **WHEN** the query is numeric
@@ -77,11 +77,11 @@ The dashboard SHALL filter immediately as the developer types using a small depe
 - **THEN** `/` focuses search and Escape clears its current value
 
 ### Requirement: Exclusive pull-request status buckets
-Every projected pull request SHALL belong to exactly one clickable status-filter bucket with this precedence: Mergeable for authoritative `mergeable=true` or clean state even when draft; Ready for review for every remaining non-draft; Draft for every remaining draft. Default ordering SHALL be Mergeable, Ready for review, then Draft, with PR number descending within each bucket.
+Every projected pull request SHALL belong to exactly one clickable status-filter bucket with this precedence: Mergeable for authoritative `mergeable=true` or clean state even when draft; Ready for review for every remaining non-draft; Draft for every remaining draft. These buckets, Actions, and Checks SHALL remain filters rather than redundant sort modes.
 
 #### Scenario: Draft pull request is authoritatively mergeable
 - **WHEN** a draft pull request has authoritative `mergeable=true` or clean state
-- **THEN** it belongs only to Mergeable and sorts with that bucket
+- **THEN** it belongs only to the Mergeable filter bucket while the selected sort independently determines its position
 
 #### Scenario: Status filters are selected
 - **WHEN** the developer activates one or more status pills
@@ -93,6 +93,37 @@ The repository filter SHALL be a searchable multi-select dropdown that displays 
 #### Scenario: Developer selects repositories
 - **WHEN** the developer searches the repository dropdown and selects multiple owner/repository entries
 - **THEN** pull requests from any selected repository remain eligible for the combined result set and the active filter state is evident
+
+### Requirement: Persisted pull-request ordering
+The dashboard SHALL offer Closest to merge, Codex activity, Recently updated, PR number, OpenSpec progress, and Repository sort modes with an explicit direction, SHALL default safely to Closest to merge with fewest blockers first, and SHALL persist only the allowlisted mode and direction browser-locally. Search, status, Actions, Checks, and repository controls SHALL filter before sorting.
+
+#### Scenario: Closest-to-merge ordering is calculated
+- **WHEN** pull requests have draft, requested-changes review, failed Actions, failed Checks, blocked mergeability, or linked incomplete OpenSpec state
+- **THEN** each unresolved category contributes exactly one named blocker, cards show the blocker count and exact blockers, and the default order is blocker count ascending, valid OpenSpec progress descending, then pull-request number descending
+
+#### Scenario: Sort preference is restored
+- **WHEN** a developer reloads after selecting a supported sort mode and direction
+- **THEN** the browser-local preference is restored without server persistence or synchronization
+
+#### Scenario: Stored sort preference is invalid
+- **WHEN** storage is absent, corrupt, inaccessible, or contains an obsolete mode or direction
+- **THEN** ordering falls back to Closest to merge with fewest blockers first and exposes no raw storage error
+
+#### Scenario: Developer selects another available sort
+- **WHEN** Recently updated, PR number, OpenSpec progress, or Repository is selected
+- **THEN** the eligible cards use that mode and direction with unavailable values last and deterministic Closest-to-merge and pull-request-number fallback where identities can tie
+
+#### Scenario: Codex activity data is unavailable
+- **WHEN** the separate Codex-activity OpenSpec has not supplied valid browser-local ordering data
+- **THEN** Codex activity is hidden or disabled with an accessible explanation and the dashboard does not fabricate, fetch, or infer activity order
+
+#### Scenario: Codex activity data becomes available
+- **WHEN** the separate Codex-activity contract supplies valid correlated ordering data
+- **THEN** matched pull requests follow that order, unmatched pull requests follow matched pull requests, and ties or unmatched entries use Closest to merge then pull-request number descending
+
+#### Scenario: Developer clears filters
+- **WHEN** the developer activates Clear
+- **THEN** search and filter state reset while the persisted sort mode and direction remain selected
 
 ### Requirement: Pull-request section has an accessible non-visual name
 The dashboard SHALL not show a visible pull-request section heading and SHALL preserve the section's accessible landmark name using the existing visually-hidden or ARIA convention.
