@@ -4,6 +4,8 @@ The repository has TypeScript typechecking and tests but no formatter, linter, `
 
 Internal Apps is the requested source of truth for the quality baseline. Direct inspection of its current HEAD `1a102a492d8f1de692023d977afb9d48c00d9457` establishes Biome `2.5.6`, CrapTS `0.1.1`, tabs, double quotes, recommended lint rules, import organization, and strict CRAP thresholds of maximum score 30 with at most 20 violations. Its Quality CI also contains product-specific environment, build, boundary, component, E2E, classification, and deployment checks that do not port to this repository.
 
+The validation orchestration was reverified against Internal Apps HEAD `5be88a6453416c70c6a554563b94ac257ac71afe`: one shared command list drives a sequential local `validate:all`, CI runs the same constituents in parallel, a stable final `Validate All` job aggregates them, and a focused contract test prevents drift. Docker build remains independent from that aggregate.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -28,11 +30,11 @@ Record the verified Internal Apps source SHA, package versions, scripts, Biome c
 
 Alternative rejected: selecting familiar defaults from memory would create false parity and turn the quality gate into an unreviewed policy change.
 
-### Use one local quality entrypoint and one equivalent CI job
+### Use one shared validation contract locally and in CI
 
-Expose the verified component commands plus one aggregate package script. CI installs from the lockfile and runs the aggregate gate. Tools are project dependencies invoked through Bun; no contributor-global installation is required. Provider-side required-check configuration remains outside this code change.
+Expose one canonical `validate:all` package script backed by a shared ordered command list. Run that list sequentially for local validation, run the same constituents in parallel from a clean CI checkout, and aggregate them under one stable `Validate All` job. Add one focused contract test that proves the CI command set equals the shared list and that CI does not rerun the sequential bundle. Tools are project dependencies invoked through Bun; no contributor-global installation is required. Keep Docker build, tooling freshness, strict OpenSpec validation, and `git diff --check` as separate gates, and keep provider-side required-check configuration outside this code change.
 
-Alternative rejected: several loosely related CI jobs can drift from local validation and make failures harder to reproduce in this small repository.
+Alternative rejected: duplicating an aggregate command in CI serializes independent checks and wastes time; hand-maintained local and CI command lists drift.
 
 ### Migrate the compatible test suite to Vitest for real CrapTS coverage
 
@@ -70,6 +72,7 @@ Alternative rejected: mixing feature work into the cleanup makes both harder to 
 2. Add pinned tools, configuration, local scripts, and CI without provider-side mutation.
 3. Add preservation tests, extract browser assets, and mechanically format/simplify source.
 4. Run the full quality gate and strict OpenSpec validation, then stop for review.
-5. Resume `improve-command-deck` Group 3 only after approval.
+5. Add and verify the canonical local/CI `validate:all` parity contract before the combined PR #8 handoff.
+6. Resume or complete `improve-command-deck` work only under that validated quality contract.
 
 Rollback removes the new scripts/config/workflow and restores the behavior-equivalent source layout; no data or external-system migration is involved.

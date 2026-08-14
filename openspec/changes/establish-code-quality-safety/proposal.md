@@ -6,6 +6,7 @@ Core GitHub and webhook paths are compressed into multi-thousand-character lines
 
 - Verify the current portable Quality CI contract from `Crisp-Inc/internal-apps`, including Biome and CrapTS, before selecting versions, rules, or thresholds.
 - Add the smallest applicable formatting, linting, complexity/quality, typecheck, and test checks to local scripts and CI without copying Internal Apps-specific product checks.
+- Add one canonical `validate:all` entrypoint backed by a shared command list, run that list sequentially locally and in parallel in CI, and aggregate CI under one stable `Validate All` gate with a parity test that prevents drift.
 - Separate the browser shell assets from `server.ts` using the repository's existing runtime and native static responses, without adding a UI framework or changing behavior.
 - Mechanically format the high-risk GitHub, event, access, and server paths, then make only the smallest readability extractions required to satisfy the verified quality contract.
 - Preserve the current PR #8 behavior diff and prove the refactor is behavior-neutral with existing and focused tests.
@@ -23,6 +24,6 @@ None. Browser-asset extraction is behavior-preserving implementation work; the e
 
 ## Impact
 
-- Affects package scripts and lockfile, CI configuration, formatter/quality configuration, `server.ts`, extracted browser assets, dense GitHub/event modules, tests, and contributor documentation.
+- Affects package scripts and lockfile, the validation command manifest/runner, CI configuration, formatter/quality configuration, `server.ts`, extracted browser assets, dense GitHub/event modules, tests, and contributor documentation.
 - Adds only tooling dependencies proven necessary by the verified Internal Apps Quality CI baseline.
 - Does not change provider behavior, production configuration, GitHub App permissions, deployment state, user data, or external systems.

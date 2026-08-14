@@ -30,9 +30,7 @@ Local validation:
 
 ```bash
 bun run format
-bun run check
-bun run typecheck
-MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run quality
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all
 openspec validate establish-code-quality-safety --strict
 openspec validate improve-command-deck --strict
 ```
@@ -48,9 +46,9 @@ PR #8 adopts the portable Quality CI contract verified from Crisp Internal Apps 
 
 Only authored source and configuration are in scope. Narrow exclusions cover generated, vendored, binary, coverage, build, CodeGraph, and CC-licensed image assets where the applicable tool cannot inspect them meaningfully. The project does not copy Internal Apps' React/Vite generated-route, environment-contract, server-boundary, component/E2E, change-classification, deployment, or provider-specific jobs because those contracts do not exist here.
 
-Use `bun run format` before review. `bun run check` verifies formatting, lint, and imports without changing files. `bun run test:coverage` writes V8 coverage to `coverage/unit/coverage-final.json`; `bun run check:crap` runs that suite and enforces `--max 30 --limit 20`; `bun run quality` is the same Biome, typecheck, coverage, test, and strict CrapTS gate used by Quality CI.
+Use `bun run format` before review. `bun run validate:all` runs the ordered commands in `validation-commands.json` sequentially: `bun run check`, `bun run typecheck`, and `bun run check:crap`. `quality` remains an alias for that canonical command. `bun run test:coverage` writes V8 coverage to `coverage/unit/coverage-final.json`; `bun run check:crap` runs that suite and enforces `--max 30 --limit 20`.
 
-Quality CI installs from `bun.lock`, caches only Bun's package cache, uses an isolated MongoDB service, and builds the production Dockerfile after the quality gate. The workflow file does not make itself a provider-side required check; changing GitHub rulesets or branch protection remains a separately authorized repository operation.
+Quality CI reads the same command list but runs its independent commands in parallel. Only CrapTS receives an isolated MongoDB service because it runs the coverage suite; `Validate All` is the stable aggregate. Docker build and tooling freshness remain separate checks. The workflow file does not make itself a provider-side required check; changing GitHub rulesets or branch protection remains a separately authorized repository operation.
 
 ## Configuration
 

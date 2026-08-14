@@ -10,6 +10,10 @@ import { reconcileInstallations } from "#/github";
 import { createApp } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
 
+const fetchTarget: {
+	fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+} = globalThis;
+
 test("public PWA assets and streams are isolated", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
@@ -178,6 +182,140 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		).text();
 		expect(css).toContain("position: sticky");
 		expect(css).toContain("flex-wrap: wrap");
+		await app.drain();
+	}));
+
+test("dashboard configuration centralizes local checkout, notifications, appearance, and reconciliation", () =>
+	withDatabase(async (db) => {
+		const app = createApp(db, testConfig);
+		await app.drain();
+		const javascript = await (
+			await app.fetch(new Request("http://local/app.js"))
+		).text();
+		expect(javascript).toContain('href="#configuration"');
+		expect(javascript).toContain('id="configuration"');
+		expect(javascript).toContain("Connect local checkout");
+		expect(javascript).toContain("Enable notifications");
+		expect(javascript).toContain('name="appearance"');
+		expect(javascript).toContain("value[0].toUpperCase()");
+		expect(javascript).toContain("Reconcile now");
+		expect(javascript).toContain("localStorage");
+		expect(javascript).toContain("matchMedia");
+		expect(javascript).not.toContain("response.json().catch");
+		const css = await (
+			await app.fetch(new Request("http://local/app.css"))
+		).text();
+		expect(css).toContain('[data-appearance="dark"]');
+		expect(css).toContain("color-scheme");
+	}));
+
+test("reconcile route requires an authenticated user with an approved bound installation", () =>
+	withDatabase(async (db) => {
+		const app = createApp(db, testConfig);
+		const request = (headers?: HeadersInit) =>
+			app.fetch(
+				new Request("http://local/api/reconcile", { method: "POST", headers }),
+			);
+		expect((await request()).status).toBe(401);
+		await upsertIdentity(db, "u", "kira");
+		const session = await createSession(db, "u");
+		expect(
+			(await request({ cookie: `dcc_session=${session.token}` })).status,
+		).toBe(404);
+		await bindInstallation(db, "u", "12", "external");
+		expect(
+			(await request({ cookie: `dcc_session=${session.token}` })).status,
+		).toBe(404);
+	}));
+
+test("manual reconciliation scopes work to the signed-in user, refreshes, and sanitizes failures", () =>
+	withDatabase(async (db) => {
+		const { privateKey } = await crypto.subtle.generateKey(
+			{
+				name: "RSASSA-PKCS1-v1_5",
+				modulusLength: 2048,
+				publicExponent: new Uint8Array([1, 0, 1]),
+				hash: "SHA-256",
+			},
+			true,
+			["sign", "verify"],
+		);
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
+			await crypto.subtle.exportKey("pkcs8", privateKey),
+		)
+			.toString("base64")
+			.match(/.{1,64}/g)
+			?.join("\n")}\n-----END PRIVATE KEY-----`;
+		await upsertIdentity(db, "u", "kira");
+		await upsertIdentity(db, "foreign", "garak");
+		await bindInstallation(db, "u", "12", "cubanx");
+		await bindInstallation(db, "foreign", "13", "cubanx");
+		const session = await createSession(db, "u");
+		const app = createApp(db, {
+			...testConfig,
+			githubAppId: "1",
+			githubAppPrivateKey: pem,
+		});
+		const original = globalThis.fetch;
+		const tokenIds: string[] = [];
+		let releaseIdentity: (() => void) | undefined,
+			fail = false;
+		const started = new Promise<void>((resolve) => {
+			fetchTarget.fetch = async (input) => {
+				const url = String(input);
+				if (url.includes("access_tokens")) {
+					tokenIds.push(url.match(/installations\/(\d+)/)?.[1] ?? "");
+					return Response.json({ token: "installation-token" });
+				}
+				if (url.endsWith("/installation"))
+					if (fail)
+						return new Response("raw provider diagnostic", { status: 500 });
+					else
+						return new Promise((release) => {
+							releaseIdentity = () =>
+								release(Response.json({ account: { login: "cubanx" } }));
+							resolve();
+						});
+				if (url.includes("installation/repositories"))
+					return Response.json({ repositories: [] });
+				throw new Error(`unexpected ${url}`);
+			};
+		});
+		try {
+			const request = () =>
+				app.fetch(
+					new Request("http://local/api/reconcile", {
+						method: "POST",
+						headers: { cookie: `dcc_session=${session.token}` },
+					}),
+				);
+			const events = await app.fetch(
+				new Request("http://local/events", {
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			const reader = events.body?.getReader();
+			if (!reader) throw new Error("event stream body missing");
+			await reader.read();
+			const first = request();
+			await started;
+			expect(await (await request()).json()).toEqual({ status: "running" });
+			releaseIdentity?.();
+			expect(await (await first).json()).toEqual({ status: "success" });
+			expect(tokenIds).toEqual(["12"]);
+			expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+				"event: refresh",
+			);
+			await reader.cancel();
+			fail = true;
+			const failed = await request();
+			expect(failed.status).toBe(502);
+			const body = await failed.text();
+			expect(JSON.parse(body)).toEqual({ status: "failed" });
+			expect(body).not.toContain("raw provider diagnostic");
+		} finally {
+			globalThis.fetch = original;
+		}
 	}));
 
 test("local demo serves snapshot and SSE without a session and exposes no Railway routes", () =>
@@ -230,7 +368,7 @@ test("OAuth callback preserves zero bindings and production origin/readiness gat
 		).toBe(400);
 		const state = await createOAuthState(db);
 		const original = globalThis.fetch;
-		globalThis.fetch = async (input) =>
+		fetchTarget.fetch = async (input) =>
 			String(input).includes("access_token")
 				? Response.json({ access_token: "token" })
 				: Response.json({ id: 9, login: "kira" });
@@ -308,7 +446,7 @@ test("OAuth binds only the verified installation account and never persists its 
 			}),
 			original = globalThis.fetch;
 		let account = "Crisp-Inc";
-		globalThis.fetch = async (input) =>
+		fetchTarget.fetch = async (input) =>
 			String(input).includes("access_token")
 				? Response.json({ access_token: "oauth-token" })
 				: String(input).includes("user/installations")
@@ -348,7 +486,7 @@ test("OAuth rejects an unverified installation without binding it", () =>
 				githubClientSecret: "secret",
 			}),
 			original = globalThis.fetch;
-		globalThis.fetch = async (input) =>
+		fetchTarget.fetch = async (input) =>
 			String(input).includes("access_token")
 				? Response.json({ access_token: "oauth-token" })
 				: String(input).includes("user/installations")
@@ -388,7 +526,7 @@ test("OAuth installation pagination rejects unsafe and looping next links withou
 				}),
 				original = globalThis.fetch;
 			const calls: string[] = [];
-			globalThis.fetch = async (input) => {
+			fetchTarget.fetch = async (input) => {
 				const url = String(input);
 				calls.push(url);
 				if (url.includes("access_token"))
@@ -476,7 +614,7 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 		const bootstrapped = new Promise<void>((resolve) => {
 			done = resolve;
 		});
-		globalThis.fetch = async (input) => {
+		fetchTarget.fetch = async (input) => {
 			const url = String(input);
 			if (url.includes("access_token"))
 				return Response.json({ access_token: "oauth-token" });
@@ -582,7 +720,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 		console.error = (...args: unknown[]) => {
 			logs.push(args);
 		};
-		globalThis.fetch = async (input) => {
+		fetchTarget.fetch = async (input) => {
 			const url = String(input);
 			if (url.includes("access_token"))
 				return Response.json({ access_token: "oauth-token" });
@@ -689,7 +827,7 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
 		const original = globalThis.fetch;
-		globalThis.fetch = async (input) =>
+		fetchTarget.fetch = async (input) =>
 			String(input).includes("access_tokens")
 				? Response.json({ token: "installation" })
 				: new Response("- [x] Launch");

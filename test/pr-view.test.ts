@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+	appearanceFor,
 	bucketFor,
 	derivePullRequests,
 	fuzzyScore,
@@ -53,13 +54,14 @@ const items = [
 	},
 ];
 
+type ViewItem = { pr: { number: number } };
+const numbers = (views: ViewItem[]) => views.map(({ pr }) => pr.number);
+
 test("status buckets are exclusive and ordered before descending PR number", () => {
 	expect(bucketFor(items[0].pr)).toBe("mergeable");
 	expect(bucketFor(items[1].pr)).toBe("ready");
 	expect(bucketFor(items[2].pr)).toBe("draft");
-	expect(derivePullRequests(items, {}).map(({ pr }) => pr.number)).toEqual([
-		12, 9, 11, 10,
-	]);
+	expect(numbers(derivePullRequests(items, {}))).toEqual([12, 9, 11, 10]);
 });
 
 test("search ranks exact, prefix, substring, then typo matches and keeps numeric queries exact", () => {
@@ -69,12 +71,10 @@ test("search ranks exact, prefix, substring, then typo matches and keeps numeric
 		fuzzyScore("defiant", "upgrade defiant controls"),
 		fuzzyScore("defiant", "defint"),
 	]).toEqual([0, 1, 2, 3]);
-	expect(
-		derivePullRequests(items, { query: "9" }).map(({ pr }) => pr.number),
-	).toEqual([9]);
-	expect(
-		derivePullRequests(items, { query: "defint" }).map(({ pr }) => pr.number),
-	).toEqual([12, 9]);
+	expect(numbers(derivePullRequests(items, { query: "9" }))).toEqual([9]);
+	expect(numbers(derivePullRequests(items, { query: "defint" }))).toEqual([
+		12, 9,
+	]);
 });
 
 test("title, repository, branch, OpenSpec, status, and multi-repository filters compose", () => {
@@ -84,15 +84,34 @@ test("title, repository, branch, OpenSpec, status, and multi-repository filters 
 		"defiant/ready",
 		"upgrade-defiant",
 	])
-		expect(
-			derivePullRequests(items, { query }).map(({ pr }) => pr.number),
-		).toContain(12);
+		expect(numbers(derivePullRequests(items, { query }))).toContain(12);
 	expect(
-		derivePullRequests(items, {
-			query: "defiant",
-			statuses: new Set(["mergeable"]),
-			repositories: new Set(["ds9/ops", "ds9/reports"]),
-		}).map(({ pr }) => pr.number),
+		numbers(
+			derivePullRequests(items, {
+				query: "defiant",
+				statuses: new Set(["mergeable"]),
+				repositories: new Set(["ds9/ops", "ds9/reports"]),
+			}),
+		),
 	).toEqual([12, 9]);
 	expect(repositoryOptions(items, "rep")).toEqual(["ds9/reports"]);
+});
+
+test("appearance preference defaults to System and explicit choices override it", () => {
+	expect(appearanceFor(undefined, false)).toEqual({
+		preference: "system",
+		theme: "light",
+	});
+	expect(appearanceFor("system", true)).toEqual({
+		preference: "system",
+		theme: "dark",
+	});
+	expect(appearanceFor("light", true)).toEqual({
+		preference: "light",
+		theme: "light",
+	});
+	expect(appearanceFor("dark", false)).toEqual({
+		preference: "dark",
+		theme: "dark",
+	});
 });

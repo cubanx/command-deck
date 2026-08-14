@@ -470,9 +470,13 @@ test("aggregate CAS retries conflicts and preserves multiple bindings", () =>
 		await upsertIdentity(db, "u", "kira");
 		await bindInstallation(db, "u", "1", "cubanx");
 		await bindInstallation(db, "u", "2", "cubanx");
-		const original = db.users.replaceOne.bind(db.users);
+		const original = db.users.replaceOne.bind(db.users) as (
+			...args: Parameters<typeof db.users.replaceOne>
+		) => ReturnType<typeof db.users.replaceOne>;
 		let conflicts = 0;
-		(db.users as any).replaceOne = async (...args: any[]) => {
+		(db.users as any).replaceOne = async (
+			...args: Parameters<typeof db.users.replaceOne>
+		) => {
 			if (conflicts++ === 0) return { modifiedCount: 0 };
 			return original(...args);
 		};

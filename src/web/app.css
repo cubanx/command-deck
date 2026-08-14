@@ -3,6 +3,14 @@
 	color: #172033;
 	background: #f5f7f9;
 }
+:root[data-appearance="dark"] {
+	color-scheme: dark;
+	color: #e5edf6;
+	background: #172033;
+}
+:root[data-appearance="light"] {
+	color-scheme: light;
+}
 * {
 	box-sizing: border-box;
 }
@@ -49,6 +57,10 @@ p {
 	border-radius: 8px;
 	background: #fff;
 	padding: 16px;
+}
+:root[data-appearance="dark"] .card {
+	border-color: #475467;
+	background: #202b3d;
 }
 .stack > * + * {
 	border-top: 1px solid #e7ebef;
@@ -162,7 +174,8 @@ p {
 	accent-color: #2563eb;
 }
 button,
-a {
+a,
+.button {
 	color: #175cd3;
 }
 button {
@@ -172,12 +185,31 @@ button {
 	padding: 7px 10px;
 	cursor: pointer;
 }
+.button {
+	border: 1px solid #cbd5e1;
+	border-radius: 6px;
+	padding: 7px 10px;
+	text-decoration: none;
+}
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 summary:focus-visible {
 	outline: 3px solid #2563eb;
 	outline-offset: 2px;
+}
+.appearance {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+}
+:root[data-appearance="dark"] .muted {
+	color: #b6c2d0;
+}
+:root[data-appearance="dark"] .pr-controls,
+:root[data-appearance="dark"] .repository-filter[open] {
+	border-color: #475467;
+	background: #202b3d;
 }
 @media (max-width: 760px) {
 	main {

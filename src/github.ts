@@ -464,22 +464,27 @@ export async function reconcileInstallations(
 	db: Db,
 	tokenFor: (installationId: string) => Promise<string>,
 	fetcher: FetchLike = fetch,
+	installationIds?: string[],
 ) {
-	const ids = [
-		...new Set(
-			(
-				await db.users.find({}, { projection: { installations: 1 } }).toArray()
-			).flatMap((user) =>
-				user.installations
-					.filter(
-						(item) =>
-							!item.accountLogin ||
-							approvedInstallationAccount(item.accountLogin),
-					)
-					.map((item) => item.installationId),
-			),
-		),
-	].sort();
+	const ids = installationIds
+		? [...new Set(installationIds)].sort()
+		: [
+				...new Set(
+					(
+						await db.users
+							.find({}, { projection: { installations: 1 } })
+							.toArray()
+					).flatMap((user) =>
+						user.installations
+							.filter(
+								(item) =>
+									!item.accountLogin ||
+									approvedInstallationAccount(item.accountLogin),
+							)
+							.map((item) => item.installationId),
+					),
+				),
+			].sort();
 	const results: Array<{ installationId: string; result: ReadResult }> = [];
 	for (const installationId of ids) {
 		let result: ReadResult;
@@ -524,4 +529,22 @@ export async function reconcileInstallations(
 			`reconciliation failed for installations ${failures.map((item) => item.installationId).join(",")}`,
 		);
 	return results;
+}
+
+export async function approvedInstallationIdsForUser(db: Db, userId: string) {
+	const user = await db.users.findOne(
+		{ _id: userId },
+		{ projection: { installations: 1 } },
+	);
+	return [
+		...new Set(
+			user?.installations
+				.filter(
+					(item) =>
+						!item.accountLogin ||
+						approvedInstallationAccount(item.accountLogin),
+				)
+				.map((item) => item.installationId) ?? [],
+		),
+	].sort();
 }

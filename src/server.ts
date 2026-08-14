@@ -20,6 +20,7 @@ import {
 	githubSignatureValid,
 } from "#/events";
 import {
+	approvedInstallationIdsForUser,
 	bootstrapInstallation,
 	githubAppJwt,
 	githubNextLink,
@@ -46,6 +47,9 @@ type AppContext = {
 	streams: Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>;
 	encoder: TextEncoder;
 	authenticated(request: Request): Promise<SessionIdentity | null>;
+	reconcile(
+		userId?: string,
+	): Promise<"success" | "running" | "failed" | "missing">;
 	scheduleDrain(): Promise<void>;
 };
 
@@ -413,6 +417,22 @@ const repairRoute = async (
 	);
 };
 
+const reconcileRoute = async (
+	context: AppContext,
+	request: Request,
+	path: string,
+) => {
+	if (path !== "/api/reconcile" || request.method !== "POST") return undefined;
+	const user = await context.authenticated(request);
+	if (!user) return new Response("unauthenticated", { status: 401 });
+	const status = await context.reconcile(user.id);
+	if (status === "missing") return new Response("not found", { status: 404 });
+	return Response.json(
+		{ status },
+		{ status: status === "failed" ? 502 : status === "running" ? 202 : 200 },
+	);
+};
+
 const handleRequest = async (context: AppContext, request: Request) => {
 	const url = new URL(request.url);
 	const path = url.pathname;
@@ -426,6 +446,7 @@ const handleRequest = async (context: AppContext, request: Request) => {
 		(await authRoute(context, request, url)) ??
 		(await webhookRoute(context, request, path)) ??
 		(await repairRoute(context, request, path)) ??
+		(await reconcileRoute(context, request, path)) ??
 		new Response("not found", { status: 404 })
 	);
 };
@@ -444,6 +465,7 @@ export function createApp(db: Db, config: Config) {
 			controller.enqueue(encoder.encode("event: refresh\\ndata: {}\\n\\n"));
 	};
 	let draining = Promise.resolve();
+	let reconciling: Promise<"success" | "failed"> | undefined;
 	const githubTasks = async (input: {
 		installationId: string;
 		repositoryId: string;
@@ -480,6 +502,44 @@ export function createApp(db: Db, config: Config) {
 			const token = cookie(request);
 			return token ? sessionUser(db, token) : null;
 		},
+		reconcile: async (userId?: string) => {
+			const installationIds = userId
+				? await approvedInstallationIdsForUser(db, userId)
+				: undefined;
+			if (userId && !installationIds?.length) return "missing";
+			const appId = config.githubAppId,
+				privateKey = config.githubAppPrivateKey;
+			if (!appId || !privateKey) return "failed";
+			if (reconciling) return "running";
+			const work = reconcileInstallations(
+				db,
+				(id) =>
+					installationToken(
+						githubAppJwt(appId, privateKey.replace(/\\n/g, "\n")),
+						id,
+					),
+				fetch,
+				installationIds,
+			)
+				.then(() => "success" as const)
+				.catch((error) => {
+					console.error(
+						"reconciliation failed",
+						error instanceof Error
+							? error.message.slice(0, 200)
+							: "unknown error",
+					);
+					return "failed" as const;
+				});
+			reconciling = work;
+			try {
+				const status = await work;
+				if (status === "success" && userId) refresh(userId);
+				return status;
+			} finally {
+				if (reconciling === work) reconciling = undefined;
+			}
+		},
 		scheduleDrain: async () => {},
 	} satisfies AppContext;
 	context.scheduleDrain = () => {
@@ -501,6 +561,7 @@ export function createApp(db: Db, config: Config) {
 	};
 	return {
 		drain: context.scheduleDrain,
+		reconcile: () => context.reconcile(),
 		fetch: (request: Request) => handleRequest(context, request),
 	};
 }
@@ -518,27 +579,8 @@ if (import.meta.main) {
 				fetch: app.fetch,
 			});
 			void app.drain();
-			const { githubAppId, githubAppPrivateKey } = config;
-			if (githubAppId && githubAppPrivateKey) {
-				const reconcile = () =>
-					reconcileInstallations(db, (id) =>
-						installationToken(
-							githubAppJwt(
-								githubAppId,
-								githubAppPrivateKey.replace(/\\n/g, "\n"),
-							),
-							id,
-						),
-					).catch((error) =>
-						console.error(
-							"reconciliation failed",
-							error instanceof Error
-								? error.message.slice(0, 200)
-								: "unknown error",
-						),
-					);
-				setInterval(reconcile, config.reconcileIntervalMs);
-			}
+			if (config.githubAppId && config.githubAppPrivateKey)
+				setInterval(() => void app.reconcile(), config.reconcileIntervalMs);
 		})
 		.catch((error) => {
 			console.error(

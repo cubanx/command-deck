@@ -27,6 +27,8 @@ let known = null,
 	current = null,
 	localSpecs = [],
 	localFiles = new Map(),
+	reconciling = false,
+	reconcileMessage = "",
 	view = {
 		query: "",
 		statuses: new Set(),
@@ -34,6 +36,52 @@ let known = null,
 		repositoryQuery: "",
 		repositoryOpen: false,
 	};
+
+const appearanceKey = "dcc-appearance";
+export const appearanceFor = (value, systemDark) => {
+	const preference = ["system", "dark", "light"].includes(value)
+		? value
+		: "system";
+	return {
+		preference,
+		theme:
+			preference === "system" ? (systemDark ? "dark" : "light") : preference,
+	};
+};
+const appearancePreference = () => {
+	try {
+		return appearanceFor(
+			globalThis.localStorage?.getItem(appearanceKey),
+			globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches,
+		);
+	} catch (error) {
+		console.error(
+			"Appearance preference read failed",
+			error?.name ?? "unknown error",
+		);
+		return appearanceFor();
+	}
+};
+const applyAppearance = (value) => {
+	const appearance = appearanceFor(
+		value,
+		globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches,
+	);
+	document.documentElement.dataset.appearance = appearance.theme;
+	document.documentElement.style.colorScheme = appearance.theme;
+	return appearance;
+};
+const saveAppearance = (value) => {
+	try {
+		globalThis.localStorage?.setItem(appearanceKey, value);
+		applyAppearance(value);
+	} catch (error) {
+		console.error(
+			"Appearance preference save failed",
+			error?.name ?? "unknown error",
+		);
+	}
+};
 
 const normalized = (value) =>
 	String(value ?? "")
@@ -293,6 +341,31 @@ const controlsMarkup = (all, visible) => {
 		' pull requests</span><button id="clear-pr-filters" type="button">Clear</button></div>'
 	);
 };
+const configurationMarkup = () => {
+	const appearance = appearancePreference();
+	return (
+		'<section id="configuration" class="card configuration" aria-labelledby="configuration-title"><h2 id="configuration-title">Configuration</h2><div class="actions"><button id="checkout" type="button">Connect local checkout</button><button id="notify" type="button">Enable notifications</button><button id="reconcile" type="button" ' +
+		(reconciling ? "disabled" : "") +
+		">" +
+		(reconciling ? "Reconciling…" : "Reconcile now") +
+		'</button></div><p id="reconcile-status" class="muted" aria-live="polite">' +
+		esc(reconcileMessage) +
+		'</p><fieldset class="appearance"><legend>Appearance</legend>' +
+		["system", "dark", "light"]
+			.map(
+				(value) =>
+					'<label><input type="radio" name="appearance" value="' +
+					value +
+					'" ' +
+					(appearance.preference === value ? "checked" : "") +
+					">" +
+					esc(value[0].toUpperCase() + value.slice(1)) +
+					"</label>",
+			)
+			.join("") +
+		"</fieldset></section>"
+	);
+};
 const rerender = (focusId) => {
 	render(current);
 	const control = document.getElementById(focusId);
@@ -364,7 +437,7 @@ const render = (x) => {
 	}));
 	const prs = derivePullRequests(allPullRequests, view);
 	root.innerHTML =
-		'<header><div class="brand"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command center</h1><p class="muted">Open pull requests you authored.</p></div></div><div class="actions"><button id="checkout">Connect local checkout</button><button id="notify">Enable notifications</button></div></header>' +
+		'<header><div class="brand"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command center</h1><p class="muted">Open pull requests you authored.</p></div></div><div class="actions"><a class="button" href="#configuration">Connect local checkout</a><a class="button" href="#configuration">Enable notifications</a></div></header>' +
 		(x.stale
 			? '<p class="card error">Provider reconciliation is stale.</p>'
 			: "") +
@@ -422,7 +495,8 @@ const render = (x) => {
 					: "") +
 				"</article>",
 		) +
-		"</section></div>";
+		"</section></div>" +
+		configurationMarkup();
 	document
 		.querySelector("#notify")
 		?.addEventListener("click", () =>
@@ -431,11 +505,50 @@ const render = (x) => {
 	document
 		.querySelector("#checkout")
 		?.addEventListener("click", connectCheckout);
+	document.querySelectorAll('[name="appearance"]').forEach((input) => {
+		input.addEventListener("change", () => {
+			saveAppearance(input.value);
+			render(current);
+		});
+	});
+	document.querySelector("#reconcile")?.addEventListener("click", reconcileNow);
 	document.querySelectorAll("[data-local-source]").forEach((link) => {
 		link.addEventListener("click", openLocalSource);
 	});
 	bindControls();
 };
+async function reconcileNow() {
+	if (reconciling) return;
+	reconciling = true;
+	reconcileMessage = "Reconciliation running.";
+	render(current);
+	try {
+		const response = await fetch("/api/reconcile", { method: "POST" });
+		if (!response.ok) {
+			console.error("Reconciliation request failed", response.status);
+			reconcileMessage = "Reconciliation could not be completed.";
+			return;
+		}
+		const result = await response.json();
+		if (result.status === "success") {
+			reconcileMessage = "Reconciliation complete.";
+			await load();
+		} else if (result.status === "running") {
+			reconcileMessage = "Reconciliation is already running.";
+		} else {
+			reconcileMessage = "Reconciliation could not be completed.";
+		}
+	} catch (error) {
+		console.error(
+			"Reconciliation request failed",
+			error?.name ?? "unknown error",
+		);
+		reconcileMessage = "Reconciliation could not be completed.";
+	} finally {
+		reconciling = false;
+		render(current);
+	}
+}
 async function connectCheckout() {
 	if (!globalThis.showDirectoryPicker) {
 		alert(
@@ -554,6 +667,13 @@ const load = () =>
 			return false;
 		});
 if (root) {
+	applyAppearance(appearancePreference().preference);
+	globalThis
+		.matchMedia?.("(prefers-color-scheme: dark)")
+		.addEventListener("change", () => {
+			if (appearancePreference().preference === "system")
+				applyAppearance("system");
+		});
 	load().then((ok) => {
 		if (ok) new EventSource("/events").addEventListener("refresh", load);
 	});

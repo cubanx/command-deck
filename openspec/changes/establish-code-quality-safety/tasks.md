@@ -36,3 +36,12 @@ Checkpoint: stop for user review after Group 3.
 - [x] 4.5 Mark this change complete and unblock `improve-command-deck` Group 3 only after user review.
 
 Checkpoint: stop for final quality-foundation review before resuming Command Deck feature implementation or performing any commit, push, pull-request, provider, deployment, or production action.
+
+## 5. Canonical validate-all parity
+
+- [x] 5.1 Add a focused contract test proving the CI validation commands exactly equal one shared command list and CI does not invoke the sequential `validate:all` bundle.
+- [x] 5.2 Add the smallest dependency-free validation command manifest and runner, expose canonical `bun run validate:all`, and retain the existing strict Biome, typecheck, test/coverage, and CrapTS behavior.
+- [x] 5.3 Run the shared validation commands as parallel CI entries with MongoDB only where tests require it, add the stable final `Validate All` aggregate, and keep Docker build and tooling freshness separate.
+- [x] 5.4 Document the local/CI contract and intentional exclusions, then run `bun run validate:all`, Docker build, strict validation for both PR-owned changes, and `git diff --check`.
+
+Checkpoint: stop for user review before the combined PR #8 handoff.

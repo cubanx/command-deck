@@ -1,6 +1,7 @@
 {
 	"compilerOptions": {
 		"target": "ESNext",
+		"allowJs": true,
 		"module": "Preserve",
 		"moduleResolution": "bundler",
 		"paths": {
@@ -10,5 +11,5 @@
 		"noEmit": true,
 		"types": ["bun"]
 	},
-	"include": ["src"]
+	"include": ["src", "scripts", "test"]
 }

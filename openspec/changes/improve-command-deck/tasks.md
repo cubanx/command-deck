@@ -36,12 +36,12 @@ Checkpoint: stop for user review after Group 3.
 
 ## 4. Unified configuration, appearance, and Reconcile now
 
-- [ ] 4.1 Add behavioral/accessibility tests that both top actions open one configuration section containing checkout, existing notification, System/Dark/Light, and authenticated Reconcile now controls.
-- [ ] 4.2 Add tests for browser-local appearance persistence, live System scheme changes, explicit overrides, semantic colors, focus, and contrast hooks.
-- [ ] 4.3 Add server tests for authenticated user-scoped reconciliation, foreign/no installation rejection, one shared scheduled/manual in-flight guard, success refresh, running state, and sanitized failure.
-- [ ] 4.4 Implement the hash-addressed configuration section, relocate the existing notification control unchanged, and implement native browser-local appearance preferences.
-- [ ] 4.5 Add the minimal user-bound approved-installation selector and `POST /api/reconcile` route that reuse installation bootstrap behind the shared in-flight reconciliation guard.
-- [ ] 4.6 Run focused server/dashboard tests, typecheck, and diff check.
+- [x] 4.1 Add behavioral/accessibility tests that both top actions open one configuration section containing checkout, existing notification, System/Dark/Light, and authenticated Reconcile now controls.
+- [x] 4.2 Add tests for browser-local appearance persistence, live System scheme changes, explicit overrides, semantic colors, focus, and contrast hooks.
+- [x] 4.3 Add server tests for authenticated user-scoped reconciliation, foreign/no installation rejection, one shared scheduled/manual in-flight guard, success refresh, running state, and sanitized failure.
+- [x] 4.4 Implement the hash-addressed configuration section, relocate the existing notification control unchanged, and implement native browser-local appearance preferences.
+- [x] 4.5 Add the minimal user-bound approved-installation selector and `POST /api/reconcile` route that reuse installation bootstrap behind the shared in-flight reconciliation guard.
+- [x] 4.6 Run focused server/dashboard tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 4.
 
@@ -72,7 +72,7 @@ Checkpoint: stop for user review after Group 6.
 
 ## 7. Integrated validation and handoff
 
-- [ ] 7.1 Run the full test suite, typecheck, focused accessibility checks, and `git diff --check` with no new dependencies.
+- [ ] 7.1 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
 - [ ] 7.2 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
 - [ ] 7.3 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
 - [ ] 7.4 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.

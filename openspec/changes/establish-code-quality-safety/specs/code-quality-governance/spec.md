@@ -12,11 +12,19 @@ The repository SHALL adopt the current portable Quality CI checks from the autho
 - **THEN** the repository records the verified Internal Apps source revision, portable checks, pinned versions, applicable exclusions, and reason for each deviation
 
 ### Requirement: One reproducible quality gate
-The repository SHALL expose one documented local quality command that runs formatting verification, linting, CrapTS quality analysis, TypeScript typechecking, and the repository test suite, and CI SHALL run the equivalent gate from a clean checkout.
+The repository SHALL expose one documented canonical `validate:all` command backed by a shared ordered command list that covers formatting verification, linting, CrapTS quality analysis, TypeScript typechecking, and the repository test suite. Local validation SHALL run that list sequentially, CI SHALL run the exact same constituents in parallel from a clean checkout, and one stable final job named `Validate All` SHALL aggregate their results without rerunning the sequential bundle.
 
 #### Scenario: Contributor validates a change locally
 - **WHEN** a contributor runs the documented quality command with repository-declared prerequisites available
 - **THEN** the same source-quality, type, and behavioral checks required by CI execute without relying on editor state or undeclared global tools
+
+#### Scenario: CI validates a change
+- **WHEN** Quality CI runs from a clean checkout
+- **THEN** it executes every shared validation command in parallel where independent and reports their combined result through the `Validate All` job
+
+#### Scenario: Local and CI validation drift
+- **WHEN** the CI command set differs from the shared validation command list or invokes the sequential `validate:all` bundle
+- **THEN** a focused contract test fails with actionable diagnostics
 
 #### Scenario: A quality check fails
 - **WHEN** formatting, linting, CrapTS, typechecking, or tests fail
