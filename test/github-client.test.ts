@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "../src/access";
-import { bootstrapDeployments, bootstrapInstallation, conditionalGet, reconcileInstallations, reconcileSerial, retryDelay } from "../src/github";
+import { bootstrapDeployments, bootstrapInstallation, conditionalGet, githubNextLink, reconcileInstallations, reconcileSerial, retryDelay } from "../src/github";
 import { withDatabase } from "./mongo-support";
 
 test("conditional reads retain ETags and surface 304", () => withDatabase(async (db) => {
@@ -18,19 +18,31 @@ test("provider retries honor reset headers and reject ordinary forbidden respons
   expect(retryDelay(new Response(null, { status: 403 }), 0, now)).toBeUndefined();
 });
 
+test("GitHub pagination rejects unsafe and looping links before credentialed fetches", () => {
+  expect(() => githubNextLink('<https://evil.example/page>; rel="next"', new Set())).toThrow("not GitHub API");
+  const seen = new Set(["https://api.github.com/page"]);
+  expect(() => githubNextLink('<https://api.github.com/page>; rel="next"', seen)).toThrow("loop");
+});
+
+test("legacy bindings backfill only after approved authoritative identity", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "SISKO"); const user = await db.users.findOne({ _id: "u" }); user!.installations.push({ installationId: "9", boundAt: new Date(), repositories: [] }); await db.users.replaceOne({ _id: "u" }, user!);
+  let repos = 0; await bootstrapInstallation(db, "9", "token", async (url) => String(url).endsWith("/installation") ? Response.json({ account: { login: "Crisp-Inc" } }) : String(url).includes("installation/repositories") ? (repos++, Response.json({ repositories: [] })) : Response.json([]));
+  expect(repos).toBe(1); expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.accountLogin).toBe("Crisp-Inc");
+}));
+
 test("serial reconciliation and complete bootstrap use installation tokens", () => withDatabase(async (db) => {
   let calls = 0; const waits: number[] = [];
   const results = await reconcileSerial(db, ["a", "b"], async () => ++calls === 1 ? new Response("retry", { status: 429 }) : new Response("{}"), async (ms) => waits.push(ms));
   expect(results.every((result) => result.kind === "changed")).toBeTrue(); expect(waits).toEqual([]);
-  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9");
-  await bootstrapInstallation(db, "9", "token", async (url, init) => { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer token"); return String(url).includes("pulls?") ? Response.json([{ number: 1, title: "Defiant", user: { login: "sisko" }, state: "open" }]) : Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] }); });
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9", "cubanx");
+  await bootstrapInstallation(db, "9", "token", async (url, init) => { expect(new Headers(init?.headers).get("authorization")).toBe("Bearer token"); return String(url).endsWith("/installation") ? Response.json({ account: { login: "cubanx" } }) : String(url).includes("pulls?") ? Response.json([{ number: 1, title: "Defiant", user: { login: "sisko" }, state: "open" }]) : Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] }); });
   expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toHaveLength(1);
 }));
 
 test("multi-page reconciliation replaces only a complete snapshot", () => withDatabase(async (db) => {
-  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9");
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9", "cubanx");
   const prior = await db.users.findOne({ _id: "u" }); prior!.installations[0]!.repositories.push({ repositoryId: "old", full_name: "ds9/old", pullRequests: [], openSpecs: [], deployments: [] }); await db.users.replaceOne({ _id: "u" }, prior!);
-  const fetcher = async (url: RequestInfo | URL) => { const value = String(url); if (value.includes("repositories?page=2")) return Response.json({ repositories: [{ id: 2, full_name: "ds9/two" }] }); if (value.includes("installation/repositories")) return Response.json({ repositories: [{ id: 1, full_name: "ds9/one" }] }, { headers: { link: '<https://api.github.com/installation/repositories?page=2>; rel="next"' } }); if (value.includes("/pulls?")) return Response.json([]); if (value.includes("/deployments")) return Response.json([]); return new Response("missing", { status: 500 }); };
+  const fetcher = async (url: RequestInfo | URL) => { const value = String(url); if (value.endsWith("/installation")) return Response.json({ account: { login: "cubanx" } }); if (value.includes("repositories?page=2")) return Response.json({ repositories: [{ id: 2, full_name: "ds9/two" }] }); if (value.includes("installation/repositories")) return Response.json({ repositories: [{ id: 1, full_name: "ds9/one" }] }, { headers: { link: '<https://api.github.com/installation/repositories?page=2>; rel="next"' } }); if (value.includes("/pulls?")) return Response.json([]); if (value.includes("/deployments")) return Response.json([]); return new Response("missing", { status: 500 }); };
   expect((await bootstrapInstallation(db, "9", "token", fetcher)).kind).toBe("changed");
   expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories.map((repo) => repo.repositoryId)).toEqual(["1", "2"]);
   const failed = await bootstrapInstallation(db, "9", "token", async () => new Response("down", { status: 503 }));
@@ -44,15 +56,15 @@ test("recent deployments follow Link pagination", () => withDatabase(async (db) 
 }));
 
 test("complete reconciliation is user-scoped and preserves webhook fields", () => withDatabase(async (db) => {
-  await upsertIdentity(db, "a", "sisko"); await upsertIdentity(db, "b", "kira"); await bindInstallation(db, "a", "9"); await bindInstallation(db, "b", "9");
+  await upsertIdentity(db, "a", "sisko"); await upsertIdentity(db, "b", "kira"); await bindInstallation(db, "a", "9", "cubanx"); await bindInstallation(db, "b", "9", "cubanx");
   for (const userId of ["a", "b"]) { const user = await db.users.findOne({ _id: userId }); user!.installations[0]!.repositories.push({ repositoryId: "old", full_name: "ds9/old", pullRequests: [], openSpecs: [], deployments: [] }); await db.users.replaceOne({ _id: userId }, user!); }
-  await bootstrapInstallation(db, "9", "token", async (url) => String(url).includes("installation/repositories") ? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] }) : String(url).includes("/pulls?") ? Response.json([{ number: 1, title: "Sisko", user: { login: "sisko" }, state: "open" }, { number: 2, title: "Kira", user: { login: "kira" }, state: "open" }]) : Response.json([]));
+  await bootstrapInstallation(db, "9", "token", async (url) => String(url).endsWith("/installation") ? Response.json({ account: { login: "cubanx" } }) : String(url).includes("installation/repositories") ? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] }) : String(url).includes("/pulls?") ? Response.json([{ number: 1, title: "Sisko", user: { login: "sisko" }, state: "open" }, { number: 2, title: "Kira", user: { login: "kira" }, state: "open" }]) : Response.json([]));
   expect((await db.users.findOne({ _id: "a" }))?.installations[0]?.repositories[0]?.pullRequests.map((pr) => pr.number)).toEqual([1]); expect((await db.users.findOne({ _id: "b" }))?.installations[0]?.repositories[0]?.pullRequests.map((pr) => pr.number)).toEqual([2]);
 }));
 
 test("cached paginated next link survives a Link-less 304", () => withDatabase(async (db) => {
-  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9"); let phase = 0, pageTwo = 0;
-  const fetcher = async (url: RequestInfo | URL) => { const value = String(url); if (value.includes("repositories?page=2")) { pageTwo++; return Response.json({ repositories: [{ id: 2, full_name: "ds9/two" }] }, { headers: { etag: "p2" } }); } if (value.includes("installation/repositories")) return phase++ ? new Response(null, { status: 304 }) : Response.json({ repositories: [{ id: 1, full_name: "ds9/one" }] }, { headers: { etag: "p1", link: '<https://api.github.com/installation/repositories?page=2>; rel="next"' } }); if (value.includes("/pulls?")) return Response.json([]); return Response.json([]); };
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9", "cubanx"); let phase = 0, pageTwo = 0;
+  const fetcher = async (url: RequestInfo | URL) => { const value = String(url); if (value.endsWith("/installation")) return Response.json({ account: { login: "cubanx" } }); if (value.includes("repositories?page=2")) { pageTwo++; return Response.json({ repositories: [{ id: 2, full_name: "ds9/two" }] }, { headers: { etag: "p2" } }); } if (value.includes("installation/repositories")) return phase++ ? new Response(null, { status: 304 }) : Response.json({ repositories: [{ id: 1, full_name: "ds9/one" }] }, { headers: { etag: "p1", link: '<https://api.github.com/installation/repositories?page=2>; rel="next"' } }); if (value.includes("/pulls?")) return Response.json([]); return Response.json([]); };
   await bootstrapInstallation(db, "9", "token", fetcher); await bootstrapInstallation(db, "9", "token", fetcher); expect(pageTwo).toBeGreaterThan(1); expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories).toHaveLength(2);
 }));
 
@@ -67,22 +79,22 @@ test("bootstrap caps deployment status reads and rows at twenty", () => withData
 }));
 
 test("complete bootstrap preserves webhook fields and OpenSpecs while removing stale projections", () => withDatabase(async (db) => {
-  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9"); const user = await db.users.findOne({ _id: "u" }); user!.installations[0]!.repositories.push({ repositoryId: "2", full_name: "ds9/ops", pullRequests: [{ number: 1, author_login: "sisko", state: "open", review_state: "approved", checks_state: "success", workflow_state: "success", mergeable: "clean", bot_review_state: "complete" }, { number: 99, author_login: "sisko", state: "open" }], openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }], deployments: [] }, { repositoryId: "stale", full_name: "ds9/stale", pullRequests: [], openSpecs: [], deployments: [] }); await db.users.replaceOne({ _id: "u" }, user!);
-  await bootstrapInstallation(db, "9", "token", async (url) => String(url).includes("installation/repositories") ? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] }) : String(url).includes("/pulls?") ? Response.json([{ number: 1, title: "Defiant", user: { login: "sisko" }, state: "open" }]) : Response.json([]));
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9", "cubanx"); const user = await db.users.findOne({ _id: "u" }); user!.installations[0]!.repositories.push({ repositoryId: "2", full_name: "ds9/ops", pullRequests: [{ number: 1, author_login: "sisko", state: "open", review_state: "approved", checks_state: "success", workflow_state: "success", mergeable: "clean", bot_review_state: "complete" }, { number: 99, author_login: "sisko", state: "open" }], openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }], deployments: [] }, { repositoryId: "stale", full_name: "ds9/stale", pullRequests: [], openSpecs: [], deployments: [] }); await db.users.replaceOne({ _id: "u" }, user!);
+  await bootstrapInstallation(db, "9", "token", async (url) => String(url).endsWith("/installation") ? Response.json({ account: { login: "cubanx" } }) : String(url).includes("installation/repositories") ? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] }) : String(url).includes("/pulls?") ? Response.json([{ number: 1, title: "Defiant", user: { login: "sisko" }, state: "open" }]) : Response.json([]));
   const repositories = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories ?? [], repo = repositories[0]; expect(repositories).toHaveLength(1); expect(repo?.pullRequests).toHaveLength(1); expect(repo?.pullRequests[0]).toMatchObject({ title: "Defiant", review_state: "approved", checks_state: "success", workflow_state: "success", mergeable: "clean", bot_review_state: "complete" }); expect(repo?.openSpecs).toMatchObject([{ change_name: "defiant" }]);
 }));
 
 test("installation reconciliation obtains tokens and bootstraps serially in stable order", () => withDatabase(async (db) => {
-  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "10"); await bindInstallation(db, "u", "9"); const tokens: string[] = [];
-  const results = await reconcileInstallations(db, async (installationId) => { tokens.push(installationId); return `token-${installationId}`; }, async (url) => String(url).includes("installation/repositories") ? Response.json({ repositories: [] }) : Response.json([]));
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "10", "cubanx"); await bindInstallation(db, "u", "9", "cubanx"); const tokens: string[] = [];
+  const results = await reconcileInstallations(db, async (installationId) => { tokens.push(installationId); return `token-${installationId}`; }, async (url) => String(url).endsWith("/installation") ? Response.json({ account: { login: "cubanx" } }) : String(url).includes("installation/repositories") ? Response.json({ repositories: [] }) : Response.json([]));
   expect(tokens).toEqual(["10", "9"]); expect(results.map((result) => result.installationId)).toEqual(["10", "9"]); expect(results.every((result) => result.result.kind === "changed")).toBeTrue();
 }));
 
 test("installation reconciliation marks stale projections and rejects visibly", () => withDatabase(async (db) => {
-  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9");
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9", "cubanx");
   await expect(reconcileInstallations(db, async () => "token", async () => new Response("down", { status: 500 }))).rejects.toThrow("reconciliation failed for installations 9");
   expect((await db.users.findOne({ _id: "u" }))?.installations[0]).toMatchObject({ lastSyncError: "GitHub request failed (500)" });
   expect((await dashboardForUser(db, "u")).stale).toBeTrue();
-  await reconcileInstallations(db, async () => "token", async (url) => String(url).includes("installation/repositories") ? Response.json({ repositories: [] }) : Response.json([]));
+  await reconcileInstallations(db, async () => "token", async (url) => String(url).endsWith("/installation") ? Response.json({ account: { login: "cubanx" } }) : String(url).includes("installation/repositories") ? Response.json({ repositories: [] }) : Response.json([]));
   expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.lastSyncError).toBeUndefined(); expect((await dashboardForUser(db, "u")).stale).toBeFalse();
 }));
