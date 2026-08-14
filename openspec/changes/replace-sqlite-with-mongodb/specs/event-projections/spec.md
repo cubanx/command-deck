@@ -1,15 +1,19 @@
 ## MODIFIED Requirements
 
 ### Requirement: Incremental GitHub projections
-The system SHALL update affected local pull-request, review, check, workflow, installation, repository, deployment, and deployment-status projections from supported signed GitHub webhook event/action pairs and SHALL ignore unknown pairs safely.
+The system SHALL revalidate the exact installation-account allowlist before updating affected local pull-request, review, check, workflow, installation, repository, deployment, and deployment-status projections from supported signed GitHub webhook event/action pairs. It SHALL ignore unknown pairs safely and MUST NOT fetch provider data, write metadata, or notify users for a missing or unapproved installation account.
 
 #### Scenario: Pull request state changes
-- **WHEN** a supported pull-request webhook changes a tracked pull request
+- **WHEN** a supported pull-request webhook from an approved installation account changes a tracked pull request
 - **THEN** the installation-scoped projection is inserted, updated, or removed without listing all pull requests from GitHub
 
 #### Scenario: Deployment status changes
-- **WHEN** a signed `deployment` or `deployment_status` delivery changes a deployment in a selected repository
+- **WHEN** a signed `deployment` or `deployment_status` delivery from an approved installation account changes a deployment in a selected repository
 - **THEN** the installation-scoped GitHub deployment projection is inserted or updated idempotently without a Railway API read
+
+#### Scenario: Retained delivery has an unapproved installation account
+- **WHEN** a legacy or directly queued delivery is processed with a missing or unapproved installation account login
+- **THEN** it produces no installation, repository, pull-request, deployment, OpenSpec, or notification mutation and performs no provider fetch
 
 ## REMOVED Requirements
 
