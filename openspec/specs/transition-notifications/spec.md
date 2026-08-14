@@ -3,17 +3,6 @@
 ## Purpose
 TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
 ## Requirements
-### Requirement: Useful transitions only
-The system SHALL persist notifications only for review requests, failed checks, mergeability changes, verified deployment failure/success, and committed OpenSpec completion.
-
-#### Scenario: Repeated unchanged event
-- **WHEN** a webhook or reconciliation repeats state already projected
-- **THEN** no new notification is created
-
-#### Scenario: Untrusted Railway failure hint
-- **WHEN** a Railway webhook claims a failed deployment but authoritative verification has not succeeded
-- **THEN** no failure notification is created
-
 ### Requirement: User-scoped deduplication
 Every notification SHALL belong to one developer and have a user-scoped transition key that prevents duplicate delivery.
 
@@ -34,3 +23,19 @@ The PWA SHALL request notification permission only in response to a developer ac
 #### Scenario: Notification permission is denied
 - **WHEN** the browser denies notification permission
 - **THEN** the dashboard continues live visual updates without repeated permission prompts or errors
+
+### Requirement: Useful GitHub transitions only
+The system SHALL persist notifications only for review requests, failed checks, mergeability changes, signed GitHub deployment failure/success, and committed OpenSpec completion.
+
+#### Scenario: Repeated unchanged event
+- **WHEN** a webhook or reconciliation repeats state already projected
+- **THEN** no new notification is created
+
+#### Scenario: GitHub deployment reaches a terminal state
+- **WHEN** a signed `deployment_status` event transitions an installation-scoped deployment into `success`, `failure`, or `error`
+- **THEN** the system creates one user-scoped notification for developers bound to that installation
+
+#### Scenario: Nonterminal deployment update
+- **WHEN** a deployment status is queued, pending, or in progress
+- **THEN** the projection updates without a terminal notification
+
