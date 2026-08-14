@@ -35,6 +35,9 @@ let known = null,
 		repositories: new Set(),
 		repositoryQuery: "",
 		repositoryOpen: false,
+		failedActions: false,
+		failedChecks: false,
+		sort: { mode: "closest", direction: "asc" },
 	};
 
 const appearanceKey = "dcc-appearance";
@@ -87,6 +90,46 @@ const normalized = (value) =>
 	String(value ?? "")
 		.trim()
 		.toLowerCase();
+const defaultSort = { mode: "closest", direction: "asc" };
+const sortModes = new Set([
+	"closest",
+	"updated",
+	"number",
+	"progress",
+	"repository",
+]);
+export const sortPreference = (stored) => {
+	try {
+		const value = JSON.parse(stored);
+		return sortModes.has(value?.mode) &&
+			["asc", "desc"].includes(value?.direction)
+			? { mode: value.mode, direction: value.direction }
+			: defaultSort;
+	} catch {
+		return defaultSort;
+	}
+};
+const loadSortPreference = () => {
+	try {
+		return sortPreference(globalThis.localStorage?.getItem("dcc-pr-sort"));
+	} catch (error) {
+		console.error(
+			"Pull request sort read failed",
+			error?.name ?? "unknown error",
+		);
+		return defaultSort;
+	}
+};
+const saveSortPreference = () => {
+	try {
+		globalThis.localStorage?.setItem("dcc-pr-sort", JSON.stringify(view.sort));
+	} catch (error) {
+		console.error(
+			"Pull request sort save failed",
+			error?.name ?? "unknown error",
+		);
+	}
+};
 const distance = (left, right) => {
 	let prior = Array.from({ length: right.length + 1 }, (_, index) => index);
 	for (let row = 1; row <= left.length; row++) {
@@ -120,6 +163,106 @@ export const bucketFor = (pr) =>
 		: pr.draft
 			? "draft"
 			: "ready";
+const failedState = (value) =>
+	[
+		"action_required",
+		"action-required",
+		"cancelled",
+		"canceled",
+		"failed",
+		"failure",
+		"timed_out",
+		"timed-out",
+	].includes(normalized(value));
+export const blockersFor = (pr, spec) => {
+	const blockers = [];
+	if (pr.draft) blockers.push("Draft");
+	if (normalized(pr.review_state) === "changes_requested")
+		blockers.push("Changes requested");
+	if (failedState(pr.workflow_state)) blockers.push("Actions failed");
+	if (failedState(pr.checks_state)) blockers.push("Checks failed");
+	if (
+		pr.mergeable === false ||
+		["blocked", "conflicting", "dirty", "false", "unmergeable"].includes(
+			normalized(pr.mergeable),
+		)
+	)
+		blockers.push("Mergeability blocked");
+	if (
+		spec &&
+		Number.isFinite(Number(spec.completed)) &&
+		Number.isFinite(Number(spec.total)) &&
+		Number(spec.total) > 0 &&
+		Number(spec.completed) < Number(spec.total)
+	)
+		blockers.push("OpenSpec incomplete");
+	return blockers;
+};
+const progressFor = (spec) =>
+	spec &&
+	Number.isFinite(Number(spec.completed)) &&
+	Number.isFinite(Number(spec.total)) &&
+	Number(spec.total) > 0
+		? Number(spec.completed) / Number(spec.total)
+		: null;
+const nullableCompare = (left, right, direction = "asc") => {
+	if (left === null) return right === null ? 0 : 1;
+	if (right === null) return -1;
+	return (
+		(left < right ? -1 : left > right ? 1 : 0) * (direction === "desc" ? -1 : 1)
+	);
+};
+const codePointCompare = (left, right) => {
+	const a = normalized(left),
+		b = normalized(right);
+	return a < b ? -1 : a > b ? 1 : 0;
+};
+const repositoryTie = (left, right) =>
+	codePointCompare(left.pr.full_name, right.pr.full_name) ||
+	codePointCompare(left.pr.repository_id, right.pr.repository_id);
+const numberCompare = (left, right) =>
+	Number(right.pr.number) - Number(left.pr.number) ||
+	repositoryTie(left, right);
+const closestCompare = (left, right, direction = "asc") =>
+	nullableCompare(left.blockers.length, right.blockers.length, direction) ||
+	nullableCompare(left.progress, right.progress, "desc") ||
+	numberCompare(left, right);
+const sortCompare = (left, right, sort) => {
+	const fallback = () => closestCompare(left, right);
+	if (sort.mode === "closest")
+		return closestCompare(left, right, sort.direction);
+	if (sort.mode === "updated")
+		return (
+			nullableCompare(
+				Number.isFinite(Date.parse(left.pr.updated_at))
+					? Date.parse(left.pr.updated_at)
+					: null,
+				Number.isFinite(Date.parse(right.pr.updated_at))
+					? Date.parse(right.pr.updated_at)
+					: null,
+				sort.direction,
+			) || fallback()
+		);
+	if (sort.mode === "number")
+		return (
+			nullableCompare(
+				Number(left.pr.number),
+				Number(right.pr.number),
+				sort.direction,
+			) ||
+			repositoryTie(left, right) ||
+			fallback()
+		);
+	if (sort.mode === "progress")
+		return (
+			nullableCompare(left.progress, right.progress, sort.direction) ||
+			fallback()
+		);
+	return (
+		codePointCompare(left.pr.full_name, right.pr.full_name) *
+			(sort.direction === "desc" ? -1 : 1) || fallback()
+	);
+};
 const searchScore = ({ pr, spec }, query) => {
 	if (!query) return 0;
 	if (/^\d+$/.test(query))
@@ -135,30 +278,31 @@ export const derivePullRequests = (items, filters) => {
 	const query = normalized(filters.query),
 		statuses = filters.statuses ?? new Set(),
 		repositories = filters.repositories ?? new Set(),
-		bucketOrder = { mergeable: 0, ready: 1, draft: 2 };
+		failedActions = filters.failedActions ?? false,
+		failedChecks = filters.failedChecks ?? false,
+		sort = sortModes.has(filters.sort?.mode) ? filters.sort : defaultSort;
 	return items
 		.map((item) => ({
 			...item,
 			bucket: bucketFor(item.pr),
 			score: searchScore(item, query),
+			blockers: blockersFor(item.pr, item.spec),
+			progress: progressFor(item.spec),
 		}))
 		.filter(
 			(item) =>
 				Number.isFinite(item.score) &&
 				(!statuses.size || statuses.has(item.bucket)) &&
+				(!failedActions || failedState(item.pr.workflow_state)) &&
+				(!failedChecks || failedState(item.pr.checks_state)) &&
 				(!repositories.size || repositories.has(item.pr.full_name)),
 		)
-		.sort(
-			(left, right) =>
-				bucketOrder[left.bucket] - bucketOrder[right.bucket] ||
-				(query ? left.score - right.score : 0) ||
-				Number(right.pr.number) - Number(left.pr.number),
-		);
+		.sort((left, right) => sortCompare(left, right, sort));
 };
 export const repositoryOptions = (items, query = "") =>
 	[...new Set(items.map(({ pr }) => pr.full_name).filter(Boolean))]
 		.filter((name) => Number.isFinite(fuzzyScore(query, name)))
-		.sort((left, right) => left.localeCompare(right));
+		.sort(codePointCompare);
 const parseTasks = (content) => {
 	const groups = [];
 	let title = "Tasks";
@@ -311,7 +455,29 @@ const controlsMarkup = (all, visible) => {
 					"</label>",
 			)
 			.join("") +
-		'</fieldset><details class="repository-filter" ' +
+		'</fieldset><fieldset><legend>Failed state</legend><label class="filter-pill"><input id="failed-actions" type="checkbox" data-aggregate-filter="failedActions" ' +
+		(view.failedActions ? "checked" : "") +
+		'>Failed Actions</label><label class="filter-pill"><input id="failed-checks" type="checkbox" data-aggregate-filter="failedChecks" ' +
+		(view.failedChecks ? "checked" : "") +
+		'>Failed Checks</label></fieldset><label for="pr-sort">Sort pull requests</label><select id="pr-sort" aria-describedby="codex-activity-status"><option value="closest" ' +
+		(view.sort.mode === "closest" ? "selected" : "") +
+		'>Closest to merge</option><option value="codex" disabled aria-describedby="codex-activity-status">Codex activity (unavailable)</option><option value="updated" ' +
+		(view.sort.mode === "updated" ? "selected" : "") +
+		'>Recently updated</option><option value="number" ' +
+		(view.sort.mode === "number" ? "selected" : "") +
+		'>PR number</option><option value="progress" ' +
+		(view.sort.mode === "progress" ? "selected" : "") +
+		'>OpenSpec progress</option><option value="repository" ' +
+		(view.sort.mode === "repository" ? "selected" : "") +
+		'>Repository</option></select><span id="codex-activity-status" class="muted">Codex activity sorting is unavailable because no activity data is collected.</span><label for="pr-direction">' +
+		(view.sort.mode === "number"
+			? "PR number direction: Newest first or Oldest first"
+			: "Sort direction") +
+		'</label><select id="pr-direction"><option value="asc" ' +
+		(view.sort.direction === "asc" ? "selected" : "") +
+		'>Ascending</option><option value="desc" ' +
+		(view.sort.direction === "desc" ? "selected" : "") +
+		'>Descending</option></select><details class="repository-filter" ' +
 		(view.repositoryOpen ? "open" : "") +
 		"><summary>Repositories" +
 		(view.repositories.size ? ` (${view.repositories.size})` : "") +
@@ -386,6 +552,24 @@ const bindControls = () => {
 			rerender(input.id);
 		});
 	});
+	document.querySelectorAll("[data-aggregate-filter]").forEach((input) => {
+		input.addEventListener("change", () => {
+			view[input.dataset.aggregateFilter] = input.checked;
+			rerender(input.id);
+		});
+	});
+	document.querySelector("#pr-sort")?.addEventListener("change", (event) => {
+		view.sort = { ...view.sort, mode: event.currentTarget.value };
+		saveSortPreference();
+		rerender("pr-sort");
+	});
+	document
+		.querySelector("#pr-direction")
+		?.addEventListener("change", (event) => {
+			view.sort = { ...view.sort, direction: event.currentTarget.value };
+			saveSortPreference();
+			rerender("pr-direction");
+		});
 	const repositoryFilter = document.querySelector(".repository-filter");
 	repositoryFilter?.addEventListener("toggle", () => {
 		view.repositoryOpen = repositoryFilter.open;
@@ -413,6 +597,9 @@ const bindControls = () => {
 			repositories: new Set(),
 			repositoryQuery: "",
 			repositoryOpen: false,
+			failedActions: false,
+			failedChecks: false,
+			sort: view.sort,
 		};
 		rerender("pr-search");
 	});
@@ -463,6 +650,10 @@ const render = (x) => {
 					: "") +
 				badge("mergeable", pr.mergeable) +
 				"</div>" +
+				'<p class="muted">Blockers: ' +
+				esc(item.blockers.length) +
+				(item.blockers.length ? " · " + esc(item.blockers.join(", ")) : "") +
+				"</p>" +
 				workflowFailuresMarkup(pr) +
 				openSpecMarkup(item.spec) +
 				"</article>"
@@ -667,6 +858,7 @@ const load = () =>
 			return false;
 		});
 if (root) {
+	view.sort = loadSortPreference();
 	applyAppearance(appearancePreference().preference);
 	globalThis
 		.matchMedia?.("(prefers-color-scheme: dark)")

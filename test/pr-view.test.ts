@@ -1,10 +1,12 @@
 import { expect, test } from "vitest";
 import {
 	appearanceFor,
+	blockersFor,
 	bucketFor,
 	derivePullRequests,
 	fuzzyScore,
 	repositoryOptions,
+	sortPreference,
 } from "#/web/app.js";
 
 const items = [
@@ -57,11 +59,60 @@ const items = [
 type ViewItem = { pr: { number: number } };
 const numbers = (views: ViewItem[]) => views.map(({ pr }) => pr.number);
 
-test("status buckets are exclusive and ordered before descending PR number", () => {
+test("status buckets remain exclusive while closest-to-merge uses independent blockers", () => {
 	expect(bucketFor(items[0].pr)).toBe("mergeable");
 	expect(bucketFor(items[1].pr)).toBe("ready");
 	expect(bucketFor(items[2].pr)).toBe("draft");
-	expect(numbers(derivePullRequests(items, {}))).toEqual([12, 9, 11, 10]);
+	expect(numbers(derivePullRequests(items, {}))).toEqual([11, 9, 12, 10]);
+});
+
+test("closest-to-merge counts each unresolved gate once and shows exact labels", () => {
+	const complete = { change_name: "complete", completed: 3, total: 3 };
+	const cases = [
+		[{ draft: true }, "Draft"],
+		[{ review_state: "changes_requested" }, "Changes requested"],
+		[{ workflow_state: "failure" }, "Actions failed"],
+		[{ checks_state: "timed_out" }, "Checks failed"],
+		[{ mergeable: "conflicting" }, "Mergeability blocked"],
+		[
+			{},
+			"OpenSpec incomplete",
+			{ change_name: "incomplete", completed: 1, total: 3 },
+		],
+	] as const;
+	for (const [pr, label, spec = complete] of cases)
+		expect(blockersFor(pr, spec)).toEqual([label]);
+	expect(
+		blockersFor(
+			{
+				draft: true,
+				review_state: "changes_requested",
+				workflow_state: "failed",
+				checks_state: "cancelled",
+				mergeable: false,
+			},
+			{ change_name: "incomplete", completed: 1, total: 3 },
+		),
+	).toHaveLength(6);
+});
+
+test("closest-to-merge keeps incomplete OpenSpec blockers visible before progress and PR ties", () => {
+	const ordered = derivePullRequests(
+		[
+			{ pr: { number: 1, full_name: "ds9/ops" }, spec: null },
+			{
+				pr: { number: 2, full_name: "ds9/ops" },
+				spec: { completed: 1, total: 2 },
+			},
+			{
+				pr: { number: 3, full_name: "ds9/ops" },
+				spec: { completed: 3, total: 4 },
+			},
+			{ pr: { number: 4, full_name: "ds9/ops" }, spec: null },
+		],
+		{},
+	);
+	expect(numbers(ordered)).toEqual([4, 1, 3, 2]);
 });
 
 test("search ranks exact, prefix, substring, then typo matches and keeps numeric queries exact", () => {
@@ -73,7 +124,7 @@ test("search ranks exact, prefix, substring, then typo matches and keeps numeric
 	]).toEqual([0, 1, 2, 3]);
 	expect(numbers(derivePullRequests(items, { query: "9" }))).toEqual([9]);
 	expect(numbers(derivePullRequests(items, { query: "defint" }))).toEqual([
-		12, 9,
+		9, 12,
 	]);
 });
 
@@ -93,8 +144,54 @@ test("title, repository, branch, OpenSpec, status, and multi-repository filters 
 				repositories: new Set(["ds9/ops", "ds9/reports"]),
 			}),
 		),
-	).toEqual([12, 9]);
+	).toEqual([9, 12]);
 	expect(repositoryOptions(items, "rep")).toEqual(["ds9/reports"]);
+});
+
+test("failed Actions and Checks are composable filters using projected aggregate states", () => {
+	const filtered = [
+		{
+			pr: {
+				number: 4,
+				full_name: "ds9/ops",
+				workflow_state: "failure",
+				checks_state: "success",
+			},
+			spec: null,
+		},
+		{
+			pr: {
+				number: 3,
+				full_name: "ds9/ops",
+				workflow_state: "success",
+				checks_state: "timed_out",
+			},
+			spec: null,
+		},
+		{
+			pr: {
+				number: 2,
+				full_name: "ds9/ops",
+				workflow_state: "failed",
+				checks_state: "cancelled",
+			},
+			spec: null,
+		},
+	];
+	expect(
+		numbers(derivePullRequests(filtered, { failedActions: true })),
+	).toEqual([4, 2]);
+	expect(numbers(derivePullRequests(filtered, { failedChecks: true }))).toEqual(
+		[3, 2],
+	);
+	expect(
+		numbers(
+			derivePullRequests(filtered, {
+				failedActions: true,
+				failedChecks: true,
+			}),
+		),
+	).toEqual([2]);
 });
 
 test("appearance preference defaults to System and explicit choices override it", () => {
@@ -114,4 +211,111 @@ test("appearance preference defaults to System and explicit choices override it"
 		preference: "dark",
 		theme: "dark",
 	});
+});
+
+test("sort modes use deterministic direction, null-last fallbacks, and safe preferences", () => {
+	const sortable = [
+		{
+			pr: {
+				number: 4,
+				full_name: "ds9/zeta",
+				updated_at: "2026-01-04T00:00:00Z",
+			},
+			spec: { completed: 1, total: 2 },
+		},
+		{
+			pr: {
+				number: 3,
+				full_name: "ds9/alpha",
+				updated_at: "2026-01-03T00:00:00Z",
+			},
+			spec: { completed: 3, total: 4 },
+		},
+		{ pr: { number: 2, full_name: "ds9/beta" }, spec: null },
+		{ pr: { number: 1, full_name: "ds9/alpha" }, spec: null },
+	];
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "updated", direction: "desc" },
+			}),
+		),
+	).toEqual([4, 3, 2, 1]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "updated", direction: "asc" },
+			}),
+		),
+	).toEqual([3, 4, 2, 1]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "closest", direction: "desc" },
+			}),
+		),
+	).toEqual([3, 4, 2, 1]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "number", direction: "asc" },
+			}),
+		),
+	).toEqual([1, 2, 3, 4]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "number", direction: "desc" },
+			}),
+		),
+	).toEqual([4, 3, 2, 1]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "progress", direction: "desc" },
+			}),
+		),
+	).toEqual([3, 4, 2, 1]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "progress", direction: "asc" },
+			}),
+		),
+	).toEqual([4, 3, 2, 1]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "repository", direction: "asc" },
+			}),
+		),
+	).toEqual([1, 3, 2, 4]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
+				sort: { mode: "repository", direction: "desc" },
+			}),
+		),
+	).toEqual([4, 2, 1, 3]);
+	expect(sortPreference('{"mode":"number","direction":"desc"}')).toEqual({
+		mode: "number",
+		direction: "desc",
+	});
+	expect(sortPreference("not JSON")).toEqual({
+		mode: "closest",
+		direction: "asc",
+	});
+	expect(sortPreference('{"mode":"codex","direction":"asc"}')).toEqual({
+		mode: "closest",
+		direction: "asc",
+	});
+	expect(
+		derivePullRequests(
+			[
+				{ pr: { number: 7, full_name: "ds9/zeta" }, spec: null },
+				{ pr: { number: 7, full_name: "ds9/alpha" }, spec: null },
+			],
+			{},
+		).map(({ pr }: { pr: { full_name: string } }) => pr.full_name),
+	).toEqual(["ds9/alpha", "ds9/zeta"]);
 });

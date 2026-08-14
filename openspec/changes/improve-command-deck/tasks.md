@@ -47,10 +47,10 @@ Checkpoint: stop for user review after Group 4.
 
 ## 5. Deterministic pull-request ordering
 
-- [ ] 5.1 Add focused failing tests for the six independent unresolved-gate categories, one-count-per-category behavior, visible blocker labels, Closest-to-merge ordering, OpenSpec-progress tie-breaks, and pull-request-number ties.
-- [ ] 5.2 Add focused tests for every approved sort mode and direction, null-last deterministic fallbacks, browser-local restoration and invalid-value fallback, Clear preserving sort, and the accessible unavailable Codex-activity option without activity-file or network behavior.
-- [ ] 5.3 Implement the smallest native sort selector and direction control in the existing derived client view, persist one allowlisted scalar preference, show exact blocker evidence, and keep status, Actions, Checks, search, and repository controls as filters.
-- [ ] 5.4 Run focused pull-request/dashboard tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
+- [x] 5.1 Add focused failing tests for the six independent unresolved-gate categories, one-count-per-category behavior, visible blocker labels, Closest-to-merge ordering, OpenSpec-progress tie-breaks, and pull-request-number ties.
+- [x] 5.2 Add focused tests for every approved sort mode and direction, null-last deterministic fallbacks, browser-local restoration and invalid-value fallback, Clear preserving sort, and the accessible unavailable Codex-activity option without activity-file or network behavior.
+- [x] 5.3 Implement the smallest native sort selector and direction control in the existing derived client view, persist one allowlisted scalar preference, show exact blocker evidence, and keep status, Actions, Checks, search, and repository controls as filters.
+- [x] 5.4 Run focused pull-request/dashboard tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
 
 Checkpoint: stop for user review after Group 5.
 
