@@ -16,7 +16,7 @@ An installed `mex-agent` 0.7.0 package cache declares Node.js 22.5 or newer, but
 **Non-Goals:**
 
 - Adding Mex to `package.json`, `bun.lock`, the application image, or runtime code.
-- Adding CI automation, MCP integration, or custom maintenance wrappers before the basic scaffold proves useful.
+- Adding MCP integration, update automation, or custom maintenance wrappers.
 - Changing `.codegraph/`, CodeGraph installation/configuration, deployment, credentials, production state, or unrelated MongoDB work.
 
 ## Decisions
@@ -45,11 +45,11 @@ Mex owns curated knowledge and routing. CodeGraph remains the first structural l
 
 Alternative considered: encode CodeGraph data or policy inside Mex. Rejected because the tools solve different problems and coupling them creates two sources of truth.
 
-### Defer automation until there is a demonstrated maintenance need
+### Run the native freshness check in CI
 
-This change does not add CI, a custom `knowledge:check` wrapper, MCP configuration, or update automation. The implementation may use a native Mex check command as verification if the validated release provides one, but it will not create an abstraction around it.
+Expose the pinned Mex check as `knowledge:check` and run it in a standalone `tooling-freshness` workflow on every push and pull request. Match the proven Internal Apps stale thresholds. CI checks only; it never runs sync, edits knowledge, commits, or pushes.
 
-Alternative considered: copy sibling-repository maintenance scripts and CI. Rejected as speculative for a new, small repository integration.
+Alternative considered: add update automation or a custom wrapper. Rejected because the native check already provides the required gate and updates need review.
 
 ## Risks / Trade-offs
 
@@ -58,6 +58,7 @@ Alternative considered: copy sibling-repository maintenance scripts and CI. Reje
 - [Local paths or secrets enter tracked Markdown] → Scan changed files for absolute home paths, credential-shaped values, and ignored local artifacts.
 - [Mex duplicates repository instructions] → Keep the router and any root pointer thin; source material remains authoritative.
 - [Tool responsibilities blur] → State the Mex/CodeGraph boundary in routing instructions and assert that `.codegraph/` is untouched.
+- [Freshness automation rewrites curated knowledge] → Run only the native check in CI and keep sync/update commands out of the workflow.
 - [Default branch advances during setup] → Record the generation baseline, refresh the feature branch before publication, and rerun validation against current `main`.
 
 ## Migration Plan
@@ -66,5 +67,6 @@ Alternative considered: copy sibling-repository maintenance scripts and CI. Reje
 2. Generate the repository-mode scaffold from the current checkout.
 3. Inventory paths, verify claims, record dispositions, and stop for human review.
 4. After approval, retain and minimally curate only durable knowledge, add only necessary ignore/routing entries, and run focused and repository validation.
+5. Add the pinned check-only freshness command and CI workflow, then validate the workflow contract and repository.
 
 Rollback is deletion of the newly added Mex artifacts and any dedicated ignore or routing lines. No application data, deployment, or external state is involved.

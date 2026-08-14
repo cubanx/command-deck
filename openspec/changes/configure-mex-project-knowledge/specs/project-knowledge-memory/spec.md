@@ -56,3 +56,11 @@ Mex configuration and maintenance SHALL remain repository-development concerns a
 - **WHEN** the repository typecheck, tests, and strict OpenSpec validation run after Mex configuration
 - **THEN** they complete without loading Mex at application runtime
 - **AND** the deployment inputs remain unchanged
+
+### Requirement: Mex freshness is checked in CI
+CI SHALL run `knowledge:check` on every push and pull request and fail when committed Mex knowledge exceeds the configured stale threshold. CI SHALL NOT update, edit, commit, or push knowledge files.
+
+#### Scenario: Committed knowledge becomes stale
+- **WHEN** the `tooling-freshness` job detects stale committed Mex knowledge
+- **THEN** the job fails
+- **AND** contributors update the knowledge through the reviewed local workflow

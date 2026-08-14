@@ -36,6 +36,6 @@ Tests create UUID-named `dev-command-center-test-*` databases and drop them afte
 
 - Validated release: `mex-agent` 0.7.0 on Node.js 22.5 or newer.
 - Setup: `MEX_TELEMETRY=0 npx --yes mex-agent@0.7.0 setup --mode code-repo`
-- Check: `MEX_TELEMETRY=0 npx --yes mex-agent@0.7.0 check`
+- Check: `bun run knowledge:check`
 
-Mex is repository tooling, not an application dependency. `.mex/graph.db` is machine-local.
+Mex is repository tooling, not an application dependency. CI runs the check only; knowledge updates remain a reviewed local action. `.mex/graph.db` is machine-local.
