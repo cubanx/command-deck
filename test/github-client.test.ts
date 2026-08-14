@@ -78,6 +78,17 @@ test("bootstrap caps deployment status reads and rows at twenty", () => withData
   expect(statuses).toBe(20); expect((result as any).body).toHaveLength(20);
 }));
 
+test("deployment status cache preserves authoritative state on 304", () => withDatabase(async (db) => {
+  let statusReads = 0;
+  const fetcher = async (url: RequestInfo | URL) => {
+    const value = String(url);
+    if (value.includes("/7/statuses")) return statusReads++ ? new Response(null, { status: 304 }) : Response.json([{ id: 101, state: "success", created_at: "2030-01-02T00:00:00Z" }], { headers: { etag: "status-101" } });
+    return Response.json([{ id: 7, created_at: "2030-01-01T00:00:00Z" }]);
+  };
+  await bootstrapDeployments(db, "9", "2", "token", fetcher);
+  expect(await bootstrapDeployments(db, "9", "2", "token", fetcher)).toMatchObject({ kind: "changed", body: [{ id: "7", state: "success", status_id: "101", status_created_at: "2030-01-02T00:00:00Z" }] });
+}));
+
 test("complete bootstrap preserves webhook fields and OpenSpecs while removing stale projections", () => withDatabase(async (db) => {
   await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "9", "cubanx"); const user = await db.users.findOne({ _id: "u" }); user!.installations[0]!.repositories.push({ repositoryId: "2", full_name: "ds9/ops", pullRequests: [{ number: 1, author_login: "sisko", state: "open", review_state: "approved", checks_state: "success", workflow_state: "success", mergeable: "clean", bot_review_state: "complete" }, { number: 99, author_login: "sisko", state: "open" }], openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }], deployments: [] }, { repositoryId: "stale", full_name: "ds9/stale", pullRequests: [], openSpecs: [], deployments: [] }); await db.users.replaceOne({ _id: "u" }, user!);
   await bootstrapInstallation(db, "9", "token", async (url) => String(url).endsWith("/installation") ? Response.json({ account: { login: "cubanx" } }) : String(url).includes("installation/repositories") ? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] }) : String(url).includes("/pulls?") ? Response.json([{ number: 1, title: "Defiant", user: { login: "sisko" }, state: "open" }]) : Response.json([]));

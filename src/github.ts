@@ -1,6 +1,7 @@
 import { createSign } from "node:crypto";
 import type { Db } from "./db";
 import { mutateUser } from "./db";
+import { latestDeploymentStatus } from "./deployment-status";
 import { approvedInstallationAccount, sameLogin } from "./installations";
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -39,7 +40,7 @@ export async function bootstrapDeployments(db: Db, installationId: string, repos
   const list = await pagedGet(db, `installation:${installationId}:repo:${repositoryId}:deployments`, `https://api.github.com/repositories/${repositoryId}/deployments?per_page=20`, request);
   if (list.kind !== "changed" || !Array.isArray(list.body)) return list;
   const deployments: Record<string, unknown>[] = [];
-  for (const deployment of (list.body as any[]).slice(0, 20)) { const status = await conditionalGet(db, `installation:${installationId}:repo:${repositoryId}:deployment:${deployment.id}:statuses`, `https://api.github.com/repositories/${repositoryId}/deployments/${deployment.id}/statuses?per_page=1`, request); if (status.kind === "error") return status; const latest = status.kind === "changed" && Array.isArray(status.body) ? status.body[0] : undefined; deployments.push({ id: String(deployment.id), environment: deployment.environment, ref: deployment.ref, sha: deployment.sha, state: latest?.state ?? "pending", target_url: safeUrl(latest?.target_url), log_url: safeUrl(latest?.log_url), updated_at: latest?.created_at ?? deployment.created_at ?? new Date().toISOString() }); }
+  for (const deployment of (list.body as any[]).slice(0, 20)) { const status = await pagedGet(db, `installation:${installationId}:repo:${repositoryId}:deployment:${deployment.id}:statuses`, `https://api.github.com/repositories/${repositoryId}/deployments/${deployment.id}/statuses?per_page=100`, request); if (status.kind === "error") return status; const latest = status.kind === "changed" && Array.isArray(status.body) ? latestDeploymentStatus(status.body.map((item: any) => ({ ...item, status_id: item.id, status_created_at: item.created_at }))) as any : undefined; deployments.push({ id: String(deployment.id), environment: deployment.environment, ref: deployment.ref, sha: deployment.sha, state: latest?.state ?? "pending", status_id: latest?.status_id == null ? undefined : String(latest.status_id), status_created_at: latest?.status_created_at, target_url: safeUrl(latest?.target_url), log_url: safeUrl(latest?.log_url), updated_at: latest?.status_created_at ?? deployment.created_at ?? new Date().toISOString() }); }
   return { kind: "changed", body: deployments };
 }
 export async function reconcileInstallations(db: Db, tokenFor: (installationId: string) => Promise<string>, fetcher: FetchLike = fetch) {

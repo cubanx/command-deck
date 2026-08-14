@@ -1,7 +1,26 @@
 import { expect, test } from "bun:test";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "../src/access";
 import { acceptGitHubDelivery, drainInbox } from "../src/events";
+import { bootstrapInstallation } from "../src/github";
 import { withDatabase } from "./mongo-support";
+
+test("newest deployment status survives unordered bootstrap and a stale webhook", () => withDatabase(async (db) => {
+  await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "1", "cubanx");
+  const createdAt = "2030-01-02T00:00:00Z";
+  await bootstrapInstallation(db, "1", "token", async (url) => {
+    const value = String(url);
+    if (value.endsWith("/installation")) return Response.json({ account: { login: "cubanx" } });
+    if (value.includes("installation/repositories")) return Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] });
+    if (value.includes("/pulls?")) return Response.json([]);
+    if (value.includes("/7/statuses")) return Response.json([{ id: 100, state: "in_progress", created_at: createdAt }, { id: 101, state: "success", created_at: createdAt }]);
+    if (value.includes("/deployments?")) return Response.json([{ id: 7, environment: "production", created_at: "2030-01-01T00:00:00Z" }]);
+    return Response.json([]);
+  });
+  expect((await dashboardForUser(db, "u", new Date("2030-01-03"))).deployments[0]).toMatchObject({ id: "7", state: "success", status_id: "101", status_created_at: createdAt });
+  await acceptGitHubDelivery(db, "stale", "deployment_status", JSON.stringify({ installation: { id: 1, account: { login: "cubanx" } }, repository: { id: 2, full_name: "ds9/ops" }, deployment: { id: 7 }, deployment_status: { id: 100, state: "in_progress", created_at: createdAt } }));
+  await drainInbox(db);
+  expect((await dashboardForUser(db, "u", new Date("2030-01-03"))).deployments[0]).toMatchObject({ state: "success", status_id: "101" });
+}));
 
 test("deployment events remain installation-scoped", () => withDatabase(async (db) => {
   await upsertIdentity(db, "u", "sisko"); await bindInstallation(db, "u", "1", "cubanx");

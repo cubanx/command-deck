@@ -14,10 +14,10 @@ Checkpoint: stop for user review after Group 1.
 
 ## 2. Authoritative deployment status projection
 
-- [ ] 2.1 Add a focused failing regression fixture that proves the stale `in_progress` sequence across bootstrap, status ordering, webhook ingestion, and dashboard projection; stop without production changes if repository evidence cannot prove the reported incorrect state.
-- [ ] 2.2 Retain provider deployment-status identity and creation time and implement one shared deterministic newest-status rule for bootstrap and webhook projection without relabeling dashboard state.
-- [ ] 2.3 Add focused tests for unordered/equal-time statuses, stale terminal replacement, conditional `304` preservation, and newest-first dashboard projection.
-- [ ] 2.4 Run focused deployment/GitHub tests, typecheck, and diff check.
+- [x] 2.1 Add a focused failing regression fixture that proves the stale `in_progress` sequence across bootstrap, status ordering, webhook ingestion, and dashboard projection; stop without production changes if repository evidence cannot prove the reported incorrect state.
+- [x] 2.2 Retain provider deployment-status identity and creation time and implement one shared deterministic newest-status rule for bootstrap and webhook projection without relabeling dashboard state.
+- [x] 2.3 Add focused tests for unordered/equal-time statuses, stale terminal replacement, conditional `304` preservation, and newest-first dashboard projection.
+- [x] 2.4 Run focused deployment/GitHub tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 2.
 
