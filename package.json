@@ -11,6 +11,7 @@
     "start": "bun src/server.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
+    "knowledge:check": "MEX_TELEMETRY=0 npx --yes mex-agent@0.7.0 check --stale-warn-days 75 --stale-error-days 90 --stale-warn-commits 1000000 --stale-error-commits 1000000",
     "test:mongo": "MONGODB_URI_BASE=${MONGODB_URI_BASE:?MONGODB_URI_BASE is required} MONGODB_DATABASE=dev-command-center-test-$(bun -e 'console.log(crypto.randomUUID())') bun test test/mongodb.test.ts",
     "seed:bindings": "bun src/seed-bindings.ts"
   },
