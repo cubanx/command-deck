@@ -116,3 +116,5 @@ Reconciliation follows GitHub Link pagination for repositories, open pull reques
 ## License
 
 [MIT](LICENSE) © 2026 cubanx.
+
+The Command Deck application icon adapts [OpenMoji's control knobs](https://openmoji.org/library/emoji-1F39B/) by Sina Schulz. Colors and background were modified for this project. The adapted artwork is distributed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); detailed provenance accompanies the assets.

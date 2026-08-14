@@ -10,6 +10,7 @@ The live Command Deck now exposes enough pull requests, deployments, and OpenSpe
 - Route checkout and notification actions to one configuration screen that also owns appearance and an authenticated, user-scoped `Reconcile now` control reusing the existing reconciliation path.
 - Persist and permission-revalidate multiple browser-local organization roots and exact repository overrides, resolve known repositories without ambiguous association, and scope local branch/OpenSpec evidence by stable repository identity without uploading local data.
 - Add persisted System, Dark, and Light appearance preferences using native color-scheme behavior.
+- Replace the placeholder icon with an attributed CC BY-SA OpenMoji adaptation, a stable Night Deck install icon, an adaptive Signal-light/Night-dark favicon and in-app mark, and real Apple touch, PWA, and maskable assets.
 - Add a guarded per-PR Merge control that is visibly unavailable under current read-only App permissions and, once enabled, reauthorizes the signed-in user, revalidates exact current PR/protection/OpenSpec state, confirms the repository convention `merge_commit`, and refreshes sanitized outcomes.
 - Keep GitHub App permission changes, installation approvals, deployment verification, and a production merge proof in a separate post-merge operational change.
 
@@ -27,6 +28,7 @@ The live Command Deck now exposes enough pull requests, deployments, and OpenSpe
 - `provider-reconciliation`: Authoritative deployment status selection plus authenticated user-scoped on-demand reconciliation through the existing path.
 - `event-projections`: Correct ordering and stale-event rejection for deployment status updates.
 - `transition-notifications`: Relocate the existing browser notification configuration without expanding notification behavior.
+- `installable-pwa`: Supply cross-browser install icons and explicit Creative Commons provenance.
 
 ## Impact
 

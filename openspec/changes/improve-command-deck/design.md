@@ -62,6 +62,10 @@ Alternatives rejected: cached session identity is not current authorization; ins
 
 The UI detects the installation permission projection and explains why Merge is unavailable under read-only permissions. Code paths and tests land in PR #8, but the separate operational change owns permission proof and rollout. The implementation targets Pull requests write and does not request Contents write; the operational gate must prove the GraphQL permission before any change.
 
+### Adapt one Creative Commons mark into native install assets
+
+Use Sina Schulz's OpenMoji control-knobs artwork under CC BY-SA 4.0, recolor it into the Command Deck palettes, preserve source and modification provenance, and license the adapted artwork under the same terms. Keep Night Deck as the stable installed/Dock icon and native PNG fallbacks. Use one additional SVG with `prefers-color-scheme` to show Signal in light mode and Night Deck in dark mode for the browser favicon and decorative in-app mark; the later explicit appearance preference applies the same mapping. Do not attempt dynamic manifest icons because installed icon selection is not theme-aware. No icon package or runtime image dependency.
+
 ## Risks / Trade-offs
 
 - [Directory-handle persistence differs across browsers] → Feature-detect IndexedDB/File System Access, expose permission states, and retain committed projections.

@@ -7,7 +7,24 @@ import { withDatabase, testConfig } from "./mongo-support";
 
 test("public PWA assets and streams are isolated", () => withDatabase(async (db) => {
   const app = createApp(db, testConfig);
-  expect((await app.fetch(new Request("http://local/manifest.webmanifest"))).status).toBe(200); expect((await app.fetch(new Request("http://local/sw.js"))).headers.get("cache-control")).toContain("no-cache"); expect(await (await app.fetch(new Request("http://local/"))).text()).toContain("/app.js?v=4"); const javascript = await (await app.fetch(new Request("http://local/app.js"))).text(); expect(javascript).toContain("showDirectoryPicker"); expect(javascript).toContain("Provider reconciliation is stale.");
+  const manifest = await (await app.fetch(new Request("http://local/manifest.webmanifest"))).json() as { icons: Array<{ src: string; sizes: string; purpose: string }> };
+  expect(manifest.icons).toEqual([
+    { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+    { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+    { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+  ]);
+  const shell = await (await app.fetch(new Request("http://local/"))).text();
+  expect(shell).toContain('<link rel="icon" href="/icon-adaptive.svg" type="image/svg+xml">');
+  expect(shell).toContain('<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">');
+  expect(shell).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  for (const path of ["/favicon-32.png", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"]) expect((await app.fetch(new Request(`http://local${path}`))).headers.get("content-type")).toBe("image/png");
+  const sourceIcon = await (await app.fetch(new Request("http://local/icon.svg"))).text();
+  expect(sourceIcon).toContain("OpenMoji"); expect(sourceIcon).toContain("CC BY-SA 4.0");
+  const adaptiveIcon = await (await app.fetch(new Request("http://local/icon-adaptive.svg"))).text();
+  expect(adaptiveIcon).toContain("prefers-color-scheme:dark"); expect(adaptiveIcon).toContain("#f59e0b"); expect(adaptiveIcon).toContain("#38bdf8");
+  const worker = await (await app.fetch(new Request("http://local/sw.js"))).text();
+  expect(worker).toContain("/icon-adaptive.svg"); expect(worker).toContain("/apple-touch-icon.png"); expect(worker).toContain("/icon-maskable-512.png");
+  expect((await app.fetch(new Request("http://local/sw.js"))).headers.get("cache-control")).toContain("no-cache"); expect(shell).toContain("/app.js?v=4"); const javascript = await (await app.fetch(new Request("http://local/app.js"))).text(); expect(javascript).toContain("showDirectoryPicker"); expect(javascript).toContain("Provider reconciliation is stale.");
   expect((await app.fetch(new Request("http://local/api/snapshot"))).status).toBe(401); expect((await app.fetch(new Request("http://local/events"))).status).toBe(401);
 }));
 
@@ -16,6 +33,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
   const javascript = await (await app.fetch(new Request("http://local/app.js"))).text();
   expect(javascript).toContain("<details");
   expect(javascript).toContain("<summary");
+  expect(javascript).toContain('<img class="brand-icon" src="/icon-adaptive.svg" alt="">');
   expect(javascript).toContain("Open tasks");
   expect(javascript).toContain('aria-label="Pull requests"');
   expect(javascript).not.toContain("Your open pull requests");

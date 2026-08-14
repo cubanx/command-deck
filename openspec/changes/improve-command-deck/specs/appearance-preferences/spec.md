@@ -15,6 +15,10 @@ The dashboard SHALL offer System, Dark, and Light appearance preferences, SHALL 
 - **WHEN** the developer selects Dark or Light
 - **THEN** the dashboard applies and restores that scheme across reloads regardless of the browser scheme
 
+#### Scenario: Appearance selects the in-app mark
+- **WHEN** the applied appearance is Light or Dark
+- **THEN** the decorative in-app mark uses Signal for Light and Night Deck for Dark while the installed application icon remains stable
+
 ### Requirement: Accessible color schemes
 Every appearance mode SHALL preserve the dashboard's existing semantic status distinctions, visible focus indicators, and readable contrast.
 

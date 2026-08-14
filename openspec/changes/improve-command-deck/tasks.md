@@ -2,7 +2,13 @@
 
 - [x] 1.1 Add focused rendering and accessibility tests for collapsed native OpenSpec disclosure, its compact summary/current-group checklist, the existing Open tasks link, and the non-visual pull-request section name.
 - [x] 1.2 Replace expanded OpenSpec task markup with default-collapsed `<details>`/`<summary>` and remove the visible pull-request heading without adding client disclosure state.
-- [ ] 1.3 Run the focused dashboard tests, typecheck, and diff check.
+- [x] 1.3 Run the focused dashboard tests, typecheck, and diff check.
+- [x] 1.4 Add focused installability tests for favicon, Apple touch, PNG manifest, maskable, cached asset, and CC provenance declarations.
+- [x] 1.5 Adapt the OpenMoji control-knobs artwork into the Command Deck palette, generate the minimal cross-browser icon set, and record CC BY-SA attribution and modifications.
+- [x] 1.6 Run focused PWA tests, typecheck, strict OpenSpec validation, and diff check.
+- [x] 1.7 Add focused tests for the stable Night Deck install icon and adaptive Signal-light/Night-dark favicon and in-app mark.
+- [x] 1.8 Add one native adaptive SVG for the favicon and decorative in-app mark while retaining Night Deck for installed and Safari fallback icons.
+- [x] 1.9 Run focused PWA/dashboard tests, typecheck, strict OpenSpec validation, and diff check.
 
 Checkpoint: stop for user review after Group 1.
 
