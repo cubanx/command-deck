@@ -257,6 +257,7 @@ export async function dashboardForUser(
 		installation.repositories.map((repository) => ({
 			...repository,
 			installationId: installation.installationId,
+			accountLogin: installation.accountLogin,
 		})),
 	);
 	const openSpecs: any[] = repositories.flatMap((repository) =>
@@ -363,6 +364,12 @@ export async function dashboardForUser(
 		.toArray();
 	return {
 		pullRequests,
+		repositories: repositories.map((repository) => ({
+			installation_id: repository.installationId,
+			account_login: repository.accountLogin,
+			repository_id: repository.repositoryId,
+			full_name: repository.full_name,
+		})),
 		deployments,
 		notifications: notifications.map((notification) => ({
 			...notification,

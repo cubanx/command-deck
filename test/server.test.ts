@@ -214,6 +214,13 @@ test("dashboard configuration centralizes local checkout, notifications, appeara
 		expect(javascript).toContain("Reconcile now");
 		expect(javascript).toContain("localStorage");
 		expect(javascript).toContain("matchMedia");
+		expect(javascript).toContain("indexedDB");
+		expect(javascript).toContain("queryPermission");
+		expect(javascript).toContain("requestPermission");
+		expect(javascript).toContain("Connect organization root");
+		expect(javascript).toContain("Permission required");
+		expect(javascript).not.toContain("/api/checkouts");
+		expect(javascript).not.toContain("/api/local-evidence");
 		expect(javascript).not.toContain("response.json().catch");
 		const css = await (
 			await app.fetch(new Request("http://local/app.css"))

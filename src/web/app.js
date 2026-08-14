@@ -27,6 +27,9 @@ let known = null,
 	current = null,
 	localSpecs = [],
 	localFiles = new Map(),
+	repositoryCatalog = [],
+	checkoutHandles = new Map(),
+	checkoutStates = new Map(),
 	reconciling = false,
 	reconcileMessage = "",
 	view = {
@@ -333,6 +336,197 @@ const parseTasks = (content) => {
 			null,
 	};
 };
+const checkoutDatabase = () =>
+	new Promise((resolve, reject) => {
+		const request = indexedDB.open("dcc-checkouts", 1);
+		request.onupgradeneeded = () =>
+			request.result.createObjectStore("handles", { keyPath: "key" });
+		request.onerror = () => reject(request.error);
+		request.onsuccess = () => resolve(request.result);
+	});
+const requestResult = (request) =>
+	new Promise((resolve, reject) => {
+		request.onerror = () => reject(request.error);
+		request.onsuccess = () => resolve(request.result);
+	});
+export const checkoutStoreFor = (open) => ({
+	getAll: async () => {
+		const store = await open();
+		return requestResult(store.getAll());
+	},
+	put: async (record) => {
+		const store = await open();
+		return requestResult(store.put(record));
+	},
+});
+const checkoutStore = () =>
+	checkoutStoreFor(async () => {
+		const database = await checkoutDatabase();
+		return {
+			getAll: () =>
+				database.transaction("handles").objectStore("handles").getAll(),
+			put: (record) =>
+				database
+					.transaction("handles", "readwrite")
+					.objectStore("handles")
+					.put(record),
+		};
+	});
+const storedCheckouts = () => checkoutStore().getAll();
+const persistCheckout = (record) => checkoutStore().put(record);
+export const exactCheckoutDirectory = (root, repository) =>
+	root.getDirectoryHandle(repository.full_name.split("/").at(-1));
+export const revalidateCheckout = (record) =>
+	record.handle.queryPermission({ mode: "read" });
+export const persistVerifiedCheckout = async ({
+	handle,
+	repository,
+	read,
+	persist,
+	record,
+}) => {
+	if (!(await read(handle, repository))) return false;
+	await persist(record);
+	return true;
+};
+const permissionFor = async (record) => {
+	const permission = await revalidateCheckout(record);
+	checkoutStates.set(
+		record.key,
+		checkoutStateFor(checkoutSupported(), permission, false),
+	);
+	return permission;
+};
+const setCheckoutError = (key, error) => {
+	checkoutStates.set(key, "Error");
+	console.error("Local checkout read failed", error?.name ?? "unknown error");
+};
+const readCheckout = async (handle, repository) => {
+	const git = await handle.getDirectoryHandle(".git"),
+		config = await (await git.getFileHandle("config")).getFile();
+	if (
+		repositoryForRemote(await config.text()) !==
+		normalized(repository.full_name)
+	)
+		return null;
+	const head = await (await git.getFileHandle("HEAD")).getFile(),
+		value = (await head.text()).trim(),
+		ref = value.match(/^ref: refs\/heads\/([A-Za-z0-9._/-]+)$/),
+		source_ref = ref && !ref[1].includes("..") ? ref[1] : null,
+		source_commit = /^[0-9a-f]{40}$/i.test(value) ? value : null,
+		specs = [],
+		files = new Map();
+	let changes;
+	try {
+		changes = await (
+			await handle.getDirectoryHandle("openspec")
+		).getDirectoryHandle("changes");
+	} catch (error) {
+		if (error?.name === "NotFoundError") return { specs, files };
+		throw error;
+	}
+	for await (const [name, directory] of changes.entries()) {
+		if (directory.kind !== "directory" || !/^[A-Za-z0-9._-]+$/.test(name))
+			continue;
+		try {
+			const handle = await directory.getFileHandle("tasks.md"),
+				file = await handle.getFile();
+			specs.push({
+				change_name: name,
+				...parseTasks(await file.text()),
+				source_ref,
+				source_commit,
+				source_type: "local",
+				installation_id: repository.installation_id,
+				account_login: repository.account_login,
+				repository_id: repository.repository_id,
+			});
+			files.set(name, handle);
+		} catch (error) {
+			if (error?.name !== "NotFoundError")
+				console.error(
+					"Local OpenSpec read failed",
+					error?.name ?? "unknown error",
+				);
+		}
+	}
+	return { specs, files };
+};
+const readRepositoryCheckout = async (repository, handle) => {
+	const key = checkoutKey(repository.account_login, repository.repository_id);
+	try {
+		const evidence = await readCheckout(handle, repository);
+		if (!evidence) {
+			checkoutStates.set(key, "Unresolved");
+			return;
+		}
+		localSpecs = localSpecs.filter(
+			(item) =>
+				item.installation_id !== repository.installation_id ||
+				item.repository_id !== repository.repository_id,
+		);
+		for (const name of localFiles.keys())
+			if (name.startsWith(`${key}:`)) localFiles.delete(name);
+		localSpecs.push(...evidence.specs);
+		for (const [name, file] of evidence.files)
+			localFiles.set(`${key}:${name}`, file);
+		checkoutStates.set(key, "Resolved");
+	} catch (error) {
+		if (["NotFoundError", "TypeMismatchError"].includes(error?.name))
+			checkoutStates.set(key, "Unresolved");
+		else setCheckoutError(key, error);
+	}
+};
+const resolveCheckouts = async (repositories) => {
+	if (!checkoutSupported()) {
+		for (const repository of repositories)
+			checkoutStates.set(
+				checkoutKey(repository.account_login, repository.repository_id),
+				"Unsupported",
+			);
+		return;
+	}
+	for (const repository of repositories) {
+		const key = checkoutKey(repository.account_login, repository.repository_id),
+			override = checkoutHandles.get(key),
+			root = checkoutHandles.get(rootKey(repository.account_login)),
+			record = override ?? root;
+		if (!record) continue;
+		try {
+			if ((await permissionFor(record)) !== "granted") {
+				checkoutStates.set(key, "Permission required");
+				continue;
+			}
+		} catch (error) {
+			setCheckoutError(key, error);
+			continue;
+		}
+		if (override) await readRepositoryCheckout(repository, override.handle);
+		else {
+			try {
+				const handle = await exactCheckoutDirectory(root.handle, repository);
+				await readRepositoryCheckout(repository, handle);
+			} catch (error) {
+				if (["NotFoundError", "TypeMismatchError"].includes(error?.name))
+					checkoutStates.set(key, "Unresolved");
+				else setCheckoutError(key, error);
+			}
+		}
+	}
+};
+const restoreCheckouts = async (repositories) => {
+	try {
+		if (!checkoutSupported()) return await resolveCheckouts(repositories);
+		for (const record of await storedCheckouts())
+			checkoutHandles.set(record.key, record);
+		await resolveCheckouts(repositories);
+	} catch (error) {
+		console.error(
+			"Local checkout restore failed",
+			error?.name ?? "unknown error",
+		);
+	}
+};
 const groupFor = (item) => {
 	if (!item.active_group) return null;
 	if (typeof item.active_group === "object") return item.active_group;
@@ -346,29 +540,68 @@ const groupFor = (item) => {
 const sourceFor = (item) =>
 	item.source_type === "local"
 		? '<a href="#" data-local-source="' +
-			esc(item.change_name) +
+			esc(
+				`${checkoutKey(item.account_login, item.repository_id)}:${item.change_name}`,
+			) +
 			'">Open local tasks</a>'
 		: item.source_url
 			? '<a href="' +
 				esc(item.source_url) +
 				'" target="_blank" rel="noopener noreferrer">Open tasks</a>'
 			: "";
-const localSpecFor = (pr, pullRequests) => {
-	const commitMatches = localSpecs.filter(
+export const checkoutKey = (account, repositoryId) =>
+	`${normalized(account)}:${String(repositoryId)}`;
+const rootKey = (account) => `root:${normalized(account)}`;
+const checkoutSupported = () =>
+	Boolean(globalThis.indexedDB && globalThis.showDirectoryPicker);
+export const checkoutStateFor = (supported, permission, resolved) =>
+	!supported
+		? "Unsupported"
+		: permission !== "granted"
+			? "Permission required"
+			: resolved
+				? "Resolved"
+				: "Unresolved";
+export const repositoryForRemote = (content) => {
+	const origin = String(content ?? "").match(
+		/^\[remote "origin"\]([\s\S]*?)(?=^\[|(?![\s\S]))/m,
+	);
+	const match = origin?.[1].match(
+		/^\s*url\s*=\s*(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\s*$/im,
+	);
+	return match
+		? normalized(`${match[1]}/${match[2].replace(/\.git$/i, "")}`)
+		: null;
+};
+export const localSpecFor = (pr, pullRequests, specs = localSpecs) => {
+	const scoped = specs.filter(
+		(item) =>
+			item.installation_id === pr.installation_id &&
+			item.repository_id === pr.repository_id,
+	);
+	const commitMatches = scoped.filter(
 			(item) => item.source_commit && item.source_commit === pr.head_sha,
 		),
 		branchMatches = commitMatches.length
 			? []
-			: localSpecs.filter(
+			: scoped.filter(
 					(item) => item.source_ref && item.source_ref === pr.head_ref,
 				),
 		uniqueCommit =
 			pullRequests.filter(
-				(item) => pr.head_sha && item.head_sha === pr.head_sha,
+				(item) =>
+					item.installation_id === pr.installation_id &&
+					item.repository_id === pr.repository_id &&
+					pr.head_sha &&
+					item.head_sha === pr.head_sha,
 			).length === 1,
 		uniqueBranch =
 			pullRequests.filter(
-				(item) => pr.head_ref && item.head_ref === pr.head_ref,
+				(item) =>
+					item.installation_id === pr.installation_id &&
+					item.repository_id === pr.repository_id &&
+					pr.head_ref &&
+					item.head_ref === pr.head_ref,
 			).length === 1;
 	return commitMatches.length === 1 && uniqueCommit
 		? commitMatches[0]
@@ -507,10 +740,61 @@ const controlsMarkup = (all, visible) => {
 		' pull requests</span><button id="clear-pr-filters" type="button">Clear</button></div>'
 	);
 };
+const checkoutMarkup = () => {
+	if (!checkoutSupported())
+		return '<p class="muted" aria-live="polite">Local checkout access is Unsupported in this browser. Committed GitHub OpenSpecs remain available.</p>';
+	const groups = new Map();
+	for (const repository of repositoryCatalog) {
+		const account = repository.account_login;
+		groups.set(account, [...(groups.get(account) ?? []), repository]);
+	}
+	return groups.size
+		? '<section class="checkout-mappings" aria-labelledby="checkout-title"><h3 id="checkout-title">Local checkouts</h3>' +
+				[...groups]
+					.map(
+						([account, repositories], index) =>
+							"<div><p><strong>" +
+							esc(account) +
+							'</strong> <button id="checkout-root-' +
+							index +
+							'" type="button" data-connect-root="' +
+							esc(account) +
+							'">Connect organization root</button></p><ul>' +
+							repositories
+								.map((repository) => {
+									const key = checkoutKey(
+										repository.account_login,
+										repository.repository_id,
+									);
+									return (
+										"<li><strong>" +
+										esc(repository.full_name) +
+										'</strong> · <span aria-live="polite">' +
+										esc(checkoutStates.get(key) ?? "Unresolved") +
+										'</span> <button type="button" data-connect-repository="' +
+										esc(key) +
+										'">Choose checkout</button>' +
+										(checkoutStates.get(key) === "Permission required"
+											? ' <button type="button" data-checkout-permission="' +
+												esc(key) +
+												'">Grant permission</button>'
+											: "") +
+										"</li>"
+									);
+								})
+								.join("") +
+							"</ul></div>",
+					)
+					.join("") +
+				"</section>"
+		: '<p class="muted">No authorized repositories are available for local checkout mapping.</p>';
+};
 const configurationMarkup = () => {
 	const appearance = appearancePreference();
 	return (
-		'<section id="configuration" class="card configuration" aria-labelledby="configuration-title"><h2 id="configuration-title">Configuration</h2><div class="actions"><button id="checkout" type="button">Connect local checkout</button><button id="notify" type="button">Enable notifications</button><button id="reconcile" type="button" ' +
+		'<section id="configuration" class="card configuration" aria-labelledby="configuration-title"><h2 id="configuration-title">Configuration</h2>' +
+		checkoutMarkup() +
+		'<div class="actions"><button id="notify" type="button">Enable notifications</button><button id="reconcile" type="button" ' +
 		(reconciling ? "disabled" : "") +
 		">" +
 		(reconciling ? "Reconciling…" : "Reconcile now") +
@@ -693,9 +977,21 @@ const render = (x) => {
 		?.addEventListener("click", () =>
 			globalThis.Notification?.requestPermission(),
 		);
-	document
-		.querySelector("#checkout")
-		?.addEventListener("click", connectCheckout);
+	document.querySelectorAll("[data-connect-root]").forEach((button) => {
+		button.addEventListener("click", () =>
+			connectOrganization(button.dataset.connectRoot),
+		);
+	});
+	document.querySelectorAll("[data-connect-repository]").forEach((button) => {
+		button.addEventListener("click", () =>
+			connectRepository(button.dataset.connectRepository),
+		);
+	});
+	document.querySelectorAll("[data-checkout-permission]").forEach((button) => {
+		button.addEventListener("click", () =>
+			grantCheckoutPermission(button.dataset.checkoutPermission),
+		);
+	});
 	document.querySelectorAll('[name="appearance"]').forEach((input) => {
 		input.addEventListener("change", () => {
 			saveAppearance(input.value);
@@ -740,77 +1036,71 @@ async function reconcileNow() {
 		render(current);
 	}
 }
-async function connectCheckout() {
-	if (!globalThis.showDirectoryPicker) {
-		alert(
-			"This browser does not support local directory access. Committed GitHub OpenSpecs remain available.",
-		);
-		return;
-	}
+const connectOrganization = async (account) => {
+	if (!checkoutSupported()) return;
 	try {
-		const checkout = await showDirectoryPicker({
+		const handle = await showDirectoryPicker({
+				id: "dcc-checkout",
+				mode: "read",
+			}),
+			record = { key: rootKey(account), account, kind: "root", handle };
+		checkoutHandles.set(record.key, record);
+		await persistCheckout(record);
+		await resolveCheckouts(repositoryCatalog);
+		render(current);
+	} catch (error) {
+		if (error?.name !== "AbortError") setCheckoutError(rootKey(account), error);
+	}
+};
+const connectRepository = async (key) => {
+	if (!checkoutSupported()) return;
+	const repository = repositoryCatalog.find(
+		(item) => checkoutKey(item.account_login, item.repository_id) === key,
+	);
+	if (!repository) return;
+	try {
+		const handle = await showDirectoryPicker({
 			id: "dcc-checkout",
 			mode: "read",
 		});
-		let source_ref = null,
-			source_commit = null;
-		try {
-			const git = await checkout.getDirectoryHandle(".git"),
-				head = await (await git.getFileHandle("HEAD")).getFile(),
-				value = (await head.text()).trim(),
-				ref = value.match(/^ref: refs\/heads\/([A-Za-z0-9._/-]+)$/);
-			if (ref && !ref[1].includes("..")) source_ref = ref[1];
-			else if (/^[0-9a-f]{40}$/i.test(value)) source_commit = value;
-		} catch (error) {
-			if (!["NotFoundError", "TypeMismatchError"].includes(error?.name))
-				console.error(
-					"Local Git head read failed",
-					error?.name ?? "unknown error",
-				);
+		const record = {
+			key,
+			account: repository.account_login,
+			kind: "override",
+			handle,
+		};
+		if (
+			!(await persistVerifiedCheckout({
+				handle,
+				repository,
+				read: readCheckout,
+				persist: persistCheckout,
+				record,
+			}))
+		) {
+			checkoutStates.set(key, "Unresolved");
+			return render(current);
 		}
-		const changes = await (
-			await checkout.getDirectoryHandle("openspec")
-		).getDirectoryHandle("changes");
-		const specs = [],
-			files = new Map();
-		for await (const [name, directory] of changes.entries()) {
-			if (directory.kind !== "directory" || !/^[A-Za-z0-9._-]+$/.test(name))
-				continue;
-			try {
-				const handle = await directory.getFileHandle("tasks.md"),
-					file = await handle.getFile(),
-					progress = parseTasks(await file.text());
-				specs.push({
-					change_name: name,
-					...progress,
-					source_ref,
-					source_commit,
-					source_type: "local",
-				});
-				files.set(name, handle);
-			} catch (error) {
-				if (error?.name !== "NotFoundError")
-					console.error(
-						"Local OpenSpec read failed",
-						error?.name ?? "unknown error",
-					);
-			}
-		}
-		localSpecs = specs;
-		localFiles = files;
+		checkoutHandles.set(key, record);
+		await readRepositoryCheckout(repository, handle);
 		render(current);
 	} catch (error) {
-		if (error?.name !== "AbortError") {
-			console.error(
-				"Local checkout access failed",
-				error?.name ?? "unknown error",
-			);
-			alert(
-				"Could not read that checkout. Select a repository containing openspec/changes.",
-			);
-		}
+		if (error?.name !== "AbortError") setCheckoutError(key, error);
 	}
-}
+};
+const grantCheckoutPermission = async (key) => {
+	const record =
+		checkoutHandles.get(key) ??
+		checkoutHandles.get(`root:${key.split(":")[0]}`);
+	if (!record) return;
+	try {
+		await record.handle.requestPermission({ mode: "read" });
+		await resolveCheckouts(repositoryCatalog);
+		render(current);
+	} catch (error) {
+		setCheckoutError(key, error);
+	}
+};
 async function openLocalSource(event) {
 	event.preventDefault();
 	const handle = localFiles.get(event.currentTarget.dataset.localSource);
@@ -836,6 +1126,9 @@ const load = () =>
 			response.ok ? response.json() : Promise.reject(response.status),
 		)
 		.then((data) => {
+			repositoryCatalog = Array.isArray(data.repositories)
+				? data.repositories
+				: [];
 			const ids = new Set(data.notifications.map((item) => item.id));
 			if (known && globalThis.Notification?.permission === "granted")
 				navigator.serviceWorker?.ready.then((worker) =>
@@ -847,6 +1140,9 @@ const load = () =>
 				);
 			known = ids;
 			render(data);
+			restoreCheckouts(repositoryCatalog).then(() => {
+				if (current === data) render(data);
+			});
 			return true;
 		})
 		.catch(() => {

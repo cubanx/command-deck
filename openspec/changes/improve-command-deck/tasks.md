@@ -56,12 +56,12 @@ Checkpoint: stop for user review after Group 5.
 
 ## 6. Browser-local multi-checkout mapping
 
-- [ ] 6.1 Add focused browser-script tests for IndexedDB directory-handle persistence, reload permission revalidation, account-root resolution, explicit resolved/unresolved states, exact override validation, and unsupported-browser fallback.
-- [ ] 6.2 Add collision tests proving same-named branches in different repositories cannot share local OpenSpec evidence and ambiguous/unverified folders remain unassociated.
-- [ ] 6.3 Implement the smallest IndexedDB handle store keyed by installation account and stable repository ID, with exact-name automatic resolution and verified repository overrides.
-- [ ] 6.4 Extend local checkout parsing only enough to read repository identity, HEAD, and OpenSpec tasks; keep every handle/path/file/branch/OpenSpec value client-only.
-- [ ] 6.5 Associate each resolved checkout with only its repository's pull requests and expose accessible permission/resolution/error states.
-- [ ] 6.6 Run focused local-evidence/dashboard tests, typecheck, and diff check.
+- [x] 6.1 Add focused browser-script tests for IndexedDB directory-handle persistence, reload permission revalidation, account-root resolution, explicit resolved/unresolved states, exact override validation, and unsupported-browser fallback.
+- [x] 6.2 Add collision tests proving same-named branches in different repositories cannot share local OpenSpec evidence and ambiguous/unverified folders remain unassociated.
+- [x] 6.3 Implement the smallest IndexedDB handle store keyed by installation account and stable repository ID, with exact-name automatic resolution and verified repository overrides.
+- [x] 6.4 Extend local checkout parsing only enough to read repository identity, HEAD, and OpenSpec tasks; keep every handle/path/file/branch/OpenSpec value client-only.
+- [x] 6.5 Associate each resolved checkout with only its repository's pull requests and expose accessible permission/resolution/error states.
+- [x] 6.6 Run focused local-evidence/dashboard tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 6.
 

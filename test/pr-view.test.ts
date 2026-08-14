@@ -3,9 +3,17 @@ import {
 	appearanceFor,
 	blockersFor,
 	bucketFor,
+	checkoutKey,
+	checkoutStateFor,
+	checkoutStoreFor,
 	derivePullRequests,
+	exactCheckoutDirectory,
 	fuzzyScore,
+	localSpecFor,
+	persistVerifiedCheckout,
+	repositoryForRemote,
 	repositoryOptions,
+	revalidateCheckout,
 	sortPreference,
 } from "#/web/app.js";
 
@@ -211,6 +219,117 @@ test("appearance preference defaults to System and explicit choices override it"
 		preference: "dark",
 		theme: "dark",
 	});
+});
+
+test("local checkout keys, permissions, and remotes fail closed", () => {
+	expect(checkoutKey("Crisp-Inc", "42")).toBe("crisp-inc:42");
+	expect(checkoutStateFor(false)).toBe("Unsupported");
+	expect(checkoutStateFor(true, "prompt")).toBe("Permission required");
+	expect(checkoutStateFor(true, "granted", false)).toBe("Unresolved");
+	expect(checkoutStateFor(true, "granted", true)).toBe("Resolved");
+	expect(
+		repositoryForRemote(
+			'[remote "origin"]\n\turl = git@github.com:Crisp-Inc/dev-command-center.git',
+		),
+	).toBe("crisp-inc/dev-command-center");
+	expect(
+		repositoryForRemote(
+			'[remote "upstream"]\n\turl = git@github.com:Crisp-Inc/dev-command-center.git',
+		),
+	).toBeNull();
+	expect(
+		repositoryForRemote(
+			'[remote "origin"]\nurl = https://github.com.evil.test/Crisp-Inc/dev-command-center.git',
+		),
+	).toBeNull();
+	expect(
+		repositoryForRemote(
+			'[remote "origin"]\nurl = https://github.com/Crisp-Inc/dev-command-center.git?token=nope',
+		),
+	).toBeNull();
+	expect(
+		repositoryForRemote("url = https://git.example.test/crisp/repo.git"),
+	).toBeNull();
+});
+
+test("checkout storage and resolution use native boundaries without prompting on reload", async () => {
+	const records: Array<{ key: string; handle: object }> = [];
+	const request = (result: unknown) => {
+		const value: { result?: unknown; onsuccess?: () => void } = { result };
+		queueMicrotask(() => value.onsuccess?.());
+		return value;
+	};
+	const store = checkoutStoreFor(async () => ({
+		getAll: () => request(records),
+		put: (record: { key: string; handle: object }) => {
+			records.push(record);
+			return request(undefined);
+		},
+	}));
+	const handle = {
+		queryPermission: async () => "granted",
+		requestPermission: async () => {
+			throw new Error("reload must not prompt");
+		},
+	};
+	await store.put({ key: "crisp-inc:42", handle });
+	expect(await store.getAll()).toEqual([{ key: "crisp-inc:42", handle }]);
+	expect(await revalidateCheckout({ handle })).toBe("granted");
+	const root = {
+		getDirectoryHandle: async (name: string) => ({ name }),
+	};
+	expect(
+		await exactCheckoutDirectory(root, {
+			full_name: "Crisp-Inc/dev-command-center",
+		}),
+	).toEqual({ name: "dev-command-center" });
+	let persisted = false;
+	expect(
+		await persistVerifiedCheckout({
+			handle: {},
+			repository: { full_name: "crisp-inc/dev-command-center" },
+			read: async () => null,
+			persist: async () => {
+				persisted = true;
+			},
+			record: { key: "crisp-inc:42" },
+		}),
+	).toBe(false);
+	expect(persisted).toBe(false);
+});
+
+test("local OpenSpec evidence is scoped to repository identity before branch matching", () => {
+	const pr = {
+		installation_id: "i",
+		repository_id: "one",
+		head_ref: "feature/shared",
+	};
+	const pullRequests = [
+		pr,
+		{
+			installation_id: "i",
+			repository_id: "two",
+			head_ref: "feature/shared",
+		},
+	];
+	expect(
+		localSpecFor(pr, pullRequests, [
+			{
+				installation_id: "i",
+				repository_id: "two",
+				source_ref: "feature/shared",
+			},
+		]),
+	).toBeNull();
+	expect(
+		localSpecFor(pr, pullRequests, [
+			{
+				installation_id: "i",
+				repository_id: "one",
+				source_ref: "feature/shared",
+			},
+		]),
+	).toMatchObject({ repository_id: "one" });
 });
 
 test("sort modes use deterministic direction, null-last fallbacks, and safe preferences", () => {

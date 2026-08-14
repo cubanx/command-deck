@@ -117,8 +117,21 @@ test("dashboard shows every open authored PR across allowed installations, atten
 			openSpecs: [],
 			deployments: [],
 		});
+		user?.installations[1]?.repositories.push({
+			repositoryId: "r3",
+			full_name: "cubanx/local-only",
+			pullRequests: [],
+			openSpecs: [],
+			deployments: [],
+		});
 		await db.users.replaceOne({ _id: "u" }, user!);
 		const dashboard = await dashboardForUser(db, "u");
+		expect(dashboard.repositories).toContainEqual({
+			installation_id: "2",
+			account_login: "Crisp-Inc",
+			repository_id: "r3",
+			full_name: "cubanx/local-only",
+		});
 		expect(
 			dashboard.pullRequests.map((pr: any) => [
 				pr.number,
