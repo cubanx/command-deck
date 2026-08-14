@@ -1,8 +1,8 @@
 import { createSign } from "node:crypto";
-import type { Db } from "./db";
-import { mutateUser } from "./db";
-import { latestDeploymentStatus } from "./deployment-status";
-import { approvedInstallationAccount, sameLogin } from "./installations";
+import type { Db } from "#/db";
+import { mutateUser } from "#/db";
+import { latestDeploymentStatus } from "#/deployment-status";
+import { approvedInstallationAccount, sameLogin } from "#/installations";
 
 type FetchLike = (
 	input: RequestInfo | URL,

@@ -5,9 +5,9 @@ import {
 	createOAuthState,
 	createSession,
 	upsertIdentity,
-} from "../src/access";
-import { reconcileInstallations } from "../src/github";
-import { createApp } from "../src/server";
+} from "#/access";
+import { reconcileInstallations } from "#/github";
+import { createApp } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
 
 test("public PWA assets and streams are isolated", () =>

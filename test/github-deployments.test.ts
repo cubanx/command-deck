@@ -1,11 +1,7 @@
 import { expect, test } from "vitest";
-import {
-	bindInstallation,
-	dashboardForUser,
-	upsertIdentity,
-} from "../src/access";
-import { acceptGitHubDelivery, drainInbox } from "../src/events";
-import { bootstrapInstallation } from "../src/github";
+import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
+import { acceptGitHubDelivery, drainInbox } from "#/events";
+import { bootstrapInstallation } from "#/github";
 import { withDatabase } from "./mongo-support";
 
 test("newest deployment status survives unordered bootstrap and a stale webhook", () =>

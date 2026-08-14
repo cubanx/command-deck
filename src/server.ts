@@ -9,24 +9,24 @@ import {
 	seedLocalDemo,
 	sessionUser,
 	upsertIdentity,
-} from "./access";
-import type { Config } from "./config";
-import { loadConfig } from "./config";
-import type { Db } from "./db";
-import { databaseReady, initializeDatabase, openDatabase } from "./db";
+} from "#/access";
+import type { Config } from "#/config";
+import { loadConfig } from "#/config";
+import type { Db } from "#/db";
+import { databaseReady, initializeDatabase, openDatabase } from "#/db";
 import {
 	acceptGitHubDelivery,
 	drainInbox,
 	githubSignatureValid,
-} from "./events";
+} from "#/events";
 import {
 	bootstrapInstallation,
 	githubAppJwt,
 	githubNextLink,
 	installationToken,
 	reconcileInstallations,
-} from "./github";
-import { approvedInstallationAccount } from "./installations";
+} from "#/github";
+import { approvedInstallationAccount } from "#/installations";
 
 const cookie = (request: Request) =>
 	request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];

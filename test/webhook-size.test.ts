@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { expect, test } from "vitest";
-import { bindInstallation, upsertIdentity } from "../src/access";
-import { createApp } from "../src/server";
+import { bindInstallation, upsertIdentity } from "#/access";
+import { createApp } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
 
 test("webhooks reject oversized bodies before persistence", () =>

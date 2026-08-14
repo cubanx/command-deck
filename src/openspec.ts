@@ -1,6 +1,6 @@
-import type { Db } from "./db";
-import { mutateUser } from "./db";
-import { approvedInstallationAccount, sameLogin } from "./installations";
+import type { Db } from "#/db";
+import { mutateUser } from "#/db";
+import { approvedInstallationAccount, sameLogin } from "#/installations";
 
 export const changedTaskPaths = (paths: string[]) =>
 	paths.filter((path) => /^openspec\/changes\/[^/]+\/tasks\.md$/.test(path));

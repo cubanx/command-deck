@@ -1,11 +1,11 @@
 import { createHmac } from "node:crypto";
 import { expect, test } from "vitest";
-import { bindInstallation, upsertIdentity } from "../src/access";
+import { bindInstallation, upsertIdentity } from "#/access";
 import {
 	acceptGitHubDelivery,
 	drainInbox,
 	githubSignatureValid,
-} from "../src/events";
+} from "#/events";
 import { withDatabase } from "./mongo-support";
 
 test("malformed signed webhook bodies are ignored without an inbox row", () =>

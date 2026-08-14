@@ -1,5 +1,5 @@
-import { seedBindings } from "./access";
-import { mongoConfig, openDatabase } from "./db";
+import { seedBindings } from "#/access";
+import { mongoConfig, openDatabase } from "#/db";
 
 const [userId, ...bindings] = Bun.argv.slice(2);
 if (!userId || !bindings.length)

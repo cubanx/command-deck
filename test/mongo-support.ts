@@ -4,7 +4,7 @@ import {
 	initializeDatabase,
 	openDatabase,
 	testDatabaseGuard,
-} from "../src/db";
+} from "#/db";
 
 export async function withDatabase(test: (db: Db) => Promise<void>) {
 	const uriBase = process.env.MONGODB_URI_BASE;

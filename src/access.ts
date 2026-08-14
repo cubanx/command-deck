@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Db, UserAggregate } from "./db";
-import { mutateUser } from "./db";
-import { approvedInstallationAccount, sameLogin } from "./installations";
+import type { Db, UserAggregate } from "#/db";
+import { mutateUser } from "#/db";
+import { approvedInstallationAccount, sameLogin } from "#/installations";
 
 const hash = (value: string) =>
 	createHash("sha256").update(value).digest("hex");

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { databaseName } from "../src/db";
+import { databaseName } from "#/db";
 import { withDatabase } from "./mongo-support";
 
 test("selects explicit and environment-scoped database names", () => {

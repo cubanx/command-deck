@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import { bindInstallation, upsertIdentity } from "../src/access";
-import { changedTaskPaths, parseTasks, projectOpenSpec } from "../src/openspec";
+import { bindInstallation, upsertIdentity } from "#/access";
+import { changedTaskPaths, parseTasks, projectOpenSpec } from "#/openspec";
 import { withDatabase } from "./mongo-support";
 
 test("projects installation-scoped OpenSpec progress", () =>

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { loadConfig } from "../src/config";
+import { loadConfig } from "#/config";
 
 test("validates runtime ports and reconciliation interval", () => {
 	expect(() => loadConfig({ PORT: "0" })).toThrow("valid TCP port");

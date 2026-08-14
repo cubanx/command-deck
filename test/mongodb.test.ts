@@ -5,7 +5,7 @@ import {
 	initializeDatabase,
 	openDatabase,
 	testDatabaseGuard,
-} from "../src/db";
+} from "#/db";
 
 test("MongoDB test guard rejects production and ambiguous databases", () => {
 	expect(() =>

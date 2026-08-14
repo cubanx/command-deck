@@ -11,8 +11,8 @@ import {
 	seedLocalDemo,
 	sessionUser,
 	upsertIdentity,
-} from "../src/access";
-import { mutateUser } from "../src/db";
+} from "#/access";
+import { mutateUser } from "#/db";
 import { withDatabase } from "./mongo-support";
 
 test("OAuth state is one-time and expires", () =>

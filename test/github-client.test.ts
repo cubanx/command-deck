@@ -1,9 +1,5 @@
 import { expect, test } from "vitest";
-import {
-	bindInstallation,
-	dashboardForUser,
-	upsertIdentity,
-} from "../src/access";
+import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
 import {
 	bootstrapDeployments,
 	bootstrapInstallation,
@@ -12,7 +8,7 @@ import {
 	reconcileInstallations,
 	reconcileSerial,
 	retryDelay,
-} from "../src/github";
+} from "#/github";
 import { withDatabase } from "./mongo-support";
 
 test("conditional reads retain ETags and surface 304", () =>

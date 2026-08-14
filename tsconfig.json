@@ -3,6 +3,9 @@
 		"target": "ESNext",
 		"module": "Preserve",
 		"moduleResolution": "bundler",
+		"paths": {
+			"#/*": ["./src/*"]
+		},
 		"strict": true,
 		"noEmit": true,
 		"types": ["bun"]

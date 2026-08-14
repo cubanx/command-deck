@@ -1,10 +1,10 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import type { ReviewBotConfig } from "./config";
-import type { Db } from "./db";
-import { mutateUser } from "./db";
-import { shouldApplyDeploymentStatus } from "./deployment-status";
-import { approvedInstallationAccount, sameLogin } from "./installations";
-import { changedTaskPaths, projectOpenSpec } from "./openspec";
+import type { ReviewBotConfig } from "#/config";
+import type { Db } from "#/db";
+import { mutateUser } from "#/db";
+import { shouldApplyDeploymentStatus } from "#/deployment-status";
+import { approvedInstallationAccount, sameLogin } from "#/installations";
+import { changedTaskPaths, projectOpenSpec } from "#/openspec";
 
 export function githubSignatureValid(
 	body: string,

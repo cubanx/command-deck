@@ -4,7 +4,7 @@ import {
 	derivePullRequests,
 	fuzzyScore,
 	repositoryOptions,
-} from "../src/web/app.js";
+} from "#/web/app.js";
 
 const items = [
 	{

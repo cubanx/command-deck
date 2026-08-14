@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import { bindInstallation, upsertIdentity } from "../src/access";
-import { acceptGitHubDelivery, drainInbox } from "../src/events";
+import { bindInstallation, upsertIdentity } from "#/access";
+import { acceptGitHubDelivery, drainInbox } from "#/events";
 import { withDatabase } from "./mongo-support";
 
 test("provider identity mutations are idempotent", () =>
