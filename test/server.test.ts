@@ -907,7 +907,10 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 			githubAppPrivateKey: pem,
 		});
 		const original = globalThis.fetch;
-		let releaseIdentity: (() => void) | undefined;
+		let identityRequested: ((release: () => void) => void) | undefined;
+		const waitForIdentityRequest = new Promise<() => void>((resolve) => {
+			identityRequested = resolve;
+		});
 		let done: (() => void) | undefined;
 		const bootstrapped = new Promise<void>((resolve) => {
 			done = resolve;
@@ -925,8 +928,9 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 				return Response.json({ token: "installation-token" });
 			if (url.endsWith("/installation"))
 				return new Promise((resolve) => {
-					releaseIdentity = () =>
-						resolve(Response.json({ account: { login: "Crisp-Inc" } }));
+					identityRequested?.(() =>
+						resolve(Response.json({ account: { login: "Crisp-Inc" } })),
+					);
 				});
 			if (url.includes("installation/repositories"))
 				return Response.json({
@@ -964,8 +968,8 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 			).toMatchObject([
 				{ installationId: "12", accountLogin: "Crisp-Inc", repositories: [] },
 			]);
-			await new Promise((resolve) => setTimeout(resolve));
-			releaseIdentity?.();
+			const releaseIdentity = await waitForIdentityRequest;
+			releaseIdentity();
 			await bootstrapped;
 			let projected = false;
 			const deadline = Date.now() + 2000;
