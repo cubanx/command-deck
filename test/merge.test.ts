@@ -182,6 +182,20 @@ test("role proof happens before installation authority and exact-head merge read
 test("default merge provider reads every gate and fails closed without policy evidence", async () => {
 	const original = globalThis.fetch;
 	const calls: string[] = [];
+	let reviews = [
+		{
+			id: 1,
+			state: "APPROVED",
+			submitted_at: "2030-01-01T00:00:00Z",
+			user: { id: 9 },
+		},
+		{
+			id: 2,
+			state: "CHANGES_REQUESTED",
+			submitted_at: "2030-01-02T00:00:00Z",
+			user: { id: 9 },
+		},
+	];
 	fetchTarget.fetch = async (input) => {
 		const url = String(input);
 		calls.push(url);
@@ -195,9 +209,10 @@ test("default merge provider reads every gate and fails closed without policy ev
 				base: { ref: "main" },
 				mergeable: true,
 			});
-		if (url.endsWith("/check-runs"))
-			return Response.json({ check_runs: [{ conclusion: "success" }] });
-		if (url.endsWith("/reviews")) return Response.json([{ state: "APPROVED" }]);
+		if (url.includes("actions/runs"))
+			return Response.json({ workflow_runs: [] });
+		if (url.endsWith("/check-runs")) return Response.json({ check_runs: [] });
+		if (url.endsWith("/reviews")) return Response.json(reviews);
 		if (url.includes("/rules/branches/")) return Response.json([]);
 		if (url.includes("/protection")) return new Response(null, { status: 403 });
 		return Response.json({ allow_merge_commit: true });
@@ -224,8 +239,35 @@ test("default merge provider reads every gate and fails closed without policy ev
 		});
 		expect(inspected).toMatchObject({
 			pullRequestId: "PR_8",
+			workflow_state: "unknown",
+			checks_state: "unknown",
+			review_state: "changes_requested",
 			protection: "unknown",
 		});
+		reviews = [
+			...reviews,
+			{
+				id: 3,
+				state: "APPROVED",
+				submitted_at: "2030-01-03T00:00:00Z",
+				user: { id: 9 },
+			},
+		];
+		expect(
+			await provider.inspect({
+				_id: "intent-2",
+				userId: "sisko",
+				sessionId: "session",
+				installationId: "12",
+				repositoryId: "42",
+				fullName: "Crisp-Inc/dev-command-center",
+				pullRequestNumber: 8,
+				pullRequestTitle: "Hold the line",
+				headSha: "a".repeat(40),
+				stage: "authorized",
+				expiresAt: new Date(),
+			}),
+		).toMatchObject({ review_state: "approved" });
 		expect(calls.join("\n")).toContain("/rules/branches/main");
 	} finally {
 		fetchTarget.fetch = original;

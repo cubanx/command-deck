@@ -82,3 +82,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build --tag developer-command-center:quality .
+      - run: docker run --rm developer-command-center:quality bun -e 'await import("./src/server.ts")'

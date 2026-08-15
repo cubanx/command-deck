@@ -1,5 +1,8 @@
 type Status = Record<string, unknown>;
 
+const terminalStates = new Set(["success", "failure", "error", "inactive"]);
+const state = (status: Status) => String(status.state ?? "").toLowerCase();
+
 const time = (status: Status) =>
 	Date.parse(
 		String(
@@ -42,6 +45,8 @@ export function latestDeploymentStatus(statuses: Status[]) {
 export function shouldApplyDeploymentStatus(next: Status, prior: Status) {
 	const nextId = statusId(next),
 		priorId = statusId(prior);
+	if (terminalStates.has(state(prior)) && !terminalStates.has(state(next)))
+		return false;
 	return (
 		Boolean(nextId && priorId && nextId === priorId) ||
 		compareDeploymentStatus(next, prior) > 0 ||

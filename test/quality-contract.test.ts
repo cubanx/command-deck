@@ -24,4 +24,9 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(workflow.slice(workflow.indexOf("  docker-build:"))).not.toContain(
 		"needs:",
 	);
+	const dockerfile = text("Dockerfile");
+	expect(dockerfile).toContain("COPY --chown=bun:bun tsconfig.json ./");
+	expect(workflow).toContain(
+		"docker run --rm developer-command-center:quality bun -e 'await import(\"./src/server.ts\")'",
+	);
 });

@@ -364,6 +364,25 @@ test("local checkout parsing retains only verified repository and OpenSpec evide
 	]);
 	expect(parseTasks("## Helm\n- [x] Set course").completed).toBe(1);
 	expect(await readRepositoryCheckout(repository, handle)).toBe("Resolved");
+	const pullRequest = {
+		installation_id: "12",
+		repository_id: "42",
+		head_ref: "prepare-defiant",
+	};
+	expect(localSpecFor(pullRequest, [pullRequest])).toMatchObject({
+		change_name: "prepare-defiant",
+	});
+	const missingCheckout = directory({
+		getDirectoryHandle: async () => {
+			const error = new Error("missing checkout");
+			error.name = "NotFoundError";
+			throw error;
+		},
+	});
+	expect(await readRepositoryCheckout(repository, missingCheckout)).toBe(
+		"Unresolved",
+	);
+	expect(localSpecFor(pullRequest, [pullRequest])).toBeNull();
 });
 
 test("checkout storage and resolution use native boundaries without prompting on reload", async () => {

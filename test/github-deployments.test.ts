@@ -1,8 +1,30 @@
 import { expect, test } from "vitest";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
+import { shouldApplyDeploymentStatus } from "#/deployment-status";
 import { acceptGitHubDelivery, drainInbox } from "#/events";
 import { bootstrapInstallation } from "#/github";
 import { withDatabase } from "./mongo-support";
+
+test.each(["pending", "in_progress"])(
+	"terminal deployment status does not regress to newer %s",
+	(state) => {
+		expect(
+			shouldApplyDeploymentStatus(
+				{
+					status_id: "101",
+					state,
+					status_created_at: "2030-01-02T00:00:00Z",
+				},
+				{
+					status_id: "100",
+					state: "success",
+					status_created_at: "2030-01-01T00:00:00Z",
+					updated_at: "2030-01-01T00:00:00Z",
+				},
+			),
+		).toBe(false);
+	},
+);
 
 test("newest deployment status survives unordered bootstrap and a stale webhook", () =>
 	withDatabase(async (db) => {

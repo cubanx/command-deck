@@ -44,7 +44,7 @@ Alternatives rejected: complexity-only or zero-coverage CRAP scores do not repre
 
 ### Extract static browser source without adding a build system
 
-Move authored HTML, CSS, browser JavaScript, manifest, and service worker into dedicated files under `src/web`. Serve them with Node-compatible file/response primitives and preserve the current URLs, content types, versioning, and cache policy. Keep image/license assets in their existing governed location. The production Dockerfile already copies both `src` and `assets`, so this layout requires no new packaging root or `COPY` instruction.
+Move authored HTML, CSS, browser JavaScript, manifest, and service worker into dedicated files under `src/web`. Serve them with Node-compatible file/response primitives and preserve the current URLs, content types, versioning, and cache policy. Keep image/license assets in their existing governed location. The production Dockerfile copies `src`, `assets`, and `tsconfig.json`, which Bun requires at runtime to resolve the repository's `#/*` aliases; CI imports the server from the built image so a build-only check cannot hide a startup failure.
 
 Alternative rejected: a frontend framework or bundler solves a problem this application does not have and would multiply configuration before improving readability.
 

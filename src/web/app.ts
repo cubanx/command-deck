@@ -714,6 +714,34 @@ const setCheckoutError = (key: string, error: unknown) => {
 	checkoutStates.set(key, "Error");
 	console.error("Local checkout read failed", errorName(error));
 };
+const clearRepositoryEvidence = (repository: Repository) => {
+	const key = checkoutKey(repository.account_login, repository.repository_id);
+	localSpecs = localSpecs.filter(
+		(item) =>
+			item.installation_id !== repository.installation_id ||
+			item.repository_id !== repository.repository_id,
+	);
+	for (const name of localFiles.keys())
+		if (name.startsWith(`${key}:`)) localFiles.delete(name);
+};
+const invalidateRepositoryCheckout = (
+	repository: Repository,
+	state: Exclude<CheckoutState, "Resolved">,
+) => {
+	clearRepositoryEvidence(repository);
+	checkoutStates.set(
+		checkoutKey(repository.account_login, repository.repository_id),
+		state,
+	);
+};
+const invalidateAccountCheckouts = (
+	account: string,
+	state: Exclude<CheckoutState, "Resolved">,
+) => {
+	for (const repository of repositoryCatalog)
+		if (normalized(repository.account_login) === normalized(account))
+			invalidateRepositoryCheckout(repository, state);
+};
 export const readCheckout = async (
 	handle: BrowserDirectoryHandle,
 	repository: Repository,
@@ -773,16 +801,10 @@ export const readRepositoryCheckout = async (
 	try {
 		const evidence = await readCheckout(handle, repository);
 		if (!evidence) {
-			checkoutStates.set(key, "Unresolved");
+			invalidateRepositoryCheckout(repository, "Unresolved");
 			return "Unresolved";
 		}
-		localSpecs = localSpecs.filter(
-			(item) =>
-				item.installation_id !== repository.installation_id ||
-				item.repository_id !== repository.repository_id,
-		);
-		for (const name of localFiles.keys())
-			if (name.startsWith(`${key}:`)) localFiles.delete(name);
+		clearRepositoryEvidence(repository);
 		localSpecs.push(...evidence.specs);
 		for (const [name, file] of evidence.files)
 			localFiles.set(`${key}:${name}`, file);
@@ -790,9 +812,10 @@ export const readRepositoryCheckout = async (
 		return "Resolved";
 	} catch (error) {
 		if (["NotFoundError", "TypeMismatchError"].includes(errorName(error))) {
-			checkoutStates.set(key, "Unresolved");
+			invalidateRepositoryCheckout(repository, "Unresolved");
 			return "Unresolved";
 		}
+		clearRepositoryEvidence(repository);
 		setCheckoutError(key, error);
 		return "Error";
 	}
@@ -800,10 +823,7 @@ export const readRepositoryCheckout = async (
 const resolveCheckouts = async (repositories: Repository[]) => {
 	if (!checkoutSupported()) {
 		for (const repository of repositories)
-			checkoutStates.set(
-				checkoutKey(repository.account_login, repository.repository_id),
-				"Unsupported",
-			);
+			invalidateRepositoryCheckout(repository, "Unsupported");
 		return;
 	}
 	for (const repository of repositories) {
@@ -811,13 +831,17 @@ const resolveCheckouts = async (repositories: Repository[]) => {
 			override = checkoutHandles.get(key),
 			root = checkoutHandles.get(rootKey(repository.account_login)),
 			record = override ?? root;
-		if (!record) continue;
+		if (!record) {
+			invalidateRepositoryCheckout(repository, "Unresolved");
+			continue;
+		}
 		try {
 			if ((await permissionFor(record)) !== "granted") {
-				checkoutStates.set(key, "Permission required");
+				invalidateRepositoryCheckout(repository, "Permission required");
 				continue;
 			}
 		} catch (error) {
+			clearRepositoryEvidence(repository);
 			setCheckoutError(key, error);
 			continue;
 		}
@@ -830,8 +854,11 @@ const resolveCheckouts = async (repositories: Repository[]) => {
 				await readRepositoryCheckout(repository, handle);
 			} catch (error) {
 				if (["NotFoundError", "TypeMismatchError"].includes(errorName(error)))
-					checkoutStates.set(key, "Unresolved");
-				else setCheckoutError(key, error);
+					invalidateRepositoryCheckout(repository, "Unresolved");
+				else {
+					clearRepositoryEvidence(repository);
+					setCheckoutError(key, error);
+				}
 			}
 		}
 	}
@@ -845,6 +872,8 @@ const restoreCheckouts = async (repositories: Repository[]) => {
 			checkoutHandles.set(record.key, record);
 		await resolveCheckouts(repositories);
 	} catch (error) {
+		for (const repository of repositories)
+			invalidateRepositoryCheckout(repository, "Error");
 		console.error("Local checkout restore failed", errorName(error));
 	}
 };
@@ -1484,8 +1513,10 @@ const connectOrganization = async (account: string) => {
 		await resolveCheckouts(repositoryCatalog);
 		render(current);
 	} catch (error) {
-		if (errorName(error) !== "AbortError")
+		if (errorName(error) !== "AbortError") {
+			invalidateAccountCheckouts(account, "Error");
 			setCheckoutError(rootKey(account), error);
+		}
 	}
 };
 export const connectRepository = async (key: string) => {
@@ -1511,14 +1542,17 @@ export const connectRepository = async (key: string) => {
 				record,
 			}))
 		) {
-			checkoutStates.set(key, "Unresolved");
+			invalidateRepositoryCheckout(repository, "Unresolved");
 			return render(current);
 		}
 		checkoutHandles.set(key, record);
 		await readRepositoryCheckout(repository, handle);
 		render(current);
 	} catch (error) {
-		if (errorName(error) !== "AbortError") setCheckoutError(key, error);
+		if (errorName(error) !== "AbortError") {
+			clearRepositoryEvidence(repository);
+			setCheckoutError(key, error);
+		}
 	}
 };
 const grantCheckoutPermission = async (key: string) => {
@@ -1531,6 +1565,10 @@ const grantCheckoutPermission = async (key: string) => {
 		await resolveCheckouts(repositoryCatalog);
 		render(current);
 	} catch (error) {
+		const repository = repositoryCatalog.find(
+			(item) => checkoutKey(item.account_login, item.repository_id) === key,
+		);
+		if (repository) clearRepositoryEvidence(repository);
 		setCheckoutError(key, error);
 	}
 };

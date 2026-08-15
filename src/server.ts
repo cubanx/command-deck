@@ -167,6 +167,40 @@ const githubRead = async (url: string, token: string) => {
 	};
 };
 
+const successfulEvidence = (
+	items: Array<Record<string, unknown>> | undefined,
+	noRequirements: boolean,
+) =>
+	Array.isArray(items) &&
+	(items.length === 0
+		? noRequirements
+		: items.every((item) => item.conclusion === "success"));
+
+const latestReviewState = (reviews: Array<Record<string, unknown>>) => {
+	const currentByReviewer = new Map<
+		string,
+		{ state: string; submittedAt: number }
+	>();
+	for (const review of reviews) {
+		const state = String(review.state ?? "").toUpperCase();
+		if (!["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state))
+			continue;
+		const user = review.user as Record<string, unknown> | undefined;
+		const reviewer = String(user?.id ?? user?.login ?? "");
+		const submittedAt = Date.parse(
+			String(review.submitted_at ?? review.updated_at ?? ""),
+		);
+		if (!reviewer || !Number.isFinite(submittedAt)) return "unknown";
+		const current = currentByReviewer.get(reviewer);
+		if (!current || submittedAt >= current.submittedAt)
+			currentByReviewer.set(reviewer, { state, submittedAt });
+	}
+	const states = [...currentByReviewer.values()].map((review) => review.state);
+	if (states.includes("CHANGES_REQUESTED")) return "changes_requested";
+	if (states.includes("APPROVED")) return "approved";
+	return "unknown";
+};
+
 const inspectMerge = async (
 	intent: MergeIntent,
 	tokenFor: (intent: MergeIntent) => Promise<string>,
@@ -240,6 +274,7 @@ const inspectMerge = async (
 		Array.isArray(rulesRead.body) &&
 		rulesRead.body.length === 0 &&
 		noClassicRequirements;
+	const reviewState = latestReviewState(reviewList);
 	return {
 		pullRequestId: pullRequest.node_id,
 		state: pullRequest.state,
@@ -247,21 +282,18 @@ const inspectMerge = async (
 		head_sha: sha,
 		mergeable:
 			pullRequest.mergeable === true ? "clean" : pullRequest.mergeable_state,
-		workflow_state:
-			Array.isArray(workflowRuns) &&
-			workflowRuns.every((item) => item.conclusion === "success")
-				? "success"
-				: "unknown",
-		checks_state:
-			Array.isArray(checkRuns) &&
-			checkRuns.every((item) => item.conclusion === "success")
-				? "success"
-				: "unknown",
-		review_state: noBranchRequirements
-			? "approved"
-			: reviewList.some((item) => item.state === "APPROVED")
-				? "approved"
-				: "unknown",
+		workflow_state: successfulEvidence(workflowRuns, noBranchRequirements)
+			? "success"
+			: "unknown",
+		checks_state: successfulEvidence(checkRuns, noBranchRequirements)
+			? "success"
+			: "unknown",
+		review_state:
+			reviewState === "changes_requested"
+				? reviewState
+				: noBranchRequirements || reviewState === "approved"
+					? "approved"
+					: "unknown",
 		merge_method: repository?.allow_merge_commit === true ? "MERGE" : "unknown",
 		protection: noBranchRequirements ? "clear" : "unknown",
 	};
