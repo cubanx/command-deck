@@ -1,0 +1,8 @@
+{
+	"commands": [
+		"bun run check",
+		"bun run typecheck",
+		"bun run build:web",
+		"bun run check:crap"
+	]
+}

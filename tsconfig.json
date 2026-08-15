@@ -1,4 +1,15 @@
 {
-  "compilerOptions": { "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "strict": true, "noEmit": true, "types": ["bun"] },
-  "include": ["src"]
+	"compilerOptions": {
+		"target": "ESNext",
+		"allowJs": true,
+		"module": "Preserve",
+		"moduleResolution": "bundler",
+		"paths": {
+			"#/*": ["./src/*"]
+		},
+		"strict": true,
+		"noEmit": true,
+		"types": ["bun"]
+	},
+	"include": ["src", "scripts", "test"]
 }

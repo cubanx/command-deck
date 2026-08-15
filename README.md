@@ -11,25 +11,48 @@ Requirement: [Bun](https://bun.sh/).
 MongoDB is also required for tests and runtime. Set `MONGODB_URI_BASE` to an isolated local MongoDB endpoint, then run:
 
 ```bash
+docker run --detach --rm --name dcc-mongodb-test --publish 127.0.0.1:27018:27017 mongo:8
 bun install
 bun run dev
-MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun test
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test
 MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test:mongo
 ```
 
+Stop the disposable test database with `docker stop dcc-mongodb-test`. Tests create UUID-named guarded databases and drop only those databases.
+
 Open `http://localhost:3000`. The development command binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
 
-Use **Connect local checkout** to grant the browser read-only access to a repository. The PWA reads only `.git/HEAD` and `openspec/changes/*/tasks.md`, matches that evidence to a PR, presents the complete current unfinished group inside the PR card, and can open the selected task file without uploading its path or contents. Browsers without the native directory picker continue to show committed GitHub projections.
+Both top-level actions open one configuration screen for local checkouts, notifications, appearance, and manual reconciliation. **Reconcile now** reuses the authenticated, user-scoped installation reconciliation path and reports running, success, or sanitized failure state.
+
+On browsers with the File System Access API, grant read-only access to one organization root and the PWA resolves known repositories beneath it by stable repository identity. Exact per-repository overrides cover nonstandard layouts; unresolved or unverified folders are never associated silently. Directory handles persist in IndexedDB and permissions are revalidated after reload. The browser reads only repository identity, `.git/HEAD`, and `openspec/changes/*/tasks.md`; handles, paths, files, branches, and local OpenSpec data never leave the browser. Browsers without the directory picker continue to show committed GitHub projections.
+
+Appearance supports System, Dark, and Light and persists locally. System follows the current browser color scheme. Merge actions are absent while the GitHub App installation has read-only Pull requests permission and appear beside a title only when the projected PR is mergeable and the existing cheap UI gates pass; `operate-command-deck-merge-permission` owns the separate post-merge permission rollout and proof.
 
 For real provider integration, copy `.env.example` to `.env`, supply a development GitHub App, leave `DCC_LOCAL_DEMO=0`, and use `bun run start`. Local webhooks additionally require a public forwarding URL.
 
 Local validation:
 
 ```bash
-bun run typecheck
-MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun test
-openspec validate build-developer-command-center-mvp --strict
+bun run format
+MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all
+openspec validate establish-code-quality-safety --strict
+openspec validate improve-command-deck --strict
 ```
+
+### Quality baseline
+
+PR #8 adopts the portable Quality CI contract verified from Crisp Internal Apps commit `1a102a492d8f1de692023d977afb9d48c00d9457`:
+
+- Biome `2.5.6`: tabs, double quotes, import organization, recommended lint rules, and Git-ignore awareness.
+- CrapTS `0.1.1`: V8/Istanbul JSON coverage with a maximum CRAP score of `30` and at most `20` violations.
+- Vitest and `@vitest/coverage-v8` `4.1.10`: the single test runner and coverage producer required by CrapTS.
+- Existing TypeScript typechecking, the complete Mongo-backed test suite, frozen-lockfile installation, and Docker image construction remain required.
+
+Only authored source and configuration are in scope. Narrow exclusions cover generated, vendored, binary, coverage, build, CodeGraph, and CC-licensed image assets where the applicable tool cannot inspect them meaningfully. The project does not copy Internal Apps' React/Vite generated-route, environment-contract, server-boundary, component/E2E, change-classification, deployment, or provider-specific jobs because those contracts do not exist here.
+
+Use `bun run format` before review. `bun run validate:all` runs the ordered commands in `validation-commands.json` sequentially: `bun run check`, `bun run typecheck`, and `bun run check:crap`. `quality` remains an alias for that canonical command. `bun run test:coverage` writes V8 coverage to `coverage/unit/coverage-final.json`; `bun run check:crap` runs that suite and enforces `--max 30 --limit 20`.
+
+Quality CI reads the same command list but runs its independent commands in parallel. Only CrapTS receives an isolated MongoDB service because it runs the coverage suite; `Validate All` is the stable aggregate. Docker build and tooling freshness remain separate checks. The workflow file does not make itself a provider-side required check; changing GitHub rulesets or branch protection remains a separately authorized repository operation.
 
 ## Configuration
 
@@ -116,3 +139,5 @@ Reconciliation follows GitHub Link pagination for repositories, open pull reques
 ## License
 
 [MIT](LICENSE) © 2026 cubanx.
+
+The Command Deck application icon adapts [OpenMoji's control knobs](https://openmoji.org/library/emoji-1F39B/) by Sina Schulz. Colors and background were modified for this project. The adapted artwork is distributed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); detailed provenance accompanies the assets.
