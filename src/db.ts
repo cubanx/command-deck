@@ -18,6 +18,7 @@ export type Repository = {
 export type Installation = {
 	installationId: string;
 	accountLogin?: string;
+	permissions?: { pull_requests?: string };
 	boundAt: Date;
 	repositories: Repository[];
 	lastSuccessfulSyncAt?: Date;
@@ -34,6 +35,20 @@ export type UserAggregate = {
 };
 export type Session = { _id: string; userId: string; expiresAt: Date };
 export type OAuthState = { _id: string; expiresAt: Date };
+export type MergeIntent = {
+	_id: string;
+	userId: string;
+	sessionId: string;
+	installationId: string;
+	repositoryId: string;
+	fullName: string;
+	pullRequestNumber: number;
+	pullRequestTitle: string;
+	headSha: string;
+	pullRequestId?: string;
+	stage: "started" | "authorized" | "consumed";
+	expiresAt: Date;
+};
 export type InboxDelivery = {
 	_id: string;
 	provider: string;
@@ -68,6 +83,7 @@ export type Db = {
 	users: Collection<UserAggregate>;
 	sessions: Collection<Session>;
 	oauthStates: Collection<OAuthState>;
+	mergeIntents: Collection<MergeIntent>;
 	inboxDeliveries: Collection<InboxDelivery>;
 	providerCache: Collection<ProviderCache>;
 	notifications: Collection<Notification>;
@@ -117,6 +133,7 @@ export async function openDatabase(config = mongoConfig()): Promise<Db> {
 			users: mongo.collection<UserAggregate>("users"),
 			sessions: mongo.collection<Session>("sessions"),
 			oauthStates: mongo.collection<OAuthState>("oauth_states"),
+			mergeIntents: mongo.collection<MergeIntent>("merge_intents"),
 			inboxDeliveries: mongo.collection<InboxDelivery>("inbox_deliveries"),
 			providerCache: mongo.collection<ProviderCache>("provider_cache"),
 			notifications: mongo.collection<Notification>("notifications"),
@@ -133,6 +150,7 @@ export async function initializeDatabase(db: Db) {
 		db.users.createIndex({ "installations.installationId": 1 }),
 		db.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.oauthStates.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+		db.mergeIntents.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.inboxDeliveries.createIndex({ status: 1, nextAttemptAt: 1 }),
 		db.notifications.createIndex(
 			{ userId: 1, transitionKey: 1 },

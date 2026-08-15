@@ -12,7 +12,7 @@ import {
 } from "#/access";
 import type { Config } from "#/config";
 import { loadConfig } from "#/config";
-import type { Db } from "#/db";
+import type { Db, MergeIntent } from "#/db";
 import { databaseReady, initializeDatabase, openDatabase } from "#/db";
 import {
 	acceptGitHubDelivery,
@@ -28,6 +28,16 @@ import {
 	reconcileInstallations,
 } from "#/github";
 import { approvedInstallationAccount } from "#/installations";
+import {
+	advanceMergeIntent,
+	authorizeBeforeInstallation,
+	confirmExactMerge,
+	createMergeIntent,
+	mergeEligibility,
+	mergeIntentFor,
+	mergeIntentHash,
+} from "#/merge";
+import { buildBrowserScript } from "#/web/build";
 
 const cookie = (request: Request) =>
 	request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];
@@ -35,11 +45,17 @@ const webAsset = (name: string) =>
 	readFileSync(new URL(`./web/${name}`, import.meta.url), "utf8");
 const html = webAsset("index.html");
 const css = webAsset("app.css");
-const js = webAsset("app.js");
 const manifest = webAsset("manifest.webmanifest");
 const worker = webAsset("sw.js");
 
 type SessionIdentity = { id: string; login?: string };
+type MergeProvider = {
+	inspect(intent: MergeIntent): Promise<Record<string, unknown>>;
+	merge(
+		intent: MergeIntent,
+		variables: Record<string, string>,
+	): Promise<Record<string, unknown>>;
+};
 type AppContext = {
 	db: Db;
 	config: Config;
@@ -51,12 +67,13 @@ type AppContext = {
 		userId?: string,
 	): Promise<"success" | "running" | "failed" | "missing">;
 	scheduleDrain(): Promise<void>;
+	refresh(userId: string): void;
+	mergeProvider?: MergeProvider;
 };
 
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
 	["/", [html, "text/html; charset=utf-8"]],
 	["/app.css", [css, "text/css"]],
-	["/app.js", [js, "text/javascript"]],
 	["/manifest.webmanifest", [manifest, "application/manifest+json"]],
 	["/sw.js", [worker, "text/javascript", { "cache-control": "no-cache" }]],
 ]);
@@ -70,7 +87,11 @@ const iconAssets = new Map<string, [string, string]>([
 	["/icon-maskable-512.png", ["icon-maskable-512.png", "image/png"]],
 ]);
 
-const publicResponse = (path: string) => {
+const publicResponse = async (path: string) => {
+	if (path === "/app.js")
+		return new Response(await buildBrowserScript(), {
+			headers: { "content-type": "text/javascript" },
+		});
 	const text = textAssets.get(path);
 	if (text)
 		return new Response(text[0], {
@@ -113,6 +134,175 @@ const trustedOrigin = (request: Request, config: Config) => {
 		header("x-forwarded-proto") === "https" &&
 		header("x-forwarded-host") === origin.host
 	);
+};
+const escapeHtml = (value: unknown) =>
+	String(value)
+		.replaceAll("&", "&amp;")
+		.replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;")
+		.replaceAll('"', "&quot;");
+
+const githubJson = async (url: string, token: string) => {
+	const response = await fetch(url, {
+		headers: {
+			authorization: `Bearer ${token}`,
+			accept: "application/vnd.github+json",
+		},
+	});
+	return response.ok
+		? ((await response.json()) as Record<string, unknown>)
+		: null;
+};
+
+const githubRead = async (url: string, token: string) => {
+	const response = await fetch(url, {
+		headers: {
+			authorization: `Bearer ${token}`,
+			accept: "application/vnd.github+json",
+		},
+	});
+	return {
+		status: response.status,
+		body: response.ok ? await response.json() : null,
+	};
+};
+
+const inspectMerge = async (
+	intent: MergeIntent,
+	tokenFor: (intent: MergeIntent) => Promise<string>,
+) => {
+	const token = await tokenFor(intent);
+	const pullRequest = await githubJson(
+		`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/pulls/${intent.pullRequestNumber}`,
+		token,
+	);
+	if (!pullRequest) return {};
+	const head = pullRequest.head as Record<string, unknown> | undefined;
+	const base = pullRequest.base as Record<string, unknown> | undefined;
+	const sha = String(head?.sha ?? "");
+	const branch = encodeURIComponent(String(base?.ref ?? ""));
+	const [workflows, repository, checks, reviews, protectionRead, rulesRead] =
+		await Promise.all([
+			githubJson(
+				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/actions/runs?head_sha=${encodeURIComponent(sha)}`,
+				token,
+			),
+			githubJson(
+				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}`,
+				token,
+			),
+			githubJson(
+				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/commits/${encodeURIComponent(sha)}/check-runs`,
+				token,
+			),
+			githubJson(
+				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/pulls/${intent.pullRequestNumber}/reviews`,
+				token,
+			),
+			githubRead(
+				`https://api.github.com/repos/${intent.fullName}/branches/${branch}/protection`,
+				token,
+			),
+			githubRead(
+				`https://api.github.com/repos/${intent.fullName}/rules/branches/${branch}`,
+				token,
+			),
+		]);
+	const checkRuns = checks?.check_runs as
+		| Array<Record<string, unknown>>
+		| undefined;
+	const workflowRuns = workflows?.workflow_runs as
+		| Array<Record<string, unknown>>
+		| undefined;
+	const reviewList = Array.isArray(reviews) ? reviews : [];
+	const protection = protectionRead.body as Record<string, unknown> | null;
+	const requiredChecks = protection?.required_status_checks as
+		| Record<string, unknown>
+		| undefined;
+	const requiredReviewPolicy = protection?.required_pull_request_reviews;
+	const requiredCheckContexts = requiredChecks?.contexts;
+	const noClassicRequirements =
+		protectionRead.status === 404 ||
+		(protectionRead.status === 200 &&
+			Boolean(protection) &&
+			(!requiredChecks ||
+				(Array.isArray(requiredCheckContexts) &&
+					requiredCheckContexts.length === 0)) &&
+			!requiredReviewPolicy &&
+			!protection?.restrictions &&
+			!protection?.required_signatures &&
+			!protection?.required_linear_history &&
+			!protection?.required_conversation_resolution &&
+			!protection?.required_commit_signatures &&
+			!protection?.required_deployments);
+	const noBranchRequirements =
+		rulesRead.status === 200 &&
+		Array.isArray(rulesRead.body) &&
+		rulesRead.body.length === 0 &&
+		noClassicRequirements;
+	return {
+		pullRequestId: pullRequest.node_id,
+		state: pullRequest.state,
+		draft: pullRequest.draft,
+		head_sha: sha,
+		mergeable:
+			pullRequest.mergeable === true ? "clean" : pullRequest.mergeable_state,
+		workflow_state:
+			Array.isArray(workflowRuns) &&
+			workflowRuns.every((item) => item.conclusion === "success")
+				? "success"
+				: "unknown",
+		checks_state:
+			Array.isArray(checkRuns) &&
+			checkRuns.every((item) => item.conclusion === "success")
+				? "success"
+				: "unknown",
+		review_state: noBranchRequirements
+			? "approved"
+			: reviewList.some((item) => item.state === "APPROVED")
+				? "approved"
+				: "unknown",
+		merge_method: repository?.allow_merge_commit === true ? "MERGE" : "unknown",
+		protection: noBranchRequirements ? "clear" : "unknown",
+	};
+};
+
+export const defaultMergeProvider = (
+	config: Config,
+): MergeProvider | undefined => {
+	if (!config.githubAppId || !config.githubAppPrivateKey) return undefined;
+	const jwt = githubAppJwt(
+		config.githubAppId,
+		config.githubAppPrivateKey.replace(/\\n/g, "\n"),
+	);
+	const tokenFor = (intent: MergeIntent) =>
+		installationToken(jwt, intent.installationId);
+	return {
+		inspect: (intent) => inspectMerge(intent, tokenFor),
+		async merge(intent, variables) {
+			const response = await fetch("https://api.github.com/graphql", {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${await tokenFor(intent)}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					query:
+						"mutation MergePullRequest($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) { mergePullRequest(input: { pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid, mergeMethod: $mergeMethod }) { pullRequest { merged } } }",
+					variables,
+				}),
+			});
+			if (!response.ok) return { errors: [{ type: "FORBIDDEN" }] };
+			const body = (await response.json()) as {
+				data?: { mergePullRequest?: { pullRequest?: { merged?: boolean } } };
+				errors?: Array<{ type?: string }>;
+			};
+			return {
+				merged: body.data?.mergePullRequest?.pullRequest?.merged === true,
+				errors: body.errors,
+			};
+		},
+	};
 };
 
 const readyResponse = async (context: AppContext) => {
@@ -330,6 +520,138 @@ const oauthCallback = async (
 	});
 };
 
+const currentMergeTarget = async (
+	context: AppContext,
+	userId: string,
+	intent: MergeIntent,
+) => {
+	const dashboard = await dashboardForUser(context.db, userId);
+	return dashboard.pullRequests.find(
+		(item) =>
+			String(item.installation_id) === intent.installationId &&
+			String(item.repository_id) === intent.repositoryId &&
+			String(item.full_name) === intent.fullName &&
+			Number(item.number) === intent.pullRequestNumber &&
+			String(item.head_sha) === intent.headSha &&
+			item.installation_pull_requests === "write",
+	);
+};
+
+const mergeCallback = async (
+	context: AppContext,
+	request: Request,
+	url: URL,
+) => {
+	const code = url.searchParams.get("code"),
+		state = url.searchParams.get("state");
+	if (!code || !state) return oauthCallback(context, request, url);
+	const intent = await mergeIntentFor(context.db, state);
+	if (!intent) return oauthCallback(context, request, url);
+	const user = await context.authenticated(request);
+	if (
+		!user ||
+		intent.userId !== user.id ||
+		intent.sessionId !== mergeIntentHash(cookie(request) ?? "")
+	)
+		return new Response("invalid merge authorization", { status: 403 });
+	const {
+		githubClientId,
+		githubClientSecret,
+		githubAppId,
+		githubAppPrivateKey,
+	} = context.config;
+	if (
+		!githubClientId ||
+		!githubClientSecret ||
+		!githubAppId ||
+		!githubAppPrivateKey
+	)
+		return new Response("merge is unavailable", { status: 503 });
+	const tokenResponse = await fetch(
+		"https://github.com/login/oauth/access_token",
+		{
+			method: "POST",
+			headers: {
+				accept: "application/json",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				client_id: githubClientId,
+				client_secret: githubClientSecret,
+				code,
+			}),
+		},
+	);
+	const userToken = ((await tokenResponse.json()) as { access_token?: string })
+		.access_token;
+	if (!userToken)
+		return new Response("merge authorization failed", { status: 502 });
+	const identity = (await (
+		await fetch("https://api.github.com/user", {
+			headers: { authorization: `Bearer ${userToken}` },
+		})
+	).json()) as { id?: number | string; login?: string };
+	if (
+		String(identity.id ?? "") !== user.id ||
+		!identity.login ||
+		identity.login.toLowerCase() !== String(user.login).toLowerCase()
+	)
+		return new Response("merge authorization failed", { status: 403 });
+	if (!(await currentMergeTarget(context, user.id, intent)))
+		return new Response("merge authorization failed", { status: 403 });
+	const installed = await authorizeBeforeInstallation({
+		fetcher: fetch,
+		userToken,
+		login: identity.login,
+		fullName: intent.fullName,
+		installationToken: () =>
+			installationToken(
+				githubAppJwt(githubAppId, githubAppPrivateKey.replace(/\\n/g, "\n")),
+				intent.installationId,
+			),
+	});
+	if (!installed)
+		return new Response("merge authorization failed", { status: 403 });
+	const projected = await currentMergeTarget(context, user.id, intent);
+	if (!projected)
+		return new Response("merge authorization failed", { status: 403 });
+	const provider = context.mergeProvider;
+	if (!provider) return new Response("merge is unavailable", { status: 503 });
+	let authoritative: Record<string, unknown>;
+	try {
+		authoritative = {
+			...(await provider.inspect(intent)),
+			open_spec: projected.open_spec,
+		};
+	} catch (error) {
+		console.error(
+			"merge eligibility read failed",
+			error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+		);
+		return new Response("merge eligibility is unavailable", { status: 502 });
+	}
+	const pullRequestId = authoritative.pullRequestId;
+	if (typeof pullRequestId !== "string" || !mergeEligibility(authoritative).ok)
+		return new Response("merge eligibility is unavailable", { status: 409 });
+	if (
+		!(await advanceMergeIntent(
+			context.db,
+			state,
+			"started",
+			"authorized",
+			undefined,
+			{
+				pullRequestId,
+			},
+		))
+	)
+		return new Response("merge authorization failed", { status: 409 });
+	return new Response(
+		`<!doctype html><title>Confirm merge</title><main><h1>Confirm merge</h1><p>${escapeHtml(intent.fullName)} #${intent.pullRequestNumber} · ${escapeHtml(intent.pullRequestTitle)}</p><p>Head: ${escapeHtml(intent.headSha)}</p><p>Method: MERGE</p><form method="post" action="/api/merge/confirm"><input type="hidden" name="confirmation" value="${escapeHtml(state)}"><button type="submit">Confirm MERGE</button></form></main>`,
+		{ headers: { "content-type": "text/html; charset=utf-8" } },
+	);
+};
+
 const authRoute = (
 	context: AppContext,
 	request: Request,
@@ -341,7 +663,7 @@ const authRoute = (
 		case "/install/github":
 			return beginInstall(context, request);
 		case "/auth/github/callback":
-			return oauthCallback(context, request, url);
+			return mergeCallback(context, request, url);
 		case "/auth/github/setup":
 			return new Response("unverified installation binding is not supported", {
 				status: 410,
@@ -433,10 +755,140 @@ const reconcileRoute = async (
 	);
 };
 
+const mergeRoute = async (
+	context: AppContext,
+	request: Request,
+	path: string,
+) => {
+	if (path !== "/api/merge/start" || request.method !== "POST")
+		return undefined;
+	if (!trustedOrigin(request, context.config))
+		return new Response("invalid public origin", { status: 400 });
+	const user = await context.authenticated(request);
+	const body = await boundedBody(request, 4_000);
+	if (!user) return new Response("unauthenticated", { status: 401 });
+	if (!body) return new Response("invalid merge request", { status: 400 });
+	let target: {
+		installationId?: string;
+		repositoryId?: string;
+		number?: number;
+		headSha?: string;
+	};
+	try {
+		target = request.headers
+			.get("content-type")
+			?.includes("application/x-www-form-urlencoded")
+			? Object.fromEntries(new URLSearchParams(body))
+			: JSON.parse(body);
+	} catch {
+		return new Response("invalid merge request", { status: 400 });
+	}
+	const dashboard = await dashboardForUser(context.db, user.id);
+	const pullRequest = dashboard.pullRequests.find(
+		(item) =>
+			String(item.installation_id) === target.installationId &&
+			String(item.repository_id) === target.repositoryId &&
+			Number(item.number) === Number(target.number) &&
+			String(item.head_sha) === target.headSha,
+	);
+	if (!pullRequest) return new Response("not found", { status: 404 });
+	if (pullRequest.installation_pull_requests !== "write")
+		return new Response("merge permission approval is required", {
+			status: 409,
+		});
+	const session = cookie(request);
+	if (!session || !context.config.githubClientId)
+		return new Response("merge is unavailable", { status: 503 });
+	const state = await createMergeIntent(context.db, {
+		userId: user.id,
+		sessionId: mergeIntentHash(session),
+		installationId: String(target.installationId),
+		repositoryId: String(target.repositoryId),
+		fullName: String(pullRequest.full_name),
+		pullRequestNumber: Number(target.number),
+		pullRequestTitle: String(pullRequest.title),
+		headSha: String(target.headSha),
+	});
+	const redirect = context.config.oauthCallbackUrl
+		? `&redirect_uri=${encodeURIComponent(context.config.oauthCallbackUrl)}`
+		: "";
+	return Response.redirect(
+		`https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(context.config.githubClientId)}&state=${encodeURIComponent(state)}${redirect}`,
+		302,
+	);
+};
+
+const mergeConfirmRoute = async (
+	context: AppContext,
+	request: Request,
+	path: string,
+) => {
+	if (path !== "/api/merge/confirm" || request.method !== "POST")
+		return undefined;
+	if (!trustedOrigin(request, context.config))
+		return new Response("invalid public origin", { status: 400 });
+	const user = await context.authenticated(request);
+	const body = await boundedBody(request, 4_000);
+	if (!user || !body)
+		return new Response("invalid merge confirmation", { status: 400 });
+	let token: string;
+	try {
+		const contentType = request.headers.get("content-type") ?? "";
+		const confirmation = contentType.includes(
+			"application/x-www-form-urlencoded",
+		)
+			? Object.fromEntries(new URLSearchParams(body))
+			: (JSON.parse(body) as { confirmation?: string });
+		token = String(confirmation.confirmation ?? "");
+	} catch {
+		return new Response("invalid merge confirmation", { status: 400 });
+	}
+	const intent = await mergeIntentFor(context.db, token);
+	if (
+		!intent ||
+		intent.userId !== user.id ||
+		intent.sessionId !== mergeIntentHash(cookie(request) ?? "")
+	)
+		return new Response("invalid merge confirmation", { status: 403 });
+	if (!(await advanceMergeIntent(context.db, token, "authorized", "consumed")))
+		return new Response("stale merge confirmation", { status: 409 });
+	try {
+		const provider = context.mergeProvider;
+		if (!provider || !intent.pullRequestId)
+			return new Response("merge is unavailable", { status: 503 });
+		if (!(await currentMergeTarget(context, user.id, intent)))
+			return Response.json({ status: "blocked" }, { status: 409 });
+		const result = await confirmExactMerge({
+			intent: { pullRequestId: intent.pullRequestId, headSha: intent.headSha },
+			inspect: async () => {
+				const projected = await currentMergeTarget(context, user.id, intent);
+				if (!projected) return {};
+				return {
+					...(await provider.inspect(intent)),
+					open_spec: projected.open_spec,
+				};
+			},
+			merge: (variables) => provider.merge(intent, variables),
+		});
+		return Response.json(
+			{ status: result },
+			{ status: result === "success" ? 200 : 409 },
+		);
+	} catch (error) {
+		console.error(
+			"merge confirmation failed",
+			error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+		);
+		return Response.json({ status: "blocked" }, { status: 502 });
+	} finally {
+		context.refresh(user.id);
+	}
+};
+
 const handleRequest = async (context: AppContext, request: Request) => {
 	const url = new URL(request.url);
 	const path = url.pathname;
-	const publicAsset = publicResponse(path);
+	const publicAsset = await publicResponse(path);
 	if (publicAsset) return publicAsset;
 	if (path === "/health") return Response.json({ ok: true });
 	if (path === "/ready") return readyResponse(context);
@@ -447,11 +899,17 @@ const handleRequest = async (context: AppContext, request: Request) => {
 		(await webhookRoute(context, request, path)) ??
 		(await repairRoute(context, request, path)) ??
 		(await reconcileRoute(context, request, path)) ??
+		(await mergeRoute(context, request, path)) ??
+		(await mergeConfirmRoute(context, request, path)) ??
 		new Response("not found", { status: 404 })
 	);
 };
 
-export function createApp(db: Db, config: Config) {
+export function createApp(
+	db: Db,
+	config: Config,
+	mergeProvider?: AppContext["mergeProvider"],
+) {
 	const initialized = initializeDatabase(db).then(() =>
 		config.localDemo ? seedLocalDemo(db) : undefined,
 	);
@@ -497,6 +955,8 @@ export function createApp(db: Db, config: Config) {
 		initialized,
 		streams,
 		encoder,
+		mergeProvider: mergeProvider ?? defaultMergeProvider(config),
+		refresh,
 		authenticated: async (request: Request) => {
 			if (config.localDemo) return LOCAL_DEMO_USER;
 			const token = cookie(request);

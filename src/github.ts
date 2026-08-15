@@ -359,6 +359,8 @@ export async function bootstrapInstallation(
 		});
 	}
 	const account = (installation.body as any).account.login;
+	const pullRequestsPermission = (installation.body as any).permissions
+		?.pull_requests;
 	await Promise.all(
 		bound.map((user) =>
 			mutateUser(db, user._id, (aggregate) => {
@@ -373,6 +375,12 @@ export async function bootstrapInstallation(
 				)
 					return;
 				if (!installation.accountLogin) installation.accountLogin = account;
+				installation.permissions = {
+					pull_requests:
+						typeof pullRequestsPermission === "string"
+							? pullRequestsPermission
+							: undefined,
+				};
 				installation.repositories = snapshots.map((snapshot) => {
 					const previous = installation.repositories.find(
 						(repository) => repository.repositoryId === snapshot.repositoryId,

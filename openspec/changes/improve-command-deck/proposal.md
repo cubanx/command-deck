@@ -14,6 +14,7 @@ The live Command Deck now exposes enough pull requests, deployments, and OpenSpe
 - Add persisted System, Dark, and Light appearance preferences using native color-scheme behavior.
 - Replace the placeholder icon with an attributed CC BY-SA OpenMoji adaptation, a stable Night Deck install icon, an adaptive Signal-light/Night-dark favicon and in-app mark, and real Apple touch, PWA, and maskable assets.
 - Add a guarded per-PR Merge control that is visibly unavailable under current read-only App permissions and, once enabled, reauthorizes the signed-in user, revalidates exact current PR/protection/OpenSpec state, confirms the repository convention `merge_commit`, and refreshes sanitized outcomes.
+- Author the dependency-free browser behavior in TypeScript, compile it with Bun for every development, test, start, and container path, and replace opaque boolean clusters with named states and predicates without changing dashboard behavior.
 - Keep GitHub App permission changes, installation approvals, deployment verification, and a production merge proof in a separate post-merge operational change.
 
 ## Capabilities
@@ -34,7 +35,7 @@ The live Command Deck now exposes enough pull requests, deployments, and OpenSpe
 
 ## Impact
 
-- Affects the dashboard/server routes, dependency-free client filtering and sorting, browser-local configuration and File System Access flow, GitHub client and event projection, authentication/authorization checks, styles, and focused behavioral/accessibility tests.
+- Affects the dashboard/server routes, Bun-built TypeScript browser entry, dependency-free client filtering and sorting, browser-local configuration and File System Access flow, GitHub client and event projection, authentication/authorization checks, styles, packaging, and focused behavioral/accessibility tests.
 - Adds no dependency and sends no local checkout handle, path, file, branch, or OpenSpec data to the server.
 - Persists only the allowlisted pull-request sort mode and direction browser-locally. PR #8 does not produce, select, parse, or consume Codex activity; `mirror-codex-activity-order` owns that later producer and activation contract.
 - Depends on PR #5 merged as `aeebad98c560dcb3b2d998837f4141b90a36ea5b` on current `main`; that prerequisite is verified.

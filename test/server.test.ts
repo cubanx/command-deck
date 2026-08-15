@@ -6,13 +6,50 @@ import {
 	createSession,
 	upsertIdentity,
 } from "#/access";
+import { mutateUser } from "#/db";
 import { reconcileInstallations } from "#/github";
+import { advanceMergeIntent, mergeIntentFor } from "#/merge";
 import { createApp } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
 
 const fetchTarget: {
 	fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 } = globalThis;
+
+const seedMergePullRequest = async (db: Parameters<typeof mutateUser>[0]) => {
+	await upsertIdentity(db, "u", "kira");
+	await bindInstallation(db, "u", "12", "cubanx");
+	await mutateUser(db, "u", (user) => {
+		const installation = user.installations[0]!;
+		installation.permissions = { pull_requests: "write" };
+		installation.repositories = [
+			{
+				repositoryId: "42",
+				full_name: "Crisp-Inc/dev-command-center",
+				openSpecs: [],
+				deployments: [],
+				pullRequests: [
+					{
+						number: 8,
+						title: "Hold the line",
+						author_login: "kira",
+						state: "open",
+						draft: false,
+						head_sha: "a".repeat(40),
+						mergeable: "clean",
+					},
+				],
+			},
+		];
+	});
+};
+
+const mergeTarget = new URLSearchParams({
+	installationId: "12",
+	repositoryId: "42",
+	number: "8",
+	headSha: "a".repeat(40),
+}).toString();
 
 test("public PWA assets and streams are isolated", () =>
 	withDatabase(async (db) => {
@@ -219,6 +256,10 @@ test("dashboard configuration centralizes local checkout, notifications, appeara
 		expect(javascript).toContain("requestPermission");
 		expect(javascript).toContain("Connect organization root");
 		expect(javascript).toContain("Permission required");
+		expect(javascript).toContain(">Merge</button>");
+		expect(javascript).toContain(
+			"Pull requests write permission approval is required",
+		);
 		expect(javascript).not.toContain("/api/checkouts");
 		expect(javascript).not.toContain("/api/local-evidence");
 		expect(javascript).not.toContain("response.json().catch");
@@ -336,6 +377,206 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 		} finally {
 			globalThis.fetch = original;
 		}
+	}));
+
+test("merge start and confirmation bind the session, origin, exact node ID, and refresh failures", () =>
+	withDatabase(async (db) => {
+		await seedMergePullRequest(db);
+		const session = await createSession(db, "u");
+		const provider = {
+			inspect: async () => ({
+				pullRequestId: "PR_kwDOA",
+				state: "open",
+				draft: false,
+				head_sha: "a".repeat(40),
+				mergeable: "clean",
+				workflow_state: "success",
+				checks_state: "success",
+				review_state: "approved",
+				merge_method: "MERGE",
+				protection: "clear",
+			}),
+			merge: async (_intent: unknown, variables: Record<string, string>) => {
+				expect(variables).toEqual({
+					pullRequestId: "PR_kwDOA",
+					expectedHeadOid: "a".repeat(40),
+					mergeMethod: "MERGE",
+				});
+				return { merged: true };
+			},
+		};
+		const app = createApp(
+			db,
+			{ ...testConfig, githubClientId: "client" },
+			provider,
+		);
+		const post = (
+			path: string,
+			body = mergeTarget,
+			headers: HeadersInit = {},
+		) =>
+			app.fetch(
+				new Request(`http://local${path}`, {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${session.token}`,
+						"content-type": "application/x-www-form-urlencoded",
+						...headers,
+					},
+					body,
+				}),
+			);
+		const start = await post("/api/merge/start");
+		expect(start.status).toBe(302);
+		const token = new URL(start.headers.get("location") ?? "").searchParams.get(
+			"state",
+		);
+		expect(token).toBeTruthy();
+		expect(await mergeIntentFor(db, token!)).toMatchObject({
+			fullName: "Crisp-Inc/dev-command-center",
+			pullRequestTitle: "Hold the line",
+		});
+		expect(JSON.stringify(await db.mergeIntents.findOne({}))).not.toContain(
+			session.token,
+		);
+		await advanceMergeIntent(db, token!, "started", "authorized", undefined, {
+			pullRequestId: "PR_kwDOA",
+		});
+		const events = await app.fetch(
+			new Request("http://local/events", {
+				headers: { cookie: `dcc_session=${session.token}` },
+			}),
+		);
+		const reader = events.body?.getReader();
+		if (!reader) throw new Error("event stream body missing");
+		await reader.read();
+		expect(
+			await (
+				await post(
+					"/api/merge/confirm",
+					new URLSearchParams({ confirmation: token! }).toString(),
+				)
+			).json(),
+		).toEqual({ status: "success" });
+		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+			"event: refresh",
+		);
+		await reader.cancel();
+		expect(
+			(
+				await post(
+					"/api/merge/confirm",
+					new URLSearchParams({ confirmation: token! }).toString(),
+				)
+			).status,
+		).toBe(409);
+		const production = createApp(
+			db,
+			{
+				...testConfig,
+				production: true,
+				publicUrl: "https://command-center.example",
+				githubClientId: "client",
+			},
+			provider,
+		);
+		expect(
+			(
+				await production.fetch(
+					new Request("http://local/api/merge/start", {
+						method: "POST",
+						headers: {
+							cookie: `dcc_session=${session.token}`,
+							"content-type": "application/x-www-form-urlencoded",
+						},
+						body: mergeTarget,
+					}),
+				)
+			).status,
+		).toBe(400);
+	}));
+
+test("merge confirmation refuses removed bindings and incomplete OpenSpec without mutation", () =>
+	withDatabase(async (db) => {
+		await seedMergePullRequest(db);
+		const session = await createSession(db, "u");
+		let mutations = 0;
+		const provider = {
+			inspect: async () => ({
+				pullRequestId: "PR_kwDOA",
+				state: "open",
+				draft: false,
+				head_sha: "a".repeat(40),
+				mergeable: "clean",
+				workflow_state: "success",
+				checks_state: "success",
+				review_state: "approved",
+				merge_method: "MERGE",
+				protection: "clear",
+			}),
+			merge: async () => {
+				mutations++;
+				return { merged: true };
+			},
+		};
+		const app = createApp(
+			db,
+			{ ...testConfig, githubClientId: "client" },
+			provider,
+		);
+		const post = (confirmation: string) =>
+			app.fetch(
+				new Request("http://local/api/merge/confirm", {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${session.token}`,
+						"content-type": "application/x-www-form-urlencoded",
+					},
+					body: new URLSearchParams({ confirmation }).toString(),
+				}),
+			);
+		const start = async () => {
+			const response = await app.fetch(
+				new Request("http://local/api/merge/start", {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${session.token}`,
+						"content-type": "application/x-www-form-urlencoded",
+					},
+					body: mergeTarget,
+				}),
+			);
+			const state = new URL(
+				response.headers.get("location") ?? "",
+			).searchParams.get("state");
+			if (!state) throw new Error("merge state missing");
+			await advanceMergeIntent(db, state, "started", "authorized", undefined, {
+				pullRequestId: "PR_kwDOA",
+			});
+			return state;
+		};
+		const removed = await start();
+		await mutateUser(db, "u", (user) => {
+			user.installations = [];
+		});
+		expect((await post(removed)).status).toBe(409);
+		expect(mutations).toBe(0);
+		await seedMergePullRequest(db);
+		const incomplete = await start();
+		await mutateUser(db, "u", (user) => {
+			const repository = user.installations[0]?.repositories[0];
+			if (!repository) throw new Error("merge repository missing");
+			repository.openSpecs = [
+				{
+					change_name: "hold-the-line",
+					completed: 1,
+					total: 2,
+					source_commit: "a".repeat(40),
+				},
+			];
+		});
+		expect((await post(incomplete)).status).toBe(409);
+		expect(mutations).toBe(0);
 	}));
 
 test("local demo serves snapshot and SSE without a session and exposes no Railway routes", () =>

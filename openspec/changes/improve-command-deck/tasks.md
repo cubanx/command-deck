@@ -67,23 +67,27 @@ Checkpoint: stop for user review after Group 6.
 
 ## 7. Guarded per-PR Merge control
 
-- [ ] 7.1 Add focused disabled-permission and accessibility tests showing an unavailable Merge control and reason under current read-only installation permissions.
-- [ ] 7.2 Add authorization tests for session-bound single-use merge OAuth intent, identity mismatch, missing/foreign installation or repository, insufficient current user role, and non-persistence of the request-local user token.
-- [ ] 7.3 Add eligibility tests for closed/draft PRs, mergeability, protections/rulesets, required checks/reviews, allowed merge method, and existing OpenSpec completion policy.
-- [ ] 7.4 Add exact-head race, action-time confirmation, protected-state refusal, permission absence, sanitized conflict, immediate refresh, and success tests.
-- [ ] 7.5 Implement action-time user reauthorization and role proof before minting installation authority; fail closed if role proof requires an unapproved OAuth scope change.
-- [ ] 7.6 Implement authoritative eligibility re-fetch and confirmation bound to repository, PR number/title, exact head SHA, and `MERGE`, rechecking all mutable gates before mutation.
-- [ ] 7.7 Implement GraphQL `mergePullRequest` with `expectedHeadOid` and `mergeMethod: MERGE`, sanitized outcome categories, and immediate projection refresh.
-- [ ] 7.8 Render the per-card Merge control while leaving it unavailable until the separate operational permission rollout succeeds.
-- [ ] 7.9 Run focused authorization/merge tests, typecheck, and diff check.
+- [x] 7.1 Add focused disabled-permission and accessibility tests showing an unavailable Merge control and reason under current read-only installation permissions.
+- [x] 7.2 Add authorization tests for session-bound single-use merge OAuth intent, identity mismatch, missing/foreign installation or repository, insufficient current user role, and non-persistence of the request-local user token.
+- [x] 7.3 Add eligibility tests for closed/draft PRs, mergeability, protections/rulesets, required checks/reviews, allowed merge method, and existing OpenSpec completion policy.
+- [x] 7.4 Add exact-head race, action-time confirmation, protected-state refusal, permission absence, sanitized conflict, immediate refresh, and success tests.
+- [x] 7.5 Implement action-time user reauthorization and role proof before minting installation authority; fail closed if role proof requires an unapproved OAuth scope change.
+- [x] 7.6 Implement authoritative eligibility re-fetch and confirmation bound to repository, PR number/title, exact head SHA, and `MERGE`, rechecking all mutable gates before mutation.
+- [x] 7.7 Implement GraphQL `mergePullRequest` with `expectedHeadOid` and `mergeMethod: MERGE`, sanitized outcome categories, and immediate projection refresh.
+- [x] 7.8 Render the per-card Merge control while leaving it unavailable until the separate operational permission rollout succeeds.
+- [x] 7.9 Run focused authorization/merge tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 7.
 
 ## 8. Integrated validation and handoff
 
-- [ ] 8.1 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
-- [ ] 8.2 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
-- [ ] 8.3 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
-- [ ] 8.4 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
+- [x] 8.1 Add focused failing tests for a Bun-built TypeScript browser entry, behavior-preserving named client states/predicates, the exact search match path, and sanitized logging of browser-local load failures.
+- [x] 8.2 Migrate `src/web/app.js` to dependency-free `src/web/app.ts`, replace concentrated positional/unnamed boolean clusters with named states, predicates, or input objects, verify the reported ignored `includes` position argument is absent, and log sanitized load failure context.
+- [x] 8.3 Wire the smallest Bun-native browser build into development, start, test, validation, and container packaging so no path can serve a stale artifact and generated JavaScript remains uncommitted.
+- [x] 8.4 Run focused browser tests, typecheck, package build, container build, strict OpenSpec validation, and `git diff --check`.
+- [ ] 8.5 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
+- [ ] 8.6 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
+- [ ] 8.7 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
+- [ ] 8.8 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
 
 Checkpoint: stop for final user review before any commit, push, pull request, deployment, provider change, or production action.

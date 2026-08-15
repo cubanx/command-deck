@@ -29,6 +29,18 @@ The observed live page currently renders 16 pull-request cards and 35 deployment
 
 ## Decisions
 
+### Build the browser entry from TypeScript with Bun
+
+Keep one dependency-free browser entry in `src/web/app.ts` and use Bun's native bundler to emit the JavaScript served by the application. Development, start, test, validation, and container packaging paths build before consuming that output so a stale artifact cannot mask the TypeScript source. Generated JavaScript is not a reviewed source artifact and remains uncommitted.
+
+Model multi-step browser behavior with small named string states, named predicates, and input objects where positional booleans obscure intent. Browser-storage failures remain sanitized but are logged rather than silently swallowed. This is a source-safety and reviewability change only; it does not alter dashboard behavior or introduce a client framework.
+
+Use explicit minimal types for dashboard, pull-request, OpenSpec, repository, notification, deployment, and checkout-handle data. Treat JSON and IndexedDB values as `unknown` until narrow boundary guards accept only the fields the browser consumes; do not replace those contracts with a catch-all dynamic record.
+
+Direct source verification found no `includes` call with a second position argument; the existing exact-search behavior is retained under a focused regression test rather than changing a nonexistent call site.
+
+Alternatives rejected: continuing unchecked JavaScript preserves the review problem; adding a browser framework or another build dependency is unnecessary because Bun already provides the required compiler and bundler.
+
 ### Use native disclosure and one hash-addressed configuration section
 
 Render OpenSpec evidence with collapsed `<details>` and `<summary>` elements. Replace both top actions with links to the same `#configuration` section, preserving browser history, focus, and no-framework operation. The dashboard section keeps a non-visual accessible name through the existing ARIA or visually-hidden convention.

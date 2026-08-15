@@ -15,6 +15,7 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(commands.commands).toEqual([
 		"bun run check",
 		"bun run typecheck",
+		"bun run build:web",
 		"bun run check:crap",
 	]);
 	expect(ciCommands.sort()).toEqual([...commands.commands].sort());
