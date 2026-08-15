@@ -7,6 +7,14 @@ The system SHALL update affected local pull-request, review, check, workflow, in
 - **WHEN** a supported pull-request webhook changes a tracked pull request
 - **THEN** the installation-scoped projection is inserted, updated, or removed without listing all pull requests from GitHub
 
+#### Scenario: Deployment status changes
+- **WHEN** a signed `deployment` or `deployment_status` delivery from an approved installation account changes a deployment in a selected repository
+- **THEN** the installation-scoped GitHub deployment projection is inserted or updated idempotently without a Railway API read
+
+#### Scenario: Retained delivery has an unapproved installation account
+- **WHEN** a legacy or directly queued delivery is processed with a missing or unapproved installation account login
+- **THEN** it produces no installation, repository, pull-request, deployment, OpenSpec, or notification mutation and performs no provider fetch
+
 #### Scenario: Actions workflow fails
 - **WHEN** a supported signed `workflow_run` event reports a failed workflow with authoritative identity, name, and GitHub run URL
 - **THEN** the pull-request projection retains that failure detail for a linked dashboard action without changing the Checks aggregate

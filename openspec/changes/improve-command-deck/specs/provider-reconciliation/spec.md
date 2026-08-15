@@ -15,6 +15,10 @@ The system SHALL make reconciliation reads serially, store authenticated respons
 - **WHEN** a provider response supplies a retry or reset time
 - **THEN** the system stops immediate retries and waits until the instructed time before its bounded retry
 
+#### Scenario: Later page fails
+- **WHEN** any repository or open-pull-request page fails after bounded retries
+- **THEN** the system preserves the complete prior projection, removes no rows from the incomplete result, and exposes stale/error state
+
 ## ADDED Requirements
 
 ### Requirement: User-scoped immediate reconciliation

@@ -85,9 +85,9 @@ Checkpoint: stop for user review after Group 7.
 - [x] 8.2 Migrate `src/web/app.js` to dependency-free `src/web/app.ts`, replace concentrated positional/unnamed boolean clusters with named states, predicates, or input objects, verify the reported ignored `includes` position argument is absent, and log sanitized load failure context.
 - [x] 8.3 Wire the smallest Bun-native browser build into development, start, test, validation, and container packaging so no path can serve a stale artifact and generated JavaScript remains uncommitted.
 - [x] 8.4 Run focused browser tests, typecheck, package build, container build, strict OpenSpec validation, and `git diff --check`.
-- [ ] 8.5 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
-- [ ] 8.6 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
-- [ ] 8.7 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
-- [ ] 8.8 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
+- [x] 8.5 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
+- [x] 8.6 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
+- [x] 8.7 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
+- [x] 8.8 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
 
 Checkpoint: stop for final user review before any commit, push, pull request, deployment, provider change, or production action.

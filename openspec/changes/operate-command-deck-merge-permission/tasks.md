@@ -1,3 +1,5 @@
+PR #8 handoff dependency: this entire operational change remains blocked until intended PR #8 is merged, its exact merge SHA is verified on updated current `main`, and that exact code is deployed and healthy. Recording this dependency is not operational authorization.
+
 ## 1. Verify blocked prerequisite
 
 - [ ] 1.1 Verify intended PR #8 is merged and record its exact merge SHA from GitHub.

@@ -22,7 +22,11 @@ Stop the disposable test database with `docker stop dcc-mongodb-test`. Tests cre
 
 Open `http://localhost:3000`. The development command binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
 
-Use **Connect local checkout** to grant the browser read-only access to a repository. The PWA reads only `.git/HEAD` and `openspec/changes/*/tasks.md`, matches that evidence to a PR, presents the complete current unfinished group inside the PR card, and can open the selected task file without uploading its path or contents. Browsers without the native directory picker continue to show committed GitHub projections.
+Both top-level actions open one configuration screen for local checkouts, notifications, appearance, and manual reconciliation. **Reconcile now** reuses the authenticated, user-scoped installation reconciliation path and reports running, success, or sanitized failure state.
+
+On browsers with the File System Access API, grant read-only access to one organization root and the PWA resolves known repositories beneath it by stable repository identity. Exact per-repository overrides cover nonstandard layouts; unresolved or unverified folders are never associated silently. Directory handles persist in IndexedDB and permissions are revalidated after reload. The browser reads only repository identity, `.git/HEAD`, and `openspec/changes/*/tasks.md`; handles, paths, files, branches, and local OpenSpec data never leave the browser. Browsers without the directory picker continue to show committed GitHub projections.
+
+Appearance supports System, Dark, and Light and persists locally. System follows the current browser color scheme. Merge controls remain explicitly unavailable while the GitHub App installation has read-only Pull requests permission; `operate-command-deck-merge-permission` owns the separate post-merge permission rollout and proof.
 
 For real provider integration, copy `.env.example` to `.env`, supply a development GitHub App, leave `DCC_LOCAL_DEMO=0`, and use `bun run start`. Local webhooks additionally require a public forwarding URL.
 
