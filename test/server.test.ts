@@ -56,11 +56,13 @@ test("public PWA assets and streams are isolated", () =>
 		const app = createApp(db, testConfig);
 		for (const [path, type] of [
 			["/", "text/html; charset=utf-8"],
+			["/configuration", "text/html; charset=utf-8"],
 			["/app.css", "text/css"],
 			["/app.js", "text/javascript"],
 			["/manifest.webmanifest", "application/manifest+json"],
 			["/icon.svg", "image/svg+xml"],
 			["/icon-adaptive.svg", "image/svg+xml"],
+			["/avatar-fixture.svg", "image/svg+xml"],
 		]) {
 			const response = await app.fetch(new Request(`http://local${path}`));
 			expect(response.headers.get("content-type")).toBe(type);
@@ -128,6 +130,7 @@ test("public PWA assets and streams are isolated", () =>
 			await app.fetch(new Request("http://local/sw.js"))
 		).text();
 		expect(worker).toContain("/icon-adaptive.svg");
+		expect(worker).toContain("/avatar-fixture.svg");
 		expect(worker).toContain("/apple-touch-icon.png");
 		expect(worker).toContain("/icon-maskable-512.png");
 		expect(worker).toContain("PATHS.has(u.pathname)");
@@ -139,9 +142,12 @@ test("public PWA assets and streams are isolated", () =>
 				"cache-control",
 			),
 		).toContain("no-cache");
-		expect(shell).toContain("/app.js?v=4");
+		expect(shell).toContain("/app.js?v=7");
 		const javascript = await (
 			await app.fetch(new Request("http://local/app.js"))
+		).text();
+		const css = await (
+			await app.fetch(new Request("http://local/app.css"))
 		).text();
 		expect(javascript).toContain("showDirectoryPicker");
 		expect(javascript).toContain("Provider reconciliation is stale.");
@@ -207,6 +213,9 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).not.toContain("Pull requests needing attention");
 		expect(javascript).toContain('id="pr-search"');
 		expect(javascript).toContain('class="pr-controls"');
+		expect(javascript).toContain('class="control-group search-results"');
+		expect(javascript).toContain('class="control-group filters"');
+		expect(javascript).toContain('class="control-group sorting"');
 		expect(javascript).toContain('aria-live="polite"');
 		expect(javascript).toContain("Clear");
 		expect(javascript).toContain('event.key === "/"');
@@ -232,21 +241,50 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		).text();
 		expect(css).toContain("position: sticky");
 		expect(css).toContain("flex-wrap: wrap");
+		expect(css).toContain("flex-direction: column");
+		expect(css).toContain(".control-group");
+		expect(css).toContain(':root[data-appearance="dark"] .openspec');
+		expect(css).toContain(".openspec a");
 		await app.drain();
 	}));
 
-test("dashboard configuration centralizes local checkout, notifications, appearance, and reconciliation", () =>
+test("avatar navigation opens one dedicated configuration page", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
 		await app.drain();
 		const javascript = await (
 			await app.fetch(new Request("http://local/app.js"))
 		).text();
-		expect(javascript).toContain('href="#configuration"');
-		expect(javascript).toContain('id="configuration"');
-		expect(javascript).toContain("Connect local checkout");
+		const css = await (
+			await app.fetch(new Request("http://local/app.css"))
+		).text();
+		expect(javascript).toContain('class="avatar-menu"');
+		expect(javascript).toContain('class="brand brand-home" href="/"');
+		expect(javascript).toContain('aria-label="User menu"');
+		expect(javascript).toContain('class="appearance-menu"');
+		expect(javascript).toContain('class="appearance-check"');
+		expect(javascript).toContain("✓");
+		expect(javascript).toContain('src="/avatar-fixture.svg"');
+		expect(javascript).toContain('href="/configuration"');
+		expect(javascript).toContain("⚙ Configuration");
+		expect(javascript).toContain('"menu-appearance"');
+		expect(javascript).toContain('id="configuration-title"');
+		expect(javascript).toContain("globalThis.location?.pathname");
+		expect(javascript).toContain('event.key === "Escape"');
+		expect(javascript).toContain('addEventListener("focusout"');
+		expect(javascript).toContain("avatarMenu.open = false");
+		expect(javascript).not.toContain('href="#configuration"');
+		expect(javascript).not.toContain("Connect local checkout");
 		expect(javascript).toContain("Enable notifications");
-		expect(javascript).toContain('name="appearance"');
+		expect(javascript).not.toContain('appearanceChoicesMarkup("appearance")');
+		expect(css).toContain("width: min(220px");
+		expect(css).toContain(".appearance-menu label");
+		expect(css).toContain(".configuration-link");
+		expect(css).toContain("text-decoration: none");
+		expect(css).toContain(".brand-home");
+		expect(css).toContain("header,\n.brand {");
+		expect(css).toContain("align-items: flex-start");
+		expect(css).toContain("flex-wrap: nowrap");
 		expect(javascript).toContain("value[0].toUpperCase()");
 		expect(javascript).toContain("Reconcile now");
 		expect(javascript).toContain("localStorage");
@@ -256,18 +294,17 @@ test("dashboard configuration centralizes local checkout, notifications, appeara
 		expect(javascript).toContain("requestPermission");
 		expect(javascript).toContain("Connect organization root");
 		expect(javascript).toContain("Permission required");
-		expect(javascript).toContain(">Merge</button>");
-		expect(javascript).toContain(
-			"Pull requests write permission approval is required",
-		);
+		expect(javascript).toContain('class="pr-card-header"');
+		expect(javascript).not.toContain('type="button" disabled');
+		expect(css).toContain(".pr-card-header h3 a");
+		expect(css).toContain("color: #7dd3fc");
 		expect(javascript).not.toContain("/api/checkouts");
 		expect(javascript).not.toContain("/api/local-evidence");
 		expect(javascript).not.toContain("response.json().catch");
-		const css = await (
-			await app.fetch(new Request("http://local/app.css"))
-		).text();
 		expect(css).toContain('[data-appearance="dark"]');
 		expect(css).toContain("color-scheme");
+		expect(css).toContain(".avatar-menu");
+		expect(css).toContain(".user-avatar");
 	}));
 
 test("reconcile route requires an authenticated user with an approved bound installation", () =>

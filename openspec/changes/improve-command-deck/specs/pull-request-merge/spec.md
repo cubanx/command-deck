@@ -5,15 +5,15 @@ Provides a least-privilege per-pull-request merge action that preserves user aut
 ## ADDED Requirements
 
 ### Requirement: Merge availability is explicit and fail-closed
-Each pull-request card SHALL expose a Merge control and SHALL leave it visibly unavailable with an accessible reason unless the current GitHub App installation permission and projected pull-request state can support a guarded merge.
+Each pull-request card SHALL render a Merge control beside its linked title only when the same authoritative `mergeable=true` or clean projection used by the Mergeable status bucket, plus current GitHub App Pull requests write permission, open state, and non-draft state, can support a guarded merge. Otherwise the card SHALL render no Merge action. Server authorization and action-time eligibility SHALL remain fail-closed for direct requests.
 
 #### Scenario: Installation remains read-only
 - **WHEN** the installation lacks the required pull-request write permission
-- **THEN** the Merge control is disabled and explains that installation permission approval is still required
+- **THEN** the card renders no Merge action
 
 #### Scenario: Projected state is ineligible
-- **WHEN** the pull request is closed, draft, stale, incomplete under OpenSpec policy, or visibly blocked by mergeability, checks, reviews, or protection state
-- **THEN** the control is unavailable with the applicable non-sensitive reason
+- **WHEN** the pull request is closed, draft, or not authoritatively projected as `mergeable=true` or clean
+- **THEN** the card renders no Merge action while its status and blocker evidence remain visible
 
 ### Requirement: Signed-in user authority is verified before installation authority
 The system SHALL immediately verify that the signed-in GitHub user has a current repository role permitted to merge the exact repository before obtaining or using installation authority, SHALL preserve installation account allowlisting and user binding, and SHALL fail closed without persisting a broad user token.

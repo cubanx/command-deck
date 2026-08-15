@@ -41,15 +41,21 @@ Direct source verification found no `includes` call with a second position argum
 
 Alternatives rejected: continuing unchecked JavaScript preserves the review problem; adding a browser framework or another build dependency is unnecessary because Bun already provides the required compiler and bundler.
 
-### Use native disclosure and one hash-addressed configuration section
+### Use native disclosure, avatar navigation, and one configuration page
 
-Render OpenSpec evidence with collapsed `<details>` and `<summary>` elements. Replace both top actions with links to the same `#configuration` section, preserving browser history, focus, and no-framework operation. The dashboard section keeps a non-visual accessible name through the existing ARIA or visually-hidden convention.
+Render OpenSpec evidence with collapsed `<details>` and `<summary>` elements. In every appearance, use an appearance-aware disclosure surface that is darker than the current light panel and retains readable text, links, borders, disclosure markers, and focus states.
 
-Alternatives rejected: a custom accordion/state component duplicates native accessibility; separate checkout, notification, and appearance views fragment a small application; a modal traps a configuration surface that should be linkable.
+Project the signed-in user's validated GitHub avatar into the dashboard shell and place it at the right edge of the navbar. Wrap the existing brand mark and Command center hero in one native home link with one accessible tab stop. Keep the navbar and brand on one non-wrapping row, top-align the logo, title, and avatar, and let the subtitle remain beneath the title. Use a native `<details>` disclosure for the avatar menu so keyboard activation, expanded state, and focus behavior do not require a custom menu framework. Keep the panel compact and present Appearance as three vertical System, Light, and Dark menu choices with a checkmark on the active choice. A gear-labelled Configuration link follows them and is styled as a menu row while retaining native link semantics. Escape, focus loss, or an outside activation closes the disclosure without trapping focus.
+
+The Configuration link opens a dedicated `/configuration` page. Move organization roots, repository overrides and resolution states, notification permission, and `Reconcile now` to that page. The dashboard header and body no longer render Connect local checkout, Enable notifications, or the old inline configuration section. Appearance remains solely in the avatar menu so there is one control surface and one browser-local preference.
+
+Only the authenticated user's avatar may enter their snapshot. Accept a normalized HTTPS GitHub avatar URL, render it through an escaped `img` attribute, and use a safe local fallback when it is missing or invalid. Local demo mode uses a committed same-origin fictional avatar image so the image layout is testable without a network request or a real person's image.
+
+Alternatives rejected: a custom accordion or menu duplicates native accessibility; separate checkout and notification pages fragment one configuration surface; a modal is not a durable or linkable settings destination; retaining the old header actions would leave two competing configuration paths.
 
 ### Derive one filtered pull-request view with native controls
 
-Keep a compact controls bar sticky while the pull-request list scrolls. Use a labeled search input, clickable status pills, a searchable native disclosure containing repository checkboxes, a labeled native sort selector and direction control, a visible final result count, and one Clear action. Preserve DOM focus order and let native controls wrap on narrow screens. `/` focuses search; Escape clears it while focused.
+Keep a compact controls bar sticky while the pull-request list scrolls. Organize it into three stable semantic groups in DOM order: search with final result count and Clear; status, Actions, Checks, and repository filters; then sort mode, direction, and the unavailable Codex explanation. Use a labeled search input, clickable status pills, a searchable native disclosure containing repository checkboxes, a labeled native sort selector and direction control, a visible final result count, and one Clear action. Each group wraps or stacks as a unit on narrow screens so labels do not become detached from controls. Preserve DOM focus order. `/` focuses search; Escape clears it while focused.
 
 Classify each pull request once with exact precedence: Mergeable when the authoritative projection is `mergeable=true` or clean, even when draft; Ready for review for remaining non-drafts; Draft for remaining drafts. These buckets, Actions, and Checks remain filters and do not duplicate sort modes.
 
@@ -97,9 +103,9 @@ Only after role proof does the server obtain an installation token, verify appro
 
 Alternatives rejected: cached session identity is not current authorization; installation-only role checks use installation authority too early; a persisted user token broadens breach impact; a broad personal token violates the installation model.
 
-### Ship the Merge control disabled until operational approval
+### Render Merge only when the projected action is available
 
-The UI detects the installation permission projection and explains why Merge is unavailable under read-only permissions. Code paths and tests land in PR #8, but the separate operational change owns permission proof and rollout. The implementation targets Pull requests write and does not request Contents write; the operational gate must prove the GraphQL permission before any change.
+Use one projected-mergeable predicate for both the Mergeable pill and Merge action: boolean or normalized string `true`, or `clean`. Place the native Merge form beside the linked pull-request title only when that predicate and the existing open, non-draft, and installation Pull requests write gates all pass. Otherwise render no Merge action; status pills and blocker evidence continue to explain the projected state. Code paths and tests land in PR #8, but the separate operational change owns permission proof and rollout. The implementation targets Pull requests write and does not request Contents write; the operational gate must prove the GraphQL permission before any change. Direct requests and action-time confirmation remain fail-closed regardless of client rendering.
 
 ### Adapt one Creative Commons mark into native install assets
 
@@ -112,7 +118,7 @@ Use Sina Schulz's OpenMoji control-knobs artwork under CC BY-SA 4.0, recolor it 
 - [Scheduled and manual reconciliation can contend] → Share one in-flight guard and return explicit running state.
 - [Deployment provider ordering is under-specified] → Preserve status ID and creation time, prove the failing sequence, and stop if evidence is insufficient.
 - [Action-time OAuth adds a redirect] → Bind a short-lived intent and return to the exact PR card; accept the redirect to avoid stored user authority.
-- [GraphQL App permission mapping is not fully documented] → Keep the control disabled and require the operational proof before requesting permission.
+- [GraphQL App permission mapping is not fully documented] → Keep the action absent and require the operational proof before requesting permission.
 - [Repository merge policy changes] → Re-fetch allowed methods and fail closed if `MERGE` is unavailable.
 - [Fuzzy matches obscure exact results] → Use deterministic score tiers and keep numeric PR queries exact.
 - [Sticky controls crowd narrow screens] → Let native controls wrap in DOM order and keep every label and action keyboard reachable.
@@ -120,7 +126,7 @@ Use Sina Schulz's OpenMoji control-knobs artwork under CC BY-SA 4.0, recolor it 
 ## Migration Plan
 
 1. The PR-owned `establish-code-quality-safety` change is complete and locally validated, so this change may resume after Group 2.
-2. Land PR #8 with browser-local storage migration from no saved configuration, the Merge control disabled under existing permissions, and focused tests.
+2. Land PR #8 with browser-local storage migration from no saved configuration, the Merge action absent under existing permissions, and focused tests.
 3. Deploy through the existing separately authorized production workflow; no provider mutation is part of this change.
 4. Execute `operate-command-deck-merge-permission` only after the exact PR #8 merge SHA is verified on current `main` and deployed healthy.
 5. Roll back application code normally; browser-local configuration can remain inert. Disable the merge capability before changing permissions if any authorization gate fails.

@@ -73,11 +73,13 @@ type AppContext = {
 
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
 	["/", [html, "text/html; charset=utf-8"]],
+	["/configuration", [html, "text/html; charset=utf-8"]],
 	["/app.css", [css, "text/css"]],
 	["/manifest.webmanifest", [manifest, "application/manifest+json"]],
 	["/sw.js", [worker, "text/javascript", { "cache-control": "no-cache" }]],
 ]);
 const iconAssets = new Map<string, [string, string]>([
+	["/avatar-fixture.svg", ["avatar-fixture.svg", "image/svg+xml"]],
 	["/icon.svg", ["icon.svg", "image/svg+xml"]],
 	["/icon-adaptive.svg", ["icon-adaptive.svg", "image/svg+xml"]],
 	["/favicon-32.png", ["favicon-32.png", "image/png"]],

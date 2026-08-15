@@ -7,6 +7,7 @@ import {
 	dashboardForSession,
 	dashboardForUser,
 	LOCAL_DEMO_USER,
+	safeAvatarUrl,
 	seedBindings,
 	seedLocalDemo,
 	sessionUser,
@@ -31,10 +32,20 @@ test("OAuth state is one-time and expires", () =>
 		);
 	}));
 
-test("sessions are hashed, expire, and dashboard rows never cross bindings", () =>
+test("sessions are hashed, expire, and dashboard identity never crosses users", () =>
 	withDatabase(async (db) => {
-		await upsertIdentity(db, "u1", "sisko");
-		await upsertIdentity(db, "u2", "kira");
+		await upsertIdentity(
+			db,
+			"u1",
+			"sisko",
+			"https://avatars.githubusercontent.com/u/100?v=4",
+		);
+		await upsertIdentity(
+			db,
+			"u2",
+			"kira",
+			"https://avatars.githubusercontent.com/u/200?v=4",
+		);
 		await bindInstallation(db, "u1", "i1", "cubanx");
 		await bindInstallation(db, "u2", "i2", "cubanx");
 		const user = await db.users.findOne({ _id: "u1" });
@@ -59,12 +70,35 @@ test("sessions are hashed, expire, and dashboard rows never cross bindings", () 
 		expect((await sessionUser(db, token, new Date("2029-01-01")))?.id).toBe(
 			"u1",
 		);
-		expect(
-			(
-				await dashboardForSession(db, token, new Date("2029-01-01"))
-			).pullRequests.map((pr: any) => pr.number),
-		).toEqual([1]);
+		const dashboard = await dashboardForSession(
+			db,
+			token,
+			new Date("2029-01-01"),
+		);
+		expect(dashboard.pullRequests.map((pr: any) => pr.number)).toEqual([1]);
+		expect(dashboard.user).toEqual({
+			login: "sisko",
+			avatar_url: "https://avatars.githubusercontent.com/u/100?v=4",
+		});
+		expect(JSON.stringify(dashboard)).not.toContain("/u/200");
 		expect(await sessionUser(db, token, new Date("2031-01-01"))).toBeNull();
+	}));
+
+test("avatar URLs require credential-free HTTPS and invalid values are not projected", () =>
+	withDatabase(async (db) => {
+		expect(safeAvatarUrl("https://avatars.githubusercontent.com/u/9?v=4")).toBe(
+			"https://avatars.githubusercontent.com/u/9?v=4",
+		);
+		for (const value of [
+			"http://avatars.githubusercontent.com/u/9",
+			"https://user:secret@avatars.githubusercontent.com/u/9",
+			"javascript:alert(1)",
+			"not a url",
+		])
+			expect(safeAvatarUrl(value)).toBeUndefined();
+
+		await upsertIdentity(db, "u", "odo", "javascript:alert(1)");
+		expect((await dashboardForUser(db, "u")).user).toEqual({ login: "odo" });
 	}));
 
 test("dashboard shows every open authored PR across allowed installations, attention first", () =>
@@ -210,6 +244,10 @@ test("local demo projections are deterministic and isolated", () =>
 		expect(dashboard.pullRequests).toHaveLength(1);
 		expect(dashboard.deployments).toHaveLength(3);
 		expect(dashboard.notifications).toHaveLength(1);
+		expect(dashboard.user).toEqual({
+			login: "sisko",
+			fixture_avatar: true,
+		});
 		expect(dashboard.pullRequests[0]).toMatchObject({
 			title: "Build developer command center MVP",
 			url: "https://github.com/cubanx/dev-command-center/pull/1",

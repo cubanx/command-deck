@@ -1,6 +1,6 @@
 ## Why
 
-PR #8 can ship the guarded Merge control while installations remain read-only, but enabling and proving that control requires separately authorized GitHub App, installation, deployment, and production operations. Those operations must not become completion gates for the code pull request.
+PR #8 can ship the guarded Merge path while installations remain read-only and cards render no Merge action. Making the conditional action available and proving it requires separately authorized GitHub App, installation, deployment, and production operations. Those operations must not become completion gates for the code pull request.
 
 ## What Changes
 

@@ -5,7 +5,7 @@ PR #8 handoff dependency: this entire operational change remains blocked until i
 - [ ] 1.1 Verify intended PR #8 is merged and record its exact merge SHA from GitHub.
 - [ ] 1.2 Update current `main` and prove the exact merge SHA is an ancestor without local divergence.
 - [ ] 1.3 Verify the deployed revision equals or contains that exact SHA and capture task-specific health evidence.
-- [ ] 1.4 Confirm the Merge control remains explicitly unavailable before permission approval.
+- [ ] 1.4 Confirm no Merge action is rendered before permission approval.
 
 Gate: do not begin this group or any later group before PR #8 merge, exact-current-main ancestry, deployed revision, and health all pass. Each provider or production read requires its applicable authorization.
 
@@ -20,7 +20,7 @@ Gate: do not begin this group or any later group before PR #8 merge, exact-curre
 
 - [ ] 3.1 Enumerate and verify only the intended currently allowlisted installation accounts and repositories.
 - [ ] 3.2 Obtain separate approval for updated permissions on each intended installation account.
-- [ ] 3.3 Verify approved and unapproved installations show the correct enabled or unavailable Merge state with strict user isolation.
+- [ ] 3.3 Verify eligible pull requests on approved installations show Merge while unapproved or ineligible cards render no Merge action, with strict user isolation.
 
 ## 4. Deploy and verify configuration
 

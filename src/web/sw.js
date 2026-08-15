@@ -1,11 +1,12 @@
-const CACHE = "dcc-shell-v6";
+const CACHE = "dcc-shell-v10";
 const ASSETS = [
 	"/",
-	"/app.css?v=4",
-	"/app.js?v=4",
+	"/app.css?v=7",
+	"/app.js?v=7",
 	"/manifest.webmanifest",
 	"/icon.svg",
 	"/icon-adaptive.svg",
+	"/avatar-fixture.svg",
 	"/favicon-32.png",
 	"/apple-touch-icon.png",
 	"/icon-192.png",

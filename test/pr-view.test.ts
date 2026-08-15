@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import type { BrowserDirectoryHandle } from "#/web/app";
 import {
 	appearanceFor,
+	avatarUrlFor,
 	blockersFor,
 	bucketFor,
 	checkoutKey,
@@ -13,6 +14,8 @@ import {
 	loadFailureFor,
 	localSpecFor,
 	mergeControlFor,
+	mergeMarkup,
+	pageFor,
 	parseTasks,
 	persistVerifiedCheckout,
 	readCheckout,
@@ -240,6 +243,17 @@ test("appearance preference uses named inputs and explicit choices override Syst
 	});
 });
 
+test("avatar and page boundaries fail closed", () => {
+	expect(avatarUrlFor("https://avatars.githubusercontent.com/u/9?v=4")).toBe(
+		"https://avatars.githubusercontent.com/u/9?v=4",
+	);
+	expect(avatarUrlFor("http://avatars.githubusercontent.com/u/9")).toBeNull();
+	expect(avatarUrlFor("javascript:alert(1)")).toBeNull();
+	expect(pageFor("/configuration")).toBe("configuration");
+	expect(pageFor("/")).toBe("dashboard");
+	expect(pageFor("/anything-else")).toBe("dashboard");
+});
+
 test("local checkout keys, permissions, and remotes fail closed", () => {
 	expect(checkoutKey("Crisp-Inc", "42")).toBe("crisp-inc:42");
 	expect(checkoutStateFor({ supported: false })).toBe("Unsupported");
@@ -286,14 +300,17 @@ test("local checkout keys, permissions, and remotes fail closed", () => {
 });
 
 test("merge controls expose one named state instead of an opaque boolean chain", () => {
-	expect(
-		mergeControlFor({
+	for (const mergeable of [true, "true", "clean"]) {
+		const pullRequest = {
 			installation_pull_requests: "write",
 			state: "open",
 			draft: false,
-			mergeable: "clean",
-		}),
-	).toEqual({ state: "enabled" });
+			mergeable,
+		};
+		expect(bucketFor(pullRequest)).toBe("mergeable");
+		expect(mergeControlFor(pullRequest)).toEqual({ state: "enabled" });
+		expect(mergeMarkup(pullRequest)).toContain(">Merge</button>");
+	}
 	expect(
 		mergeControlFor({
 			installation_pull_requests: "read",
@@ -305,6 +322,22 @@ test("merge controls expose one named state instead of an opaque boolean chain",
 		state: "permission-required",
 		reason: "GitHub App Pull requests write permission approval is required.",
 	});
+	expect(
+		mergeMarkup({
+			installation_pull_requests: "read",
+			state: "open",
+			draft: false,
+			mergeable: true,
+		}),
+	).toBe("");
+	expect(
+		mergeMarkup({
+			installation_pull_requests: "write",
+			state: "open",
+			draft: false,
+			mergeable: "conflicting",
+		}),
+	).toBe("");
 });
 
 test("snapshot load failures log sanitized context and retain the existing message", () => {

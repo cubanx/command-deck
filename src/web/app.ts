@@ -59,6 +59,7 @@ type DeploymentProjection = {
 type DashboardSnapshot = {
 	error?: string;
 	stale?: boolean;
+	user?: { login: string; avatar_url?: string; fixture_avatar?: boolean };
 	pullRequests: PullRequest[];
 	deployments: DeploymentProjection[];
 	repositories: Repository[];
@@ -231,6 +232,19 @@ const isCheckoutRecord = (value: unknown): value is CheckoutRecord =>
 	isRecord(value) &&
 	typeof value.key === "string" &&
 	isBrowserDirectoryHandle(value.handle);
+export const avatarUrlFor = (value: unknown) => {
+	if (typeof value !== "string") return null;
+	try {
+		const url = new URL(value);
+		return url.protocol === "https:" && !url.username && !url.password
+			? url.href
+			: null;
+	} catch {
+		return null;
+	}
+};
+export const pageFor = (pathname: unknown) =>
+	pathname === "/configuration" ? "configuration" : "dashboard";
 const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 	if (!isRecord(value)) return null;
 	const pullRequests = Array.isArray(value.pullRequests)
@@ -250,10 +264,24 @@ const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 						typeof item.title === "string" &&
 						typeof item.body === "string",
 				)
-			: [];
+			: [],
+		avatarUrl = isRecord(value.user)
+			? avatarUrlFor(value.user.avatar_url)
+			: null,
+		user =
+			isRecord(value.user) && typeof value.user.login === "string"
+				? {
+						login: value.user.login,
+						...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+						...(value.user.fixture_avatar === true
+							? { fixture_avatar: true }
+							: {}),
+					}
+				: undefined;
 	return {
 		error: typeof value.error === "string" ? value.error : undefined,
 		stale: value.stale === true,
+		user,
 		pullRequests,
 		deployments,
 		repositories,
@@ -422,12 +450,10 @@ export const fuzzyScore = (query: unknown, value: unknown) => {
 		? 3
 		: Number.POSITIVE_INFINITY;
 };
+export const isProjectedMergeable = (pr: PullRequest) =>
+	pr.mergeable === true || ["true", "clean"].includes(normalized(pr.mergeable));
 export const bucketFor = (pr: PullRequest) =>
-	pr.mergeable === true || ["true", "clean"].includes(normalized(pr.mergeable))
-		? "mergeable"
-		: pr.draft
-			? "draft"
-			: "ready";
+	isProjectedMergeable(pr) ? "mergeable" : pr.draft ? "draft" : "ready";
 const failedState = (value: unknown) =>
 	[
 		"action_required",
@@ -1041,7 +1067,7 @@ export const mergeControlFor = (pr: PullRequest): MergeControl => {
 		},
 		{ blocked: pr.state !== "open", state: "closed" },
 		{ blocked: Boolean(pr.draft), state: "draft" },
-		{ blocked: pr.mergeable !== "clean", state: "blocked" },
+		{ blocked: !isProjectedMergeable(pr), state: "blocked" },
 	];
 	const blocked = gates.find((gate) => gate.blocked);
 	return blocked
@@ -1051,7 +1077,7 @@ export const mergeControlFor = (pr: PullRequest): MergeControl => {
 			}
 		: { state: "enabled" };
 };
-const mergeMarkup = (pr: PullRequest) =>
+export const mergeMarkup = (pr: PullRequest) =>
 	mergeControlFor(pr).state === "enabled"
 		? '<form method="post" action="/api/merge/start"><input type="hidden" name="installationId" value="' +
 			esc(pr.installation_id) +
@@ -1062,17 +1088,7 @@ const mergeMarkup = (pr: PullRequest) =>
 			'"><input type="hidden" name="headSha" value="' +
 			esc(pr.head_sha) +
 			'"><button type="submit">Merge</button></form>'
-		: '<p><button type="button" disabled aria-describedby="merge-' +
-			esc(pr.repository_id) +
-			"-" +
-			esc(pr.number) +
-			'">Merge</button> <span id="merge-' +
-			esc(pr.repository_id) +
-			"-" +
-			esc(pr.number) +
-			'" class="muted">' +
-			esc(mergeUnavailableReason) +
-			"</span></p>";
+		: "";
 const controlsMarkup = (
 	all: PullRequestItem[],
 	visible: DerivedPullRequest[],
@@ -1083,76 +1099,44 @@ const controlsMarkup = (
 		ready: "Ready for review",
 		draft: "Draft",
 	};
-	return (
-		'<div class="pr-controls"><label for="pr-search">Search pull requests</label><input id="pr-search" type="search" value="' +
-		esc(view.query) +
-		'" autocomplete="off"><fieldset><legend>Status</legend>' +
-		Object.entries(statusLabel)
-			.map(
-				([value, label]) =>
-					'<label class="filter-pill"><input id="status-' +
-					value +
-					'" type="checkbox" data-status="' +
-					value +
-					'" ' +
-					(view.statuses.has(value) ? "checked" : "") +
-					">" +
-					esc(label) +
-					"</label>",
-			)
-			.join("") +
-		'</fieldset><fieldset><legend>Failed state</legend><label class="filter-pill"><input id="failed-actions" type="checkbox" data-aggregate-filter="failedActions" ' +
-		(view.failedActions ? "checked" : "") +
-		'>Failed Actions</label><label class="filter-pill"><input id="failed-checks" type="checkbox" data-aggregate-filter="failedChecks" ' +
-		(view.failedChecks ? "checked" : "") +
-		'>Failed Checks</label></fieldset><label for="pr-sort">Sort pull requests</label><select id="pr-sort" aria-describedby="codex-activity-status"><option value="closest" ' +
-		(view.sort.mode === "closest" ? "selected" : "") +
-		'>Closest to merge</option><option value="codex" disabled aria-describedby="codex-activity-status">Codex activity (unavailable)</option><option value="updated" ' +
-		(view.sort.mode === "updated" ? "selected" : "") +
-		'>Recently updated</option><option value="number" ' +
-		(view.sort.mode === "number" ? "selected" : "") +
-		'>PR number</option><option value="progress" ' +
-		(view.sort.mode === "progress" ? "selected" : "") +
-		'>OpenSpec progress</option><option value="repository" ' +
-		(view.sort.mode === "repository" ? "selected" : "") +
-		'>Repository</option></select><span id="codex-activity-status" class="muted">Codex activity sorting is unavailable because no activity data is collected.</span><label for="pr-direction">' +
-		(view.sort.mode === "number"
+	const statusFilters = Object.entries(statusLabel)
+		.map(
+			([value, label]) =>
+				`<label class="filter-pill"><input id="status-${value}" type="checkbox" data-status="${value}" ${view.statuses.has(value) ? "checked" : ""}>${esc(label)}</label>`,
+		)
+		.join("");
+	const repositoryChoices = repositories.length
+		? repositories
+				.map(
+					(name, index) =>
+						`<label><input id="repository-${index}" type="checkbox" data-repository="${esc(name)}" ${view.repositories.has(name) ? "checked" : ""}>${esc(name)}</label>`,
+				)
+				.join("")
+		: '<span class="muted">No repositories match.</span>';
+	const searchGroup = `<div class="control-group search-results"><label for="pr-search">Search pull requests</label><input id="pr-search" type="search" value="${esc(view.query)}" autocomplete="off"><span id="pr-count" aria-live="polite">${esc(visible.length)} of ${esc(all.length)} pull requests</span><button id="clear-pr-filters" type="button">Clear</button></div>`;
+	const filterGroup = `<div class="control-group filters"><fieldset><legend>Status</legend>${statusFilters}</fieldset><fieldset><legend>Failed state</legend><label class="filter-pill"><input id="failed-actions" type="checkbox" data-aggregate-filter="failedActions" ${view.failedActions ? "checked" : ""}>Failed Actions</label><label class="filter-pill"><input id="failed-checks" type="checkbox" data-aggregate-filter="failedChecks" ${view.failedChecks ? "checked" : ""}>Failed Checks</label></fieldset><details class="repository-filter" ${view.repositoryOpen ? "open" : ""}><summary>Repositories${view.repositories.size ? ` (${view.repositories.size})` : ""}</summary><label for="repository-search">Find repository</label><input id="repository-search" type="search" value="${esc(view.repositoryQuery)}" autocomplete="off"><div class="repository-options">${repositoryChoices}</div></details></div>`;
+	const directionLabel =
+		view.sort.mode === "number"
 			? "PR number direction: Newest first or Oldest first"
-			: "Sort direction") +
-		'</label><select id="pr-direction"><option value="asc" ' +
-		(view.sort.direction === "asc" ? "selected" : "") +
-		'>Ascending</option><option value="desc" ' +
-		(view.sort.direction === "desc" ? "selected" : "") +
-		'>Descending</option></select><details class="repository-filter" ' +
-		(view.repositoryOpen ? "open" : "") +
-		"><summary>Repositories" +
-		(view.repositories.size ? ` (${view.repositories.size})` : "") +
-		'</summary><label for="repository-search">Find repository</label><input id="repository-search" type="search" value="' +
-		esc(view.repositoryQuery) +
-		'" autocomplete="off"><div class="repository-options">' +
-		(repositories.length
-			? repositories
-					.map(
-						(name, index) =>
-							'<label><input id="repository-' +
-							index +
-							'" type="checkbox" data-repository="' +
-							esc(name) +
-							'" ' +
-							(view.repositories.has(name) ? "checked" : "") +
-							">" +
-							esc(name) +
-							"</label>",
-					)
-					.join("")
-			: '<span class="muted">No repositories match.</span>') +
-		'</div></details><span id="pr-count" aria-live="polite">' +
-		esc(visible.length) +
-		" of " +
-		esc(all.length) +
-		' pull requests</span><button id="clear-pr-filters" type="button">Clear</button></div>'
-	);
+			: "Sort direction";
+	const sortingGroup = `<div class="control-group sorting"><label for="pr-sort">Sort pull requests</label><select id="pr-sort" aria-describedby="codex-activity-status"><option value="closest" ${view.sort.mode === "closest" ? "selected" : ""}>Closest to merge</option><option value="codex" disabled aria-describedby="codex-activity-status">Codex activity (unavailable)</option><option value="updated" ${view.sort.mode === "updated" ? "selected" : ""}>Recently updated</option><option value="number" ${view.sort.mode === "number" ? "selected" : ""}>PR number</option><option value="progress" ${view.sort.mode === "progress" ? "selected" : ""}>OpenSpec progress</option><option value="repository" ${view.sort.mode === "repository" ? "selected" : ""}>Repository</option></select><label for="pr-direction">${directionLabel}</label><select id="pr-direction"><option value="asc" ${view.sort.direction === "asc" ? "selected" : ""}>Ascending</option><option value="desc" ${view.sort.direction === "desc" ? "selected" : ""}>Descending</option></select><span id="codex-activity-status" class="muted">Codex activity sorting is unavailable because no activity data is collected.</span></div>`;
+	return `<div class="pr-controls">${searchGroup}${filterGroup}${sortingGroup}</div>`;
 };
+const checkoutRepositoryMarkup = (repository: Repository) => {
+	const key = checkoutKey(repository.account_login, repository.repository_id);
+	const state = checkoutStates.get(key) ?? "Unresolved";
+	const permissionButton =
+		state === "Permission required"
+			? ` <button type="button" data-checkout-permission="${esc(key)}">Grant permission</button>`
+			: "";
+	return `<li><strong>${esc(repository.full_name)}</strong> · <span aria-live="polite">${esc(state)}</span> <button type="button" data-connect-repository="${esc(key)}">Choose checkout</button>${permissionButton}</li>`;
+};
+const checkoutAccountMarkup = (
+	account: string,
+	repositories: Repository[],
+	index: number,
+) =>
+	`<div><p><strong>${esc(account)}</strong> <button id="checkout-root-${index}" type="button" data-connect-root="${esc(account)}">Connect organization root</button></p><ul>${repositories.map(checkoutRepositoryMarkup).join("")}</ul></div>`;
 const checkoutMarkup = () => {
 	if (!checkoutSupported())
 		return '<p class="muted" aria-live="polite">Local checkout access is Unsupported in this browser. Committed GitHub OpenSpecs remain available.</p>';
@@ -1163,73 +1147,46 @@ const checkoutMarkup = () => {
 		repositories.push(repository);
 		groups.set(account, repositories);
 	}
-	return groups.size
-		? '<section class="checkout-mappings" aria-labelledby="checkout-title"><h3 id="checkout-title">Local checkouts</h3>' +
-				[...groups]
-					.map(
-						([account, repositories], index) =>
-							"<div><p><strong>" +
-							esc(account) +
-							'</strong> <button id="checkout-root-' +
-							index +
-							'" type="button" data-connect-root="' +
-							esc(account) +
-							'">Connect organization root</button></p><ul>' +
-							repositories
-								.map((repository) => {
-									const key = checkoutKey(
-										repository.account_login,
-										repository.repository_id,
-									);
-									return (
-										"<li><strong>" +
-										esc(repository.full_name) +
-										'</strong> · <span aria-live="polite">' +
-										esc(checkoutStates.get(key) ?? "Unresolved") +
-										'</span> <button type="button" data-connect-repository="' +
-										esc(key) +
-										'">Choose checkout</button>' +
-										(checkoutStates.get(key) === "Permission required"
-											? ' <button type="button" data-checkout-permission="' +
-												esc(key) +
-												'">Grant permission</button>'
-											: "") +
-										"</li>"
-									);
-								})
-								.join("") +
-							"</ul></div>",
-					)
-					.join("") +
-				"</section>"
-		: '<p class="muted">No authorized repositories are available for local checkout mapping.</p>';
-};
-const configurationMarkup = () => {
-	const appearance = appearancePreference();
-	return (
-		'<section id="configuration" class="card configuration" aria-labelledby="configuration-title"><h2 id="configuration-title">Configuration</h2>' +
-		checkoutMarkup() +
-		'<div class="actions"><button id="notify" type="button">Enable notifications</button><button id="reconcile" type="button" ' +
-		(reconciliationState === "running" ? "disabled" : "") +
-		">" +
-		(reconciliationState === "running" ? "Reconciling…" : "Reconcile now") +
-		'</button></div><p id="reconcile-status" class="muted" aria-live="polite">' +
-		esc(reconcileMessage) +
-		'</p><fieldset class="appearance"><legend>Appearance</legend>' +
-		["system", "dark", "light"]
-			.map(
-				(value) =>
-					'<label><input type="radio" name="appearance" value="' +
-					value +
-					'" ' +
-					(appearance.preference === value ? "checked" : "") +
-					">" +
-					esc(value[0].toUpperCase() + value.slice(1)) +
-					"</label>",
-			)
-			.join("") +
-		"</fieldset></section>"
+	if (!groups.size)
+		return '<p class="muted">No authorized repositories are available for local checkout mapping.</p>';
+	const accounts = [...groups].map(([account, repositories], index) =>
+		checkoutAccountMarkup(account, repositories, index),
 	);
+	return `<section class="checkout-mappings" aria-labelledby="checkout-title"><h3 id="checkout-title">Local checkouts</h3>${accounts.join("")}</section>`;
+};
+const appearanceMenuMarkup = () => {
+	const selected = appearancePreference().preference;
+	return (
+		'<fieldset class="appearance-menu"><legend>Appearance</legend>' +
+		["system", "light", "dark"]
+			.map((value) => {
+				const checked = selected === value;
+				const label = value[0].toUpperCase() + value.slice(1);
+				return `<label><input type="radio" data-appearance-choice name="menu-appearance" value="${value}" ${checked ? "checked" : ""}><span>${label}</span><span class="appearance-check" aria-hidden="true">${checked ? "✓" : ""}</span></label>`;
+			})
+			.join("") +
+		"</fieldset>"
+	);
+};
+const configurationMarkup = () =>
+	'<section class="card configuration" aria-labelledby="configuration-title"><h2 id="configuration-title">Configuration</h2><p><a href="/">Back to dashboard</a></p>' +
+	checkoutMarkup() +
+	'<div class="actions"><button id="notify" type="button">Enable notifications</button><button id="reconcile" type="button" ' +
+	(reconciliationState === "running" ? "disabled" : "") +
+	">" +
+	(reconciliationState === "running" ? "Reconciling…" : "Reconcile now") +
+	'</button></div><p id="reconcile-status" class="muted" aria-live="polite">' +
+	esc(reconcileMessage) +
+	"</p></section>";
+const avatarMenuMarkup = (user?: DashboardSnapshot["user"]) => {
+	const login = user?.login || "User";
+	const avatarUrl = avatarUrlFor(user?.avatar_url);
+	const avatar = user?.fixture_avatar
+		? '<img class="user-avatar" src="/avatar-fixture.svg" alt="">'
+		: avatarUrl
+			? `<img class="user-avatar" src="${esc(avatarUrl)}" alt="">`
+			: `<span class="user-avatar avatar-fallback" aria-hidden="true">${esc(login.slice(0, 1).toUpperCase())}</span>`;
+	return `<details class="avatar-menu"><summary aria-label="User menu">${avatar}</summary><div class="avatar-menu-panel"><p><strong>${esc(login)}</strong></p>${appearanceMenuMarkup()}<a class="configuration-link" href="/configuration">⚙ Configuration</a></div></details>`;
 };
 const rerender = (focusId: string) => {
 	render(current);
@@ -1350,23 +1307,25 @@ const render = (x: DashboardSnapshot | null) => {
 		spec: specFor(pr, x.pullRequests),
 	}));
 	const prs = derivePullRequests(allPullRequests, view);
-	root.innerHTML =
-		'<header><div class="brand"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command center</h1><p class="muted">Open pull requests you authored.</p></div></div><div class="actions"><a class="button" href="#configuration">Connect local checkout</a><a class="button" href="#configuration">Enable notifications</a></div></header>' +
-		(x.stale
-			? '<p class="card error">Provider reconciliation is stale.</p>'
-			: "") +
+	const headerMarkup =
+		'<header><a class="brand brand-home" href="/"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command center</h1><p class="muted">Open pull requests you authored.</p></div></a>' +
+		avatarMenuMarkup(x.user) +
+		"</header>";
+	const dashboardMarkup =
 		'<div class="grid"><section class="card" aria-label="Pull requests">' +
 		controlsMarkup(allPullRequests, prs) +
 		rows(prs, "No open authored pull requests.", (item) => {
 			const pr = item.pr;
 			return (
-				'<article><h3><a href="' +
+				'<article><div class="pr-card-header"><h3><a href="' +
 				esc(pr.url) +
 				'" target="_blank" rel="noopener noreferrer">#' +
 				esc(pr.number) +
 				" · " +
 				esc(pr.title) +
-				'</a></h3><div class="statuses">' +
+				"</a></h3>" +
+				mergeMarkup(pr) +
+				'</div><div class="statuses">' +
 				badge("attention", pr.needs_attention ? "needs attention" : "healthy") +
 				badge("draft", pr.draft ? "draft" : "ready") +
 				badge("Actions", pr.workflow_state) +
@@ -1382,7 +1341,6 @@ const render = (x: DashboardSnapshot | null) => {
 				(item.blockers.length ? ` · ${esc(item.blockers.join(", "))}` : "") +
 				"</p>" +
 				workflowFailuresMarkup(pr) +
-				mergeMarkup(pr) +
 				openSpecMarkup(item.spec) +
 				"</article>"
 			);
@@ -1414,8 +1372,16 @@ const render = (x: DashboardSnapshot | null) => {
 					: "") +
 				"</article>",
 		) +
-		"</section></div>" +
-		configurationMarkup();
+		"</section></div>";
+	const page = pageFor(globalThis.location?.pathname);
+	const pageMarkup =
+		page === "configuration" ? configurationMarkup() : dashboardMarkup;
+	root.innerHTML =
+		headerMarkup +
+		(x.stale
+			? '<p class="card error">Provider reconciliation is stale.</p>'
+			: "") +
+		pageMarkup;
 	document
 		.querySelector("#notify")
 		?.addEventListener("click", () =>
@@ -1443,7 +1409,7 @@ const render = (x: DashboardSnapshot | null) => {
 			);
 		});
 	document
-		.querySelectorAll<HTMLInputElement>('[name="appearance"]')
+		.querySelectorAll<HTMLInputElement>("[data-appearance-choice]")
 		.forEach((input) => {
 			input.addEventListener("change", () => {
 				saveAppearance(input.value);
@@ -1451,6 +1417,12 @@ const render = (x: DashboardSnapshot | null) => {
 			});
 		});
 	document.querySelector("#reconcile")?.addEventListener("click", reconcileNow);
+	const avatarMenu = document.querySelector<HTMLDetailsElement>(".avatar-menu");
+	avatarMenu?.addEventListener("focusout", (event) => {
+		const next = event.relatedTarget;
+		if (!(next instanceof Node) || !avatarMenu.contains(next))
+			avatarMenu.open = false;
+	});
 	document
 		.querySelectorAll<HTMLAnchorElement>("[data-local-source]")
 		.forEach((link) => {
@@ -1657,7 +1629,12 @@ if (root) {
 	});
 	document.addEventListener("keydown", (event) => {
 		const search = document.querySelector<HTMLInputElement>("#pr-search"),
+			avatarMenu = document.querySelector<HTMLDetailsElement>(".avatar-menu"),
 			target = event.target as Element | null;
+		if (event.key === "Escape" && avatarMenu?.open) {
+			avatarMenu.open = false;
+			avatarMenu.querySelector<HTMLElement>("summary")?.focus();
+		}
 		if (
 			event.key === "/" &&
 			!target?.matches?.("input, textarea, select, [contenteditable]")
@@ -1669,6 +1646,16 @@ if (root) {
 			view.query = "";
 			rerender("pr-search");
 		}
+	});
+	document.addEventListener("click", (event) => {
+		const avatarMenu =
+			document.querySelector<HTMLDetailsElement>(".avatar-menu");
+		if (
+			avatarMenu?.open &&
+			event.target instanceof Node &&
+			!avatarMenu.contains(event.target)
+		)
+			avatarMenu.open = false;
 	});
 	navigator.serviceWorker?.register("/sw.js");
 }

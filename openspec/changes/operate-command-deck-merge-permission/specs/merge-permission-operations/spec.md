@@ -27,7 +27,7 @@ Each GitHub App permission change and each intended installation-account approva
 
 #### Scenario: Installation approval is missing
 - **WHEN** an intended installation has not approved the updated permission
-- **THEN** its Merge controls remain unavailable and no alternate credential is used
+- **THEN** its pull-request cards render no Merge action and no alternate credential is used
 
 ### Requirement: Production verification and safe proof
 After authorized deployment and configuration verification, the operation SHALL perform at most one explicitly authorized safe merge proof whose repository, pull request, exact head SHA, merge method, user authority, protections, checks, reviews, and completed OpenSpec evidence were captured immediately before action.

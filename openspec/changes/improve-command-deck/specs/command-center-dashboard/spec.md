@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Personal operational summary
-The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a guarded Merge control, and branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The default pull-request order SHALL be Closest to merge using the visible deterministic unresolved-gate count, followed by OpenSpec progress and pull-request number descending.
+The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a conditional guarded Merge control beside the linked title, and branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The default pull-request order SHALL be Closest to merge using the visible deterministic unresolved-gate count, followed by OpenSpec progress and pull-request number descending.
 
 #### Scenario: Developer opens the command center
 - **WHEN** a signed-in developer has projected state across one or more bound GitHub installations
@@ -28,6 +28,10 @@ The system SHALL present every authorized open pull request authored by the sign
 - **THEN** the PR card shows a collapsed native disclosure whose summary contains the change name, total progress, current unfinished group, and existing Open tasks link
 - **AND** expanding the disclosure shows that current group's disabled checked and unchecked source-state checklist
 
+#### Scenario: OpenSpec disclosure appears in any color scheme
+- **WHEN** the dashboard renders collapsed or expanded OpenSpec evidence in System, Dark, or Light appearance
+- **THEN** the disclosure uses a darker appearance-aware surface with readable text, links, borders, disclosure state, and visible keyboard focus rather than the contrasting near-white panel
+
 #### Scenario: Same pull request is projected through multiple installations
 - **WHEN** authorized installation snapshots contain the same GitHub pull request identity
 - **THEN** the dashboard shows one current pull-request card
@@ -46,16 +50,20 @@ The system SHALL present every authorized open pull request authored by the sign
 
 #### Scenario: Pull request merge permission is unavailable
 - **WHEN** a pull-request card is not currently eligible for the guarded merge action
-- **THEN** its Merge control remains visible but unavailable with an accessible reason
+- **THEN** the card renders no Merge action while retaining its mergeability pill and blocker evidence
 
 ## ADDED Requirements
 
 ### Requirement: Sticky pull-request controls
-The dashboard SHALL keep a compact controls bar visible while scrolling the pull-request list, SHALL use native accessible controls with labeled focus order and keyboard operation, and SHALL remain usable when controls wrap on narrow screens. The bar SHALL contain fuzzy search, status filters, repository filtering, a sort-mode selector, a direction control, the final visible result count, and one Clear action for all search and filter state.
+The dashboard SHALL keep a compact controls bar visible while scrolling the pull-request list, SHALL use native accessible controls with labeled focus order and keyboard operation, and SHALL remain usable when controls wrap on narrow screens. The bar SHALL contain fuzzy search, status filters, repository filtering, a sort-mode selector, a direction control, the final visible result count, and one Clear action for all search and filter state. It SHALL organize those controls into stable semantic groups for search and results, filtering, and sorting rather than one interleaved wrapping stream.
 
 #### Scenario: Developer scrolls or narrows the pull-request list
 - **WHEN** the pull-request list extends beyond the viewport or the viewport is narrow
-- **THEN** the controls remain sticky, readable, keyboard reachable, and usable without obscuring the pull-request content
+- **THEN** the controls remain sticky, readable, keyboard reachable, and usable without obscuring the pull-request content or separating labels from their controls
+
+#### Scenario: Pull-request controls are presented
+- **WHEN** the controls bar renders
+- **THEN** search, result count, and Clear form one group; status, failure, and repository filters form one group; and sort mode, direction, and its availability explanation form one group in the same logical focus order
 
 #### Scenario: Developer combines controls
 - **WHEN** search, status, and repository filters are active together
@@ -132,16 +140,42 @@ The dashboard SHALL not show a visible pull-request section heading and SHALL pr
 - **WHEN** the dashboard renders pull-request cards
 - **THEN** the section has an accessible name without displaying a replacement heading
 
-### Requirement: One configuration screen
-Both existing top-level configuration actions SHALL open the same configuration screen, which SHALL own local checkout mappings, the existing notification permission configuration, appearance preferences, and user-scoped reconciliation.
+### Requirement: Authenticated avatar navigation and one configuration page
+The dashboard SHALL make its combined brand mark and Command center hero one accessible home link and place the signed-in developer's validated GitHub avatar at the right edge of the navbar. Activating the avatar SHALL open a compact native accessible dropdown containing vertical System, Light, and Dark appearance menu choices, a checkmark on the active choice, and a gear-labelled Configuration link styled as a menu row. Configuration SHALL open a dedicated `/configuration` page that owns local checkout mappings and overrides, repository resolution states, existing notification permission configuration, and user-scoped reconciliation. Appearance SHALL remain only in the avatar menu. The dashboard header and body SHALL NOT retain Connect local checkout, Enable notifications, or an inline configuration section.
 
-#### Scenario: Developer selects either existing action
-- **WHEN** the developer activates Connect local checkout or Enable notifications
-- **THEN** the same configuration screen opens with the corresponding control available
+The navbar and combined brand SHALL remain on one non-wrapping row with the logo, title, and avatar top-aligned while the subtitle remains beneath the title.
+
+#### Scenario: Developer activates the brand
+- **WHEN** the developer activates the combined navbar logo and Command center hero
+- **THEN** one native link with one tab stop navigates to `/`
+
+#### Scenario: Navbar renders across widths
+- **WHEN** the dashboard header renders at wide or narrow supported widths
+- **THEN** the logo, Command center title, and avatar share one stable top alignment without wrapping the brand apart from its subtitle
+
+#### Scenario: Signed-in developer opens the avatar menu
+- **WHEN** the developer activates their navbar avatar with pointer or keyboard input
+- **THEN** a labeled native disclosure exposes vertical System, Light, and Dark menu choices with only the current selection checked, followed by a gear-labelled Configuration action in predictable focus order
+
+#### Scenario: Developer opens configuration
+- **WHEN** the developer activates the gear-labelled Configuration action
+- **THEN** `/configuration` opens with checkout mapping, notification, and Reconcile now controls while appearance remains only in the avatar menu and the dashboard contains no duplicate configuration controls
+
+#### Scenario: Avatar data is safe to render
+- **WHEN** the signed-in identity has a validated HTTPS GitHub avatar URL
+- **THEN** the snapshot exposes only that user's avatar and the navbar renders it through an escaped image URL
+
+#### Scenario: Avatar data is absent or invalid
+- **WHEN** the signed-in identity has no acceptable avatar URL
+- **THEN** the navbar renders a safe non-network fallback without exposing another user's identity or raw provider data
+
+#### Scenario: Local demo renders avatar navigation
+- **WHEN** local fixture mode seeds its fictional signed-in developer
+- **THEN** it uses a committed same-origin fictional avatar image so the avatar layout and dropdown behavior can be exercised without a network request or real user's image
 
 #### Scenario: Configuration state has an error
 - **WHEN** a checkout permission, repository resolution, notification permission, or reconciliation operation cannot proceed
-- **THEN** the screen exposes an accessible explicit state and sanitized next action
+- **THEN** the configuration page exposes an accessible explicit state and sanitized next action
 
 ### Requirement: Authenticated on-demand reconciliation
 The configuration screen SHALL let a signed-in developer trigger immediate reconciliation only for approved installations bound to that user, SHALL reuse the existing installation reconciliation path, and SHALL serialize scheduled and manual reconciliation so duplicate concurrent triggers do not start parallel provider work.

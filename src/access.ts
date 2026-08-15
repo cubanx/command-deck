@@ -52,19 +52,32 @@ const openSpecUrl = (fullName: unknown, sha: unknown, change: unknown) => {
 	return `https://github.com/${String(fullName)}/blob/${String(sha)}/openspec/changes/${encodeURIComponent(String(change))}/tasks.md`;
 };
 
+export const safeAvatarUrl = (value: unknown) => {
+	if (typeof value !== "string") return undefined;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "https:" || url.username || url.password)
+			return undefined;
+		return url.href;
+	} catch {
+		return undefined;
+	}
+};
+
 export async function upsertIdentity(
 	db: Db,
 	id: string,
 	login: string,
 	avatarUrl?: string,
 ) {
+	const safeAvatar = safeAvatarUrl(avatarUrl);
 	const now = new Date(),
 		update: any = {
 			$set: { "github.login": login, updatedAt: now },
 			$setOnInsert: { schemaVersion: 1, installations: [], createdAt: now },
 			$inc: { revision: 1 },
 		};
-	if (avatarUrl) update.$set["github.avatarUrl"] = avatarUrl;
+	if (safeAvatar) update.$set["github.avatarUrl"] = safeAvatar;
 	else update.$unset = { "github.avatarUrl": "" };
 	await db.users.updateOne({ _id: id }, update, { upsert: true });
 }
@@ -364,7 +377,13 @@ export async function dashboardForUser(
 		.sort({ createdAt: -1 })
 		.limit(20)
 		.toArray();
+	const avatarUrl = safeAvatarUrl(user.github.avatarUrl);
 	return {
+		user: {
+			login: user.github.login,
+			...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+			...(userId === LOCAL_DEMO_USER.id ? { fixture_avatar: true } : {}),
+		},
 		pullRequests,
 		repositories: repositories.map((repository) => ({
 			installation_id: repository.installationId,

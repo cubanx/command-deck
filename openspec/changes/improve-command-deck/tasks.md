@@ -67,14 +67,14 @@ Checkpoint: stop for user review after Group 6.
 
 ## 7. Guarded per-PR Merge control
 
-- [x] 7.1 Add focused disabled-permission and accessibility tests showing an unavailable Merge control and reason under current read-only installation permissions.
+- [x] 7.1 Add focused disabled-permission and accessibility tests showing no Merge action under current read-only installation permissions.
 - [x] 7.2 Add authorization tests for session-bound single-use merge OAuth intent, identity mismatch, missing/foreign installation or repository, insufficient current user role, and non-persistence of the request-local user token.
 - [x] 7.3 Add eligibility tests for closed/draft PRs, mergeability, protections/rulesets, required checks/reviews, allowed merge method, and existing OpenSpec completion policy.
 - [x] 7.4 Add exact-head race, action-time confirmation, protected-state refusal, permission absence, sanitized conflict, immediate refresh, and success tests.
 - [x] 7.5 Implement action-time user reauthorization and role proof before minting installation authority; fail closed if role proof requires an unapproved OAuth scope change.
 - [x] 7.6 Implement authoritative eligibility re-fetch and confirmation bound to repository, PR number/title, exact head SHA, and `MERGE`, rechecking all mutable gates before mutation.
 - [x] 7.7 Implement GraphQL `mergePullRequest` with `expectedHeadOid` and `mergeMethod: MERGE`, sanitized outcome categories, and immediate projection refresh.
-- [x] 7.8 Render the per-card Merge control while leaving it unavailable until the separate operational permission rollout succeeds.
+- [x] 7.8 Implement the guarded per-card Merge path while leaving the action absent until the separate operational permission rollout and projected eligibility succeed.
 - [x] 7.9 Run focused authorization/merge tests, typecheck, and diff check.
 
 Checkpoint: stop for user review after Group 7.
@@ -87,7 +87,53 @@ Checkpoint: stop for user review after Group 7.
 - [x] 8.4 Run focused browser tests, typecheck, package build, container build, strict OpenSpec validation, and `git diff --check`.
 - [x] 8.5 Run canonical `bun run validate:all`, focused accessibility checks, and `git diff --check` with no new product dependencies.
 - [x] 8.6 Strictly validate `improve-command-deck` and confirm all PR-owned tasks are complete without provider, permission, installation, deployment, production, or merge evidence.
-- [x] 8.7 Reconcile documentation for browser support, local-only data, configuration, disabled Merge permission, and the separate operational follow-up.
+- [x] 8.7 Reconcile documentation for browser support, local-only data, configuration, conditional Merge visibility, and the separate operational follow-up.
 - [x] 8.8 Record the exact PR #8 handoff dependency in `operate-command-deck-merge-permission` without executing it.
 
 Checkpoint: stop for final user review before any commit, push, pull request, deployment, provider change, or production action.
+
+## 9. Avatar navigation, dedicated configuration, and visual organization
+
+- [x] 9.1 Add focused tests for signed-in avatar projection, HTTPS GitHub-avatar validation, user isolation, missing or invalid fallback, and deterministic local fixture initials.
+- [x] 9.2 Add behavioral and accessibility tests for the right-aligned native avatar dropdown, shared System/Light/Dark selection, gear-labelled Configuration action, keyboard focus, Escape or outside dismissal, and the absence of the old dashboard header actions.
+- [x] 9.3 Add route and rendering tests proving `/configuration` owns checkout roots and overrides, repository resolution states, notifications, appearance, and Reconcile now without duplicating the old inline configuration section.
+- [x] 9.4 Add focused responsive-layout tests for stable search/results, filter, and sort control groups, plus appearance-aware OpenSpec disclosure contrast, link, border, disclosure-state, and focus hooks.
+- [x] 9.5 Implement the smallest native navbar disclosure and dedicated configuration route, project only the signed-in user's validated avatar, move existing configuration controls without duplicating their state or behavior, reorganize the sticky controls, and replace the near-white OpenSpec surface with accessible appearance-aware colors.
+- [x] 9.6 Run focused dashboard/access/browser tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
+
+Checkpoint: stop for user review after Group 9 before any commit, push, pull request update, deployment, provider change, or production action.
+
+## 10. Avatar fixture and compact appearance menu
+
+- [x] 10.1 Add focused failing tests for the committed same-origin fictional fixture avatar and safe missing or invalid fallback.
+- [x] 10.2 Add focused failing markup and style tests for a compact dropdown whose Appearance section lists System, Light, and Dark vertically and checks only the active menu choice.
+- [x] 10.3 Implement the fixture avatar using an existing static-asset path and replace the horizontal radio slab with the smallest accessible native menu choices backed by the existing appearance state.
+- [x] 10.4 Run focused dashboard/access/browser tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
+
+Checkpoint: stop for user review after Group 10 before any commit, push, pull request update, deployment, provider change, or production action.
+
+## 11. Focused navigation cleanup
+
+- [x] 11.1 Add focused failing markup and style tests for one combined brand home link, a compact Configuration menu row, and appearance absent from the configuration page.
+- [x] 11.2 Remove the duplicate configuration-page appearance control, retain the avatar menu as the sole preference surface, and restyle the existing Configuration anchor without replacing native navigation.
+- [x] 11.3 Wrap the existing brand contents in one home anchor without duplicate links or tab stops.
+- [x] 11.4 Run focused dashboard/browser tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
+
+Checkpoint: stop for user review after Group 11 before any commit, push, pull request update, deployment, provider change, or production action.
+
+## 12. Navbar alignment
+
+- [x] 12.1 Add a focused failing style assertion for a non-wrapping navbar and brand with top-aligned logo, title, and avatar.
+- [x] 12.2 Isolate the navbar alignment from the shared wrapping-row rule with the smallest CSS override.
+- [x] 12.3 Run focused dashboard tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
+
+Checkpoint: stop for user review after Group 12 before any commit, push, pull request update, deployment, provider change, or production action.
+
+## 13. Mergeable title action
+
+- [x] 13.1 Add focused tests proving the Mergeable pill and Merge action share the authoritative `true` or clean predicate and that ineligible or read-only cards render no Merge action.
+- [x] 13.2 Place the eligible native Merge form beside the linked pull-request title and brighten that title in Dark appearance with a scoped accessible color.
+- [x] 13.3 Update the post-merge permission handoff to verify conditional action visibility without executing any operational task.
+- [x] 13.4 Run focused dashboard tests, canonical `bun run validate:all`, strict OpenSpec validation, and `git diff --check`.
+
+Checkpoint: stop for user review after Group 13 before any commit, push, pull request update, deployment, provider change, or production action.
