@@ -10,7 +10,7 @@ export async function withDatabase(test: (db: Db) => Promise<void>) {
 	const uriBase = process.env.MONGODB_URI_BASE;
 	if (!uriBase)
 		throw new Error("MONGODB_URI_BASE is required for MongoDB tests");
-	const database = `dev-command-center-test-${crypto.randomUUID()}`;
+	const database = `command-center-test-${crypto.randomUUID()}`;
 	testDatabaseGuard(database);
 	const db = await openDatabase({ uriBase, database });
 	try {
@@ -36,7 +36,7 @@ export async function withDatabase(test: (db: Db) => Promise<void>) {
 export const testConfig = {
 	port: 0,
 	mongoUriBase: "mongodb://127.0.0.1:27018",
-	mongoDatabase: "dev-command-center-test",
+	mongoDatabase: "command-center-test",
 	localDemo: false,
 	production: false,
 	secureCookies: true,

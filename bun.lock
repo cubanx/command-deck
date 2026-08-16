@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "developer-command-center",
+      "name": "command-center-ai",
       "dependencies": {
         "mongodb": "6.19.0",
       },

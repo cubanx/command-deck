@@ -4,7 +4,8 @@ After the MongoDB foundation merges, production needs a separately authorized cu
 
 ## What Changes
 
-- Depend on `replace-sqlite-with-mongodb` being merged and verify its exact merge SHA on current `main` before any provider or production operation.
+- Depend on both `replace-sqlite-with-mongodb` and `rename-command-center-identifiers` being merged, then verify each exact merge SHA on refreshed current `main` before any provider or production operation.
+- Reconcile the Atlas project and existing cluster to `command-center-ai`, use `command-center-production` as the target database, establish `command-center-production-runtime` with only the required database scope, and project that database selection to Railway under fresh authorization.
 - Explicitly supersede the SQLite-specific execution path in `operate-developer-command-center-production`; retire that stale change before applying this one.
 - Verify Railway source/deploy behavior, MongoDB Atlas readiness, credentials, network access, and rollback prerequisites under fresh task-scoped production authorization.
 - Stop application writes without optimizing for uptime; this is a single-user, currently unused deployment.
@@ -29,4 +30,4 @@ None. This change replaces, rather than extends, the unexecuted SQLite productio
 - Supersedes `openspec/changes/operate-developer-command-center-production` and its SQLite volume/restart assumptions.
 - Requires read-only access to the old production SQLite store and authorized writes to the target MongoDB database and Railway service during execution.
 - Seeds only three non-secret binding fields; GitHub provider projections are rebuilt canonically after deployment.
-- Makes no repository implementation changes and performs no operation until the MongoDB foundation's exact merge SHA and production prerequisites are verified.
+- Requires no second code PR and performs no operation until the MongoDB foundation and identifier rename exact merge SHAs plus production prerequisites are verified.

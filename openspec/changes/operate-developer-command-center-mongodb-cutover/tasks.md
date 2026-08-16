@@ -10,6 +10,8 @@
 - [ ] 2.2 With fresh task-scoped Railway production authorization, verify source-trigger behavior, current deployment identity, service/write state, readiness settings, SQLite volume attachment, and the exact rollback target; stop on unexpected or ambiguous state.
 - [ ] 2.3 With fresh task-scoped MongoDB production authorization, verify the target database identity, credential scope/destination, network access, required privileges, and that the target is empty or explicitly isolated for this service; stop rather than overwrite existing data.
 - [ ] 2.4 Confirm the GitHub App installation-token path and callback/webhook endpoints match the reviewed runtime without changing GitHub provider configuration.
+- [ ] 2.5 After `rename-command-center-identifiers` merges, refresh current `main`, verify its exact merge SHA contains the reviewed code, tests, and strict-valid OpenSpec, and accept that SHA as the deployment source; stop before task 3.1 on any mismatch.
+- [ ] 2.6 With fresh task-scoped authorization, reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, target database `command-center-production`, runtime user `command-center-production-runtime` with only `readWrite` on that database, and the matching approved 1Password/Railway projection; do not quiesce SQLite until fresh least-privilege behavior is proven.
 
 ## 3. Quiesce and Hand Off Bindings
 
@@ -21,8 +23,8 @@
 
 ## 4. Configure, Deploy, and Bootstrap
 
-- [ ] 4.1 With fresh task-scoped authorization, configure the MongoDB runtime variables and deployment settings for the exact verified foundation SHA while leaving the old SQLite volume and rollback configuration intact.
-- [ ] 4.2 Deploy only the verified foundation SHA and confirm `/health` liveness plus MongoDB-backed `/ready` before enabling user traffic.
+- [ ] 4.1 With fresh task-scoped authorization, confirm the MongoDB runtime variables and deployment settings still select the verified `command-center-production` credential projection for the exact verified rename SHA while leaving the old SQLite volume and rollback configuration intact.
+- [ ] 4.2 Deploy only the verified rename merge SHA and confirm `/health` liveness plus MongoDB-backed `/ready` before enabling user traffic.
 - [ ] 4.3 Have the user complete one ordinary GitHub sign-in, verify a hashed session and current identity are created, and prove every seeded installation binding remains unchanged without an installation/setup flow.
 - [ ] 4.4 Run canonical bootstrap or reconciliation for every seeded installation using installation-scoped tokens; stop if an installation/account is missing, unapproved, inaccessible, incomplete, or inconsistent.
 
@@ -37,6 +39,6 @@
 ## 6. Complete or Roll Back
 
 - [ ] 6.1 If any deployment, sign-in, bootstrap, readiness, isolation, authorization, webhook, notification, or reconciliation check fails, restore the prior revision and SQLite configuration and verify its readiness without copying MongoDB writes back or deleting either store.
-- [ ] 6.2 If every check passes, record the foundation merge SHA, target identities, binding count and allowlist result, seed/deployment/bootstrap identities, verification results, and successful activation disposition.
+- [ ] 6.2 If every check passes, record both prerequisite merge SHAs, target identities, binding count and allowlist result, seed/deployment/bootstrap identities, verification results, and successful activation disposition.
 - [ ] 6.3 Leave the SQLite volume and MongoDB database intact; document that any later destructive cleanup requires a separate explicit authorization and is not part of this change.
 - [ ] 6.4 Run strict OpenSpec validation, mark only evidence-backed tasks complete, and stop for human review before archiving the completed operational change.

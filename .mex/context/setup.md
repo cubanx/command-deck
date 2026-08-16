@@ -30,7 +30,7 @@ Use `bun run start` only with the documented application environment. Never plac
 
 `bun run seed:bindings` is an operational command, not ordinary validation; use it only with the required environment and authorization.
 
-Tests create UUID-named `dev-command-center-test-*` databases and drop them afterward. Never point the test URI at shared or production MongoDB.
+Tests create UUID-named `command-center-test-*` databases and drop them afterward. Never point the test URI at shared or production MongoDB.
 
 ## Mex
 

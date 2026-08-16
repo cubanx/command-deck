@@ -5,14 +5,14 @@ Defines the authorized production cutover from unused SQLite state to MongoDB wh
 ## ADDED Requirements
 
 ### Requirement: Exact prerequisite merge gate
-The cutover SHALL NOT perform any repository, provider, credential, database, or deployment mutation until `replace-sqlite-with-mongodb` is merged, its exact merge SHA is verified on current `main`, and that SHA contains the complete validated MongoDB foundation. A branch, pull-request head, local commit, or stale `main` SHALL NOT satisfy the gate.
+The cutover SHALL NOT perform any repository, provider, credential, database, or deployment mutation until `replace-sqlite-with-mongodb` and `rename-command-center-identifiers` are merged, both exact merge SHAs are verified on refreshed current `main`, the foundation SHA contains the complete validated MongoDB foundation, and the rename SHA contains the complete validated Command Center.ai naming change. A branch, pull-request head, local commit, or stale `main` SHALL NOT satisfy either gate. The rename merge SHA SHALL be the deployment source and the operation SHALL NOT require another code PR.
 
 #### Scenario: Verified prerequisite
-- **WHEN** the exact MongoDB foundation merge SHA is an ancestor of current `main` and its required checks and artifacts are complete
+- **WHEN** both exact prerequisite merge SHAs are ancestors of refreshed current `main` and their required checks and artifacts are complete
 - **THEN** the cutover may continue to its separately authorized production prerequisites
 
 #### Scenario: Missing or stale prerequisite
-- **WHEN** the foundation is unmerged, the merge SHA cannot be verified, or current `main` does not contain it
+- **WHEN** either prerequisite is unmerged, either merge SHA cannot be verified, or refreshed current `main` does not contain both
 - **THEN** the cutover stops before any external mutation
 
 ### Requirement: Superseded SQLite operation plan
@@ -27,10 +27,10 @@ The SQLite-specific `operate-developer-command-center-production` change SHALL b
 - **THEN** this change becomes the sole executable production cutover plan
 
 ### Requirement: Fresh production authorization and preflight
-Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before mutation, the operator SHALL verify the target project, environment, service, MongoDB database, deployment source behavior, credentials, network access, readiness configuration, and rollback target. Ambiguous or unexpected state SHALL fail closed.
+Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before quiescing SQLite, the operator SHALL reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, database `command-center-production`, runtime user `command-center-production-runtime` with only the required database scope, the matching Railway database/credential projection, deployment source behavior, network access, readiness configuration, and rollback target. Ambiguous or unexpected state SHALL fail closed.
 
 #### Scenario: Production targets verified
-- **WHEN** all target identities, access boundaries, source behavior, and rollback prerequisites match the reviewed plan
+- **WHEN** all exact target identities, least-privilege grants, credential destinations, source behavior, and rollback prerequisites match the reviewed plan
 - **THEN** the operator may perform only the authorized cutover operations
 
 #### Scenario: Unexpected automatic deploy or target

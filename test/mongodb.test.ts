@@ -10,15 +10,26 @@ import {
 test("MongoDB test guard rejects production and ambiguous databases", () => {
 	expect(() =>
 		testDatabaseGuard(
-			"dev-command-center-test-12345678-1234-1234-1234-123456789abc",
+			"command-center-test-12345678-1234-1234-1234-123456789abc",
 		),
 	).not.toThrow();
-	expect(() => testDatabaseGuard("dev-command-center-local-kira")).toThrow(
+	expect(() => testDatabaseGuard("command-center-local-kira")).toThrow(
 		"isolated non-production",
 	);
-	expect(() => testDatabaseGuard("dev-command-center-production")).toThrow(
+	expect(() => testDatabaseGuard("command-center-production")).toThrow(
 		"isolated non-production",
 	);
+	expect(() =>
+		testDatabaseGuard(
+			[
+				"dev",
+				"command",
+				"center",
+				"test",
+				"12345678-1234-1234-1234-123456789abc",
+			].join("-"),
+		),
+	).toThrow("isolated non-production");
 });
 
 test.skipIf(!process.env.MONGODB_URI_BASE || !process.env.MONGODB_DATABASE)(
