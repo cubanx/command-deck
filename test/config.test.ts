@@ -47,7 +47,7 @@ const production = (overrides: Record<string, string | undefined> = {}) => ({
 	PUBLIC_URL: "https://command-center.up.railway.app",
 	RAILWAY_PUBLIC_DOMAIN: "command-center.up.railway.app",
 	MONGODB_URI_BASE: "mongodb://mongo.example",
-	MONGODB_DATABASE: "command-center-production",
+	MONGODB_DATABASE: "command-center-ai-production",
 	GITHUB_APP_ID: "1701",
 	GITHUB_CLIENT_ID: "client-id",
 	GITHUB_CLIENT_SECRET: "client-secret",
@@ -82,7 +82,7 @@ test("production requires MongoDB configuration", () => {
 		production({
 			MONGODB_DATABASE: ["dev", "command", "center", "production"].join("-"),
 		}),
-		production({ MONGODB_DATABASE: "command-center-staging" }),
+		production({ MONGODB_DATABASE: "command-center-ai-staging" }),
 	]) {
 		expect(() => loadConfig(env)).toThrow();
 	}
@@ -90,6 +90,6 @@ test("production requires MongoDB configuration", () => {
 
 test("local MongoDB configuration uses the canonical isolated family", () => {
 	expect(loadConfig({ USER: "Benjamin Sisko" }).mongoDatabase).toBe(
-		"command-center-local-benjamin-sisko",
+		"command-center-ai-local-benjamin-sisko",
 	);
 });

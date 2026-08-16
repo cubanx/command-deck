@@ -10,13 +10,13 @@ import {
 test("MongoDB test guard rejects production and ambiguous databases", () => {
 	expect(() =>
 		testDatabaseGuard(
-			"command-center-test-12345678-1234-1234-1234-123456789abc",
+			"command-center-ai-test-12345678-1234-1234-1234-123456789abc",
 		),
 	).not.toThrow();
-	expect(() => testDatabaseGuard("command-center-local-kira")).toThrow(
+	expect(() => testDatabaseGuard("command-center-ai-local-kira")).toThrow(
 		"isolated non-production",
 	);
-	expect(() => testDatabaseGuard("command-center-production")).toThrow(
+	expect(() => testDatabaseGuard("command-center-ai-production")).toThrow(
 		"isolated non-production",
 	);
 	expect(() =>

@@ -23,7 +23,7 @@ The separate MongoDB cutover already owns Atlas, Railway, credentials, deploymen
 
 ### Replace literals at their existing ownership seams
 
-Update the current defaults and guards in place rather than introduce a naming registry. The production name remains an exact validation value; local and test generators keep their existing isolation suffixes under the new canonical prefixes. Existing helpers and environment validation remain authoritative.
+Update the current defaults and guards in place rather than introduce a naming registry. The production name remains an exact validation value; Railway, local, and test generators keep their existing isolation suffixes under the single `command-center-ai-*` database family. Existing helpers and environment validation remain authoritative.
 
 Alternative: centralize every product and database identifier in a new module. Rejected because the values serve different layers, are not repeatedly composed through a common API, and a new abstraction would add indirection without reducing risk.
 
@@ -51,7 +51,7 @@ Alternative: perform provider changes from this PR-owned change. Rejected becaus
 
 1. Land this repository-only change after tests and strict OpenSpec validation.
 2. Refresh `main` and record this change's exact merge SHA in `operate-developer-command-center-mongodb-cutover`.
-3. Under separate task-scoped authorization, reconcile Atlas and Railway identifiers to `command-center-ai`, `command-center-production`, and `command-center-production-runtime` before quiescing SQLite.
+3. Under separate task-scoped authorization, reconcile Atlas and Railway identifiers to `command-center-ai`, `command-center-ai-production`, and `command-center-ai-production-runtime` before quiescing SQLite.
 4. Continue the existing one-way cutover, verification, and rollback plan without a second code PR.
 
 Rollback before activation is to keep the prior deployed revision and provider configuration. After activation, use the cutover's existing bounded deployment rollback; do not add dual-name application behavior.

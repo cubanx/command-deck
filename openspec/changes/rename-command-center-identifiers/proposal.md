@@ -4,8 +4,8 @@ Application, runtime, and MongoDB identifiers still reuse the GitHub repository 
 
 ## What Changes
 
-- **BREAKING** Rename the legacy repository-slug-prefixed production MongoDB database to `command-center-production` and keep production validation fail closed on that exact value.
-- Rename generated local and test databases to the `command-center-local` and `command-center-test-*` families while preserving per-user isolation and destructive-test guards.
+- **BREAKING** Rename the legacy repository-slug-prefixed production MongoDB database to `command-center-ai-production` and keep production validation fail closed on that exact value.
+- Rename generated Railway, local, and test databases to the `command-center-ai-*` family while preserving environment, per-user, and destructive-test isolation.
 - Rename application, package, container, manifest, example configuration, and setup identifiers to `Command Center.ai` or `command-center-ai` as appropriate.
 - Preserve `dev-command-center` only when it identifies the GitHub repository, repository URLs/full-name fixtures, repository paths, or repository-scaffold metadata.
 - Amend the separate `operate-developer-command-center-mongodb-cutover` plan so provider renames, credential projection, deployment, data movement, and cutover remain post-merge operations gated on this change's exact merge SHA being present on refreshed `main`.

@@ -7,14 +7,16 @@ test("selects explicit and environment-scoped database names", () => {
 		"ds9-operations",
 	);
 	expect(databaseName({ NODE_ENV: "production" })).toBe(
-		"command-center-production",
+		"command-center-ai-production",
 	);
 	expect(databaseName({ RAILWAY_ENVIRONMENT_NAME: "Review / 42" })).toBe(
 		"command-center-ai-review---42",
 	);
-	expect(databaseName({ NODE_ENV: "test" })).toMatch(/^command-center-test-/);
+	expect(databaseName({ NODE_ENV: "test" })).toMatch(
+		/^command-center-ai-test-/,
+	);
 	expect(databaseName({ USER: "Benjamin Sisko" })).toBe(
-		"command-center-local-benjamin-sisko",
+		"command-center-ai-local-benjamin-sisko",
 	);
 });
 
@@ -23,16 +25,16 @@ test("production MongoDB configuration accepts only the canonical database", () 
 		mongoConfig({
 			NODE_ENV: "production",
 			MONGODB_URI_BASE: "mongodb://mongo.example",
-			MONGODB_DATABASE: "command-center-production",
+			MONGODB_DATABASE: "command-center-ai-production",
 		}),
-	).toMatchObject({ database: "command-center-production" });
+	).toMatchObject({ database: "command-center-ai-production" });
 	expect(() =>
 		mongoConfig({
 			NODE_ENV: "production",
 			MONGODB_URI_BASE: "mongodb://mongo.example",
 			MONGODB_DATABASE: ["dev", "command", "center", "production"].join("-"),
 		}),
-	).toThrow("command-center-production");
+	).toThrow("command-center-ai-production");
 });
 
 test("initializes required Mongo collections and indexes", () =>

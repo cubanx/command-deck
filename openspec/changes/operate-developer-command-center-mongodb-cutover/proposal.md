@@ -5,7 +5,7 @@ After the MongoDB foundation merges, production needs a separately authorized cu
 ## What Changes
 
 - Depend on both `replace-sqlite-with-mongodb` and `rename-command-center-identifiers` being merged, then verify each exact merge SHA on refreshed current `main` before any provider or production operation.
-- Reconcile the Atlas project and existing cluster to `command-center-ai`, use `command-center-production` as the target database, establish `command-center-production-runtime` with only the required database scope, and project that database selection to Railway under fresh authorization.
+- Reconcile the Atlas project and existing cluster to `command-center-ai`, use `command-center-ai-production` as the target database, establish `command-center-ai-production-runtime` with only the required database scope, and project that database selection to Railway under fresh authorization.
 - Explicitly supersede the SQLite-specific execution path in `operate-developer-command-center-production`; retire that stale change before applying this one.
 - Verify Railway source/deploy behavior, MongoDB Atlas readiness, credentials, network access, and rollback prerequisites under fresh task-scoped production authorization.
 - Stop application writes without optimizing for uptime; this is a single-user, currently unused deployment.

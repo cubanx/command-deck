@@ -27,7 +27,7 @@ The SQLite-specific `operate-developer-command-center-production` change SHALL b
 - **THEN** this change becomes the sole executable production cutover plan
 
 ### Requirement: Fresh production authorization and preflight
-Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before quiescing SQLite, the operator SHALL reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, database `command-center-production`, runtime user `command-center-production-runtime` with only the required database scope, the matching Railway database/credential projection, deployment source behavior, network access, readiness configuration, and rollback target. Ambiguous or unexpected state SHALL fail closed.
+Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before quiescing SQLite, the operator SHALL reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, database `command-center-ai-production`, runtime user `command-center-ai-production-runtime` with only the required database scope, the matching Railway database/credential projection, deployment source behavior, network access, readiness configuration, and rollback target. Ambiguous or unexpected state SHALL fail closed.
 
 #### Scenario: Production targets verified
 - **WHEN** all exact target identities, least-privilege grants, credential destinations, source behavior, and rollback prerequisites match the reviewed plan

@@ -38,7 +38,7 @@ The cutover begins from a fresh current-`main` verification. One exact merge SHA
 
 ### Reconcile provider identities before quiescing SQLite
 
-Only after both merge gates pass, use fresh task-scoped authorization to reconcile the Atlas project and already-canonical cluster to `command-center-ai`, select the empty or isolated `command-center-production` database, establish `command-center-production-runtime` with only `readWrite` on that database, and project the matching database and credential through the approved 1Password/Railway path. Treat establishing the renamed runtime user as credential rotation: verify metadata, destinations, least privilege, and fresh runtime behavior before any later retirement of the old identity. No provider change or credential projection may begin from the code PR.
+Only after both merge gates pass, use fresh task-scoped authorization to reconcile the Atlas project and already-canonical cluster to `command-center-ai`, select the empty or isolated `command-center-ai-production` database, establish `command-center-ai-production-runtime` with only `readWrite` on that database, and project the matching database and credential through the approved 1Password/Railway path. Treat establishing the renamed runtime user as credential rotation: verify metadata, destinations, least privilege, and fresh runtime behavior before any later retirement of the old identity. No provider change or credential projection may begin from the code PR.
 
 ### Use the production brokers and fail closed
 
@@ -90,7 +90,7 @@ Storage deletion is deliberately deferred. Cleanup is a separate destructive dec
 1. Verify the exact MongoDB foundation merge SHA on current `main` and its completed checks.
 2. Verify the exact `rename-command-center-identifiers` merge SHA on refreshed current `main` and accept it as the deployment source.
 3. Retire the unexecuted SQLite operational change without syncing stale specs.
-4. Obtain fresh production authorization; reconcile and verify the exact `command-center-ai` Atlas project/cluster, `command-center-production` database, `command-center-production-runtime` least-privilege identity, Railway projection, source behavior, network access, target emptiness, and rollback revision.
+4. Obtain fresh production authorization; reconcile and verify the exact `command-center-ai` Atlas project/cluster, `command-center-ai-production` database, `command-center-ai-production-runtime` least-privilege identity, Railway projection, source behavior, network access, target emptiness, and rollback revision.
 5. Stop application and webhook writes if an old service is running.
 6. Read and interactively confirm the narrow SQLite binding set; validate the exact account allowlist.
 7. Seed the binding set idempotently into MongoDB.

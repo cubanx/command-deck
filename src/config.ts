@@ -144,11 +144,11 @@ export function loadConfig(
 		env.MONGODB_URI_BASE?.trim() ?? "mongodb://127.0.0.1:27017";
 	const mongoDatabase =
 		env.MONGODB_DATABASE?.trim() ??
-		`command-center-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
+		`command-center-ai-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
 	if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(mongoDatabase))
 		throw new Error("MONGODB_DATABASE is invalid");
-	if (production && mongoDatabase !== "command-center-production")
-		throw new Error("MONGODB_DATABASE must be command-center-production");
+	if (production && mongoDatabase !== "command-center-ai-production")
+		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
 	return {
 		port,
 		hostname: localDemo ? "127.0.0.1" : undefined,
