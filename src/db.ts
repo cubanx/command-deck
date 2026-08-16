@@ -115,6 +115,13 @@ export function mongoConfig(
 		database !== "command-center-ai-production"
 	)
 		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
+	if (env.NODE_ENV !== "production" && env.RAILWAY_ENVIRONMENT_NAME) {
+		const railwayDatabase = databaseName({
+			RAILWAY_ENVIRONMENT_NAME: env.RAILWAY_ENVIRONMENT_NAME,
+		});
+		if (database !== railwayDatabase)
+			throw new Error(`MONGODB_DATABASE must be ${railwayDatabase}`);
+	}
 	return { uriBase, database };
 }
 export function testDatabaseGuard(database: string) {

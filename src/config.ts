@@ -1,3 +1,5 @@
+import { databaseName } from "#/db";
+
 export type Config = {
 	port: number;
 	hostname?: string;
@@ -142,13 +144,22 @@ export function loadConfig(
 	const production = env.NODE_ENV === "production";
 	const mongoUriBase =
 		env.MONGODB_URI_BASE?.trim() ?? "mongodb://127.0.0.1:27017";
+	const railwayDatabase =
+		!production && env.RAILWAY_ENVIRONMENT_NAME
+			? databaseName({
+					RAILWAY_ENVIRONMENT_NAME: env.RAILWAY_ENVIRONMENT_NAME,
+				})
+			: undefined;
 	const mongoDatabase =
 		env.MONGODB_DATABASE?.trim() ??
+		railwayDatabase ??
 		`command-center-ai-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
 	if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(mongoDatabase))
 		throw new Error("MONGODB_DATABASE is invalid");
 	if (production && mongoDatabase !== "command-center-ai-production")
 		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
+	if (railwayDatabase && mongoDatabase !== railwayDatabase)
+		throw new Error(`MONGODB_DATABASE must be ${railwayDatabase}`);
 	return {
 		port,
 		hostname: localDemo ? "127.0.0.1" : undefined,

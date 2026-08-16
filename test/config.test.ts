@@ -93,3 +93,27 @@ test("local MongoDB configuration uses the canonical isolated family", () => {
 		"command-center-ai-local-benjamin-sisko",
 	);
 });
+
+test("Railway MongoDB configuration is environment-scoped and fail closed", () => {
+	expect(
+		loadConfig({
+			RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+			USER: "Benjamin Sisko",
+		}).mongoDatabase,
+	).toBe("command-center-ai-review---42");
+	for (const mongoDatabase of [
+		"command-center-ai-local-benjamin-sisko",
+		"arbitrary-valid",
+	]) {
+		expect(() =>
+			loadConfig({
+				RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+				MONGODB_DATABASE: mongoDatabase,
+			}),
+		).toThrow("command-center-ai-review---42");
+	}
+	expect(
+		loadConfig(production({ RAILWAY_ENVIRONMENT_NAME: "Review / 42" }))
+			.mongoDatabase,
+	).toBe("command-center-ai-production");
+});

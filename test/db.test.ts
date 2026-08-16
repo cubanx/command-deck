@@ -37,6 +37,19 @@ test("production MongoDB configuration accepts only the canonical database", () 
 	).toThrow("command-center-ai-production");
 });
 
+test("Railway MongoDB configuration accepts only its environment database", () => {
+	const env = {
+		MONGODB_URI_BASE: "mongodb://mongo.example",
+		RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+	};
+	expect(mongoConfig(env)).toMatchObject({
+		database: "command-center-ai-review---42",
+	});
+	expect(() =>
+		mongoConfig({ ...env, MONGODB_DATABASE: "arbitrary-valid" }),
+	).toThrow("command-center-ai-review---42");
+});
+
 test("initializes required Mongo collections and indexes", () =>
 	withDatabase(async (db) => {
 		expect(
