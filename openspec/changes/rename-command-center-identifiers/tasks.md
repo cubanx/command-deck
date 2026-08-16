@@ -1,7 +1,7 @@
 ## 1. Database Naming Contracts
 
-- [x] 1.1 Update focused configuration and MongoDB tests first to require `command-center-ai-production`, `command-center-ai-local`, Railway `command-center-ai-<environment>`, and isolated `command-center-ai-test-*` names, including rejection of stale or unsafe names.
-- [x] 1.2 Rename the existing production defaults/validators, local generators, test generators/guards, test support, and package test command without adding a compatibility path.
+- [x] 1.1 Update focused configuration and MongoDB tests first to require shared hosted `command-center-ai-production`, `command-center-ai-local`, and isolated `command-center-ai-test-*` names, including rejection of stale or unsafe names.
+- [x] 1.2 Rename the existing hosted defaults/validators, local generators, test generators/guards, test support, and package test command without adding a compatibility path.
 - [x] 1.3 Run the focused configuration and MongoDB naming tests and preserve existing isolation/readiness behavior.
 
 ## 2. Application and Repository Metadata

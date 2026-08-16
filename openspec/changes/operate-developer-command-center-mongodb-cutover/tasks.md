@@ -6,12 +6,12 @@
 
 ## 2. Authorized Production Preflight
 
-- [ ] 2.1 Before requesting production access, record the exact Railway project/environment/service, MongoDB target database, intended read and mutation operations, expected foundation SHA, and rollback revision/configuration.
-- [ ] 2.2 With fresh task-scoped Railway production authorization, verify source-trigger behavior, current deployment identity, service/write state, readiness settings, SQLite volume attachment, and the exact rollback target; stop on unexpected or ambiguous state.
+- [ ] 2.1 Before requesting production access, record both exact Railway project/environment/service targets, the shared MongoDB target database, intended read and mutation operations, expected foundation SHA, and rollback revisions/configuration.
+- [ ] 2.2 With fresh task-scoped Railway production authorization, verify source-trigger behavior, current deployment identity, service/write state, readiness settings, SQLite volume attachment, and the exact rollback target in both projects; stop on unexpected or ambiguous state.
 - [ ] 2.3 With fresh task-scoped MongoDB production authorization, verify the target database identity, credential scope/destination, network access, required privileges, and that the target is empty or explicitly isolated for this service; stop rather than overwrite existing data.
 - [ ] 2.4 Confirm the GitHub App installation-token path and callback/webhook endpoints match the reviewed runtime without changing GitHub provider configuration.
 - [ ] 2.5 After `rename-command-center-identifiers` merges, refresh current `main`, verify its exact merge SHA contains the reviewed code, tests, and strict-valid OpenSpec, and accept that SHA as the deployment source; stop before task 3.1 on any mismatch.
-- [ ] 2.6 With fresh task-scoped authorization, reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, target database `command-center-ai-production`, runtime user `command-center-ai-production-runtime` with only `readWrite` on that database, and the matching approved 1Password/Railway projection; do not quiesce SQLite until fresh least-privilege behavior is proven.
+- [ ] 2.6 With fresh task-scoped authorization, reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, shared target database `command-center-ai-production`, runtime user `command-center-ai-production-runtime` with only `readWrite` on that database, and the matching approved 1Password projection in both Railway projects; do not quiesce SQLite until fresh least-privilege behavior is proven.
 
 ## 3. Quiesce and Hand Off Bindings
 
@@ -23,7 +23,7 @@
 
 ## 4. Configure, Deploy, and Bootstrap
 
-- [ ] 4.1 With fresh task-scoped authorization, confirm the MongoDB runtime variables and deployment settings still select the verified `command-center-ai-production` credential projection for the exact verified rename SHA while leaving the old SQLite volume and rollback configuration intact.
+- [ ] 4.1 With fresh task-scoped authorization, confirm the MongoDB runtime variables and deployment settings in both Railway projects select the same verified `command-center-ai-production` credential projection for the exact verified rename SHA while leaving the old SQLite volume and rollback configurations intact.
 - [ ] 4.2 Deploy only the verified rename merge SHA and confirm `/health` liveness plus MongoDB-backed `/ready` before enabling user traffic.
 - [ ] 4.3 Have the user complete one ordinary GitHub sign-in, verify a hashed session and current identity are created, and prove every seeded installation binding remains unchanged without an installation/setup flow.
 - [ ] 4.4 Run canonical bootstrap or reconciliation for every seeded installation using installation-scoped tokens; stop if an installation/account is missing, unapproved, inaccessible, incomplete, or inconsistent.

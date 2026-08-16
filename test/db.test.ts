@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { databaseName, mongoConfig } from "#/db";
 import { withDatabase } from "./mongo-support";
 
-test("selects explicit and environment-scoped database names", () => {
+test("selects explicit, hosted, local, and test database names", () => {
 	expect(databaseName({ MONGODB_DATABASE: "ds9-operations" })).toBe(
 		"ds9-operations",
 	);
@@ -10,8 +10,14 @@ test("selects explicit and environment-scoped database names", () => {
 		"command-center-ai-production",
 	);
 	expect(databaseName({ RAILWAY_ENVIRONMENT_NAME: "Review / 42" })).toBe(
-		"command-center-ai-review---42",
+		"command-center-ai-production",
 	);
+	expect(
+		databaseName({
+			NODE_ENV: "production",
+			RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+		}),
+	).toBe("command-center-ai-production");
 	expect(databaseName({ NODE_ENV: "test" })).toMatch(
 		/^command-center-ai-test-/,
 	);
@@ -37,17 +43,33 @@ test("production MongoDB configuration accepts only the canonical database", () 
 	).toThrow("command-center-ai-production");
 });
 
-test("Railway MongoDB configuration accepts only its environment database", () => {
+test("Railway MongoDB configuration accepts only the shared hosted database", () => {
 	const env = {
 		MONGODB_URI_BASE: "mongodb://mongo.example",
 		RAILWAY_ENVIRONMENT_NAME: "Review / 42",
 	};
 	expect(mongoConfig(env)).toMatchObject({
-		database: "command-center-ai-review---42",
+		database: "command-center-ai-production",
 	});
+	expect(
+		mongoConfig({
+			...env,
+			MONGODB_DATABASE: "command-center-ai-production",
+		}),
+	).toMatchObject({ database: "command-center-ai-production" });
 	expect(() =>
-		mongoConfig({ ...env, MONGODB_DATABASE: "arbitrary-valid" }),
-	).toThrow("command-center-ai-review---42");
+		mongoConfig({
+			...env,
+			MONGODB_DATABASE: "command-center-ai-review---42",
+		}),
+	).toThrow("command-center-ai-production");
+	expect(
+		mongoConfig({
+			...env,
+			RAILWAY_ENVIRONMENT_NAME: "production",
+			MONGODB_DATABASE: "command-center-ai-production",
+		}),
+	).toMatchObject({ database: "command-center-ai-production" });
 });
 
 test("initializes required Mongo collections and indexes", () =>

@@ -23,7 +23,7 @@ The separate MongoDB cutover already owns Atlas, Railway, credentials, deploymen
 
 ### Replace literals at their existing ownership seams
 
-Update the current defaults and guards in place rather than introduce a naming registry. The production name remains an exact validation value; Railway, local, and test generators keep their existing isolation suffixes under the single `command-center-ai-*` database family. Existing helpers and environment validation remain authoritative.
+Update the current defaults and guards in place rather than introduce a naming registry. Both Railway projects and production use the single exact `command-center-ai-production` database and `command-center-ai-production-runtime` identity. Local and test generators retain their isolation suffixes under the `command-center-ai-*` family. Existing helpers and environment validation remain authoritative.
 
 Alternative: centralize every product and database identifier in a new module. Rejected because the values serve different layers, are not repeatedly composed through a common API, and a new abstraction would add indirection without reducing risk.
 
@@ -43,6 +43,7 @@ Alternative: perform provider changes from this PR-owned change. Rejected becaus
 
 - [A repository fixture is renamed accidentally] -> Classify exact-string occurrences and retain focused fixture tests.
 - [Production accepts a stale database] -> Keep exact fail-closed validation and cover the new value plus rejection in tests.
+- [The two Railway projects share hosted state] -> Treat both as production-capable; use local or test databases for destructive isolation.
 - [A destructive test targets a non-test database] -> Change the generator and guard together, then test both acceptance and rejection.
 - [Code merges before providers are ready] -> Keep all provider work in the merge-gated operational cutover; the deployed runtime must not be activated with mismatched configuration.
 - [Historical operational evidence contains old names] -> Preserve immutable historical facts, but update executable gates and intended target identities.

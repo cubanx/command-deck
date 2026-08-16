@@ -27,14 +27,14 @@ The SQLite-specific `operate-developer-command-center-production` change SHALL b
 - **THEN** this change becomes the sole executable production cutover plan
 
 ### Requirement: Fresh production authorization and preflight
-Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before quiescing SQLite, the operator SHALL reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, database `command-center-ai-production`, runtime user `command-center-ai-production-runtime` with only the required database scope, the matching Railway database/credential projection, deployment source behavior, network access, readiness configuration, and rollback target. Ambiguous or unexpected state SHALL fail closed.
+Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before quiescing SQLite, the operator SHALL reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, shared database `command-center-ai-production`, runtime user `command-center-ai-production-runtime` with only the required database scope, the matching database/credential projection in both Railway projects, deployment source behavior, network access, readiness configuration, and rollback targets. Ambiguous or unexpected state SHALL fail closed.
 
 #### Scenario: Production targets verified
 - **WHEN** all exact target identities, least-privilege grants, credential destinations, source behavior, and rollback prerequisites match the reviewed plan
 - **THEN** the operator may perform only the authorized cutover operations
 
 #### Scenario: Unexpected automatic deploy or target
-- **WHEN** source changes can deploy unexpectedly or any project, service, environment, database, credential, or rollback target is ambiguous
+- **WHEN** source changes can deploy unexpectedly, the two Railway projects disagree on the shared projection, or any project, service, environment, database, credential, or rollback target is ambiguous
 - **THEN** the cutover stops before mutation
 
 ### Requirement: Narrow binding handoff
