@@ -43,6 +43,7 @@ const localDemoConfig = (env: Record<string, string | undefined>) => {
 		localDemo &&
 		(env.NODE_ENV === "production" ||
 			env.RAILWAY_ENVIRONMENT_ID ||
+			env.RAILWAY_ENVIRONMENT_NAME ||
 			env.RAILWAY_PROJECT_ID)
 	)
 		throw new Error("local demo cannot run in a hosted production environment");

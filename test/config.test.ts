@@ -22,6 +22,12 @@ test("local demo is loopback-only and rejected in hosted environments", () => {
 	expect(() =>
 		loadConfig({ DCC_LOCAL_DEMO: "1", RAILWAY_ENVIRONMENT_ID: "ds9" }),
 	).toThrow("local demo");
+	expect(() =>
+		loadConfig({
+			DCC_LOCAL_DEMO: "1",
+			RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+		}),
+	).toThrow("local demo");
 });
 
 test("automated review signals are configured together", () => {

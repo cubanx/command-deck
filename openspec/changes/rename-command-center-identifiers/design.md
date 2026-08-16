@@ -23,7 +23,7 @@ The separate MongoDB cutover already owns Atlas, Railway, credentials, deploymen
 
 ### Replace literals at their existing ownership seams
 
-Update the current defaults and guards in place rather than introduce a naming registry. Both Railway projects and production use the single exact `command-center-ai-production` database and `command-center-ai-production-runtime` identity. Railway hosting also activates the existing production secret and origin safeguards regardless of `NODE_ENV`. Local and test generators retain their isolation suffixes under the `command-center-ai-*` family. Existing helpers and environment validation remain authoritative.
+Update the current defaults and guards in place rather than introduce a naming registry. Both Railway projects and production use the single exact `command-center-ai-production` database and `command-center-ai-production-runtime` identity. Railway hosting also rejects local-demo mode and activates the existing production secret and origin safeguards regardless of `NODE_ENV`. Local and test generators retain their isolation suffixes under the `command-center-ai-*` family. Existing helpers and environment validation remain authoritative.
 
 Alternative: centralize every product and database identifier in a new module. Rejected because the values serve different layers, are not repeatedly composed through a common API, and a new abstraction would add indirection without reducing risk.
 
