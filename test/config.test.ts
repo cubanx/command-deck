@@ -96,29 +96,39 @@ test("local MongoDB configuration uses the canonical isolated family", () => {
 
 test("Railway MongoDB configuration uses the shared hosted database", () => {
 	expect(
-		loadConfig({
-			RAILWAY_ENVIRONMENT_NAME: "Review / 42",
-			USER: "Benjamin Sisko",
-		}).mongoDatabase,
-	).toBe("command-center-ai-production");
+		loadConfig(
+			production({
+				NODE_ENV: undefined,
+				RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+			}),
+		),
+	).toMatchObject({
+		production: true,
+		mongoDatabase: "command-center-ai-production",
+		publicUrl: "https://command-center.up.railway.app",
+	});
+	expect(() =>
+		loadConfig(
+			production({
+				NODE_ENV: undefined,
+				RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+				GITHUB_CLIENT_SECRET: undefined,
+			}),
+		),
+	).toThrow("GITHUB_CLIENT_SECRET is required");
 	for (const mongoDatabase of [
 		"command-center-ai-local-benjamin-sisko",
 		"command-center-ai-review---42",
 		"arbitrary-valid",
 	]) {
 		expect(() =>
-			loadConfig({
-				RAILWAY_ENVIRONMENT_NAME: "Review / 42",
-				MONGODB_DATABASE: mongoDatabase,
-			}),
+			loadConfig(
+				production({
+					NODE_ENV: undefined,
+					RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+					MONGODB_DATABASE: mongoDatabase,
+				}),
+			),
 		).toThrow("command-center-ai-production");
 	}
-	expect(
-		loadConfig(production({ RAILWAY_ENVIRONMENT_NAME: "Review / 42" }))
-			.mongoDatabase,
-	).toBe("command-center-ai-production");
-	expect(
-		loadConfig(production({ RAILWAY_ENVIRONMENT_NAME: "production" }))
-			.mongoDatabase,
-	).toBe("command-center-ai-production");
 });

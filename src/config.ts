@@ -139,18 +139,18 @@ export function loadConfig(
 		"RECONCILE_INTERVAL_MS must be at least 60000",
 	);
 	const localDemo = localDemoConfig(env);
-	const production = env.NODE_ENV === "production";
+	const production =
+		env.NODE_ENV === "production" || Boolean(env.RAILWAY_ENVIRONMENT_NAME);
 	const mongoUriBase =
 		env.MONGODB_URI_BASE?.trim() ?? "mongodb://127.0.0.1:27017";
-	const hosted = production || Boolean(env.RAILWAY_ENVIRONMENT_NAME);
 	const mongoDatabase =
 		env.MONGODB_DATABASE?.trim() ??
-		(hosted
+		(production
 			? "command-center-ai-production"
 			: `command-center-ai-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`);
 	if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(mongoDatabase))
 		throw new Error("MONGODB_DATABASE is invalid");
-	if (hosted && mongoDatabase !== "command-center-ai-production")
+	if (production && mongoDatabase !== "command-center-ai-production")
 		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
 	return {
 		port,
