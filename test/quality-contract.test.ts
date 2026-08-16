@@ -27,6 +27,10 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	const dockerfile = text("Dockerfile");
 	expect(dockerfile).toContain("COPY --chown=bun:bun tsconfig.json ./");
 	expect(workflow).toContain(
-		"docker run --rm developer-command-center:quality bun -e 'await import(\"./src/server.ts\")'",
+		"docker run --rm command-center-ai:quality bun -e 'await import(\"./src/server.ts\")'",
 	);
+	expect(JSON.parse(text("src/web/manifest.webmanifest"))).toMatchObject({
+		name: "Command Center.ai",
+		short_name: "Command Center",
+	});
 });

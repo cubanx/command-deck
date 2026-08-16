@@ -95,12 +95,11 @@ export function databaseName(
 	env: Record<string, string | undefined> = process.env,
 ) {
 	if (env.MONGODB_DATABASE) return env.MONGODB_DATABASE;
-	if (env.NODE_ENV === "production") return "dev-command-center-production";
-	if (env.RAILWAY_ENVIRONMENT_NAME)
-		return `dev-command-center-${env.RAILWAY_ENVIRONMENT_NAME.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
+	if (env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV === "production")
+		return "command-center-ai-production";
 	if (env.NODE_ENV === "test")
-		return `dev-command-center-test-${crypto.randomUUID()}`;
-	return `dev-command-center-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
+		return `command-center-ai-test-${crypto.randomUUID()}`;
+	return `command-center-ai-local-${(env.USER ?? "local").replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
 }
 export function mongoConfig(
 	env: Record<string, string | undefined> = process.env,
@@ -110,12 +109,17 @@ export function mongoConfig(
 	if (!uriBase) throw new Error("MONGODB_URI_BASE is required");
 	if (!/^[a-z0-9][a-z0-9-]{0,62}$/i.test(database))
 		throw new Error("MONGODB_DATABASE is invalid");
+	if (
+		(env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV === "production") &&
+		database !== "command-center-ai-production"
+	)
+		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
 	return { uriBase, database };
 }
 export function testDatabaseGuard(database: string) {
-	if (!/^dev-command-center-test-[a-f0-9-]{36}$/i.test(database))
+	if (!/^command-center-ai-test-[a-f0-9-]{36}$/i.test(database))
 		throw new Error(
-			"MONGODB_DATABASE must be an explicitly isolated non-production dev-command-center-test UUID database",
+			"MONGODB_DATABASE must be an explicitly isolated non-production command-center-ai-test UUID database",
 		);
 }
 export async function openDatabase(config = mongoConfig()): Promise<Db> {

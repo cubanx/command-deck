@@ -22,6 +22,12 @@ test("local demo is loopback-only and rejected in hosted environments", () => {
 	expect(() =>
 		loadConfig({ DCC_LOCAL_DEMO: "1", RAILWAY_ENVIRONMENT_ID: "ds9" }),
 	).toThrow("local demo");
+	expect(() =>
+		loadConfig({
+			DCC_LOCAL_DEMO: "1",
+			RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+		}),
+	).toThrow("local demo");
 });
 
 test("automated review signals are configured together", () => {
@@ -47,7 +53,7 @@ const production = (overrides: Record<string, string | undefined> = {}) => ({
 	PUBLIC_URL: "https://command-center.up.railway.app",
 	RAILWAY_PUBLIC_DOMAIN: "command-center.up.railway.app",
 	MONGODB_URI_BASE: "mongodb://mongo.example",
-	MONGODB_DATABASE: "dev-command-center-production",
+	MONGODB_DATABASE: "command-center-ai-production",
 	GITHUB_APP_ID: "1701",
 	GITHUB_CLIENT_ID: "client-id",
 	GITHUB_CLIENT_SECRET: "client-secret",
@@ -79,7 +85,56 @@ test("production requires MongoDB configuration", () => {
 		production({ MONGODB_URI_BASE: undefined }),
 		production({ MONGODB_DATABASE: undefined }),
 		production({ MONGODB_DATABASE: "bad name" }),
+		production({
+			MONGODB_DATABASE: ["dev", "command", "center", "production"].join("-"),
+		}),
+		production({ MONGODB_DATABASE: "command-center-ai-staging" }),
 	]) {
 		expect(() => loadConfig(env)).toThrow();
+	}
+});
+
+test("local MongoDB configuration uses the canonical isolated family", () => {
+	expect(loadConfig({ USER: "Benjamin Sisko" }).mongoDatabase).toBe(
+		"command-center-ai-local-benjamin-sisko",
+	);
+});
+
+test("Railway MongoDB configuration uses the shared hosted database", () => {
+	expect(
+		loadConfig(
+			production({
+				NODE_ENV: undefined,
+				RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+			}),
+		),
+	).toMatchObject({
+		production: true,
+		mongoDatabase: "command-center-ai-production",
+		publicUrl: "https://command-center.up.railway.app",
+	});
+	expect(() =>
+		loadConfig(
+			production({
+				NODE_ENV: undefined,
+				RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+				GITHUB_CLIENT_SECRET: undefined,
+			}),
+		),
+	).toThrow("GITHUB_CLIENT_SECRET is required");
+	for (const mongoDatabase of [
+		"command-center-ai-local-benjamin-sisko",
+		"command-center-ai-review---42",
+		"arbitrary-valid",
+	]) {
+		expect(() =>
+			loadConfig(
+				production({
+					NODE_ENV: undefined,
+					RAILWAY_ENVIRONMENT_NAME: "Review / 42",
+					MONGODB_DATABASE: mongoDatabase,
+				}),
+			),
+		).toThrow("command-center-ai-production");
 	}
 });
