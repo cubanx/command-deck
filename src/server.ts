@@ -773,7 +773,13 @@ const repairRoute = async (
 	);
 	const token = await installationToken(appJwt, installationId);
 	return Response.json(
-		await bootstrapInstallation(context.db, installationId, token, fetch, appJwt),
+		await bootstrapInstallation(
+			context.db,
+			installationId,
+			token,
+			fetch,
+			appJwt,
+		),
 	);
 };
 
@@ -1012,10 +1018,7 @@ export function createApp(
 			const work = reconcileInstallations(
 				db,
 				async (id) => {
-					const appJwt = githubAppJwt(
-						appId,
-						privateKey.replace(/\\n/g, "\n"),
-					);
+					const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
 					return { token: await installationToken(appJwt, id), appJwt };
 				},
 				fetch,

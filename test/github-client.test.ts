@@ -90,12 +90,16 @@ test("legacy bindings backfill only after approved authoritative identity", () =
 		});
 		await db.users.replaceOne({ _id: "u" }, user!);
 		let repos = 0;
-		await bootstrapInstallation(db, "9", "token", async (url) =>
-			String(url).includes("/app/installations/")
-				? Response.json({ account: { login: "Crisp-Inc" } })
-				: String(url).includes("installation/repositories")
-					? (repos++, Response.json({ repositories: [] }))
-					: Response.json([]),
+		await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) =>
+				String(url).includes("/app/installations/")
+					? Response.json({ account: { login: "Crisp-Inc" } })
+					: String(url).includes("installation/repositories")
+						? (repos++, Response.json({ repositories: [] }))
+						: Response.json([]),
 			"app-jwt",
 		);
 		expect(repos).toBe(1);
@@ -149,25 +153,33 @@ test("serial reconciliation and complete bootstrap use installation tokens", () 
 		expect(waits).toEqual([]);
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		await bootstrapInstallation(db, "9", "token", async (url, init) => {
-			expect(new Headers(init?.headers).get("authorization")).toBe(
-				String(url).includes("/app/installations/")
-					? "Bearer app-jwt"
-					: "Bearer token",
-			);
-			return String(url).includes("/app/installations/")
-				? Response.json({ account: { login: "cubanx" } })
-				: String(url).includes("pulls?")
-					? Response.json([
-							{
-								number: 1,
-								title: "Defiant",
-								user: { login: "sisko" },
-								state: "open",
-							},
-						])
-					: Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] });
-		}, "app-jwt");
+		await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url, init) => {
+				expect(new Headers(init?.headers).get("authorization")).toBe(
+					String(url).includes("/app/installations/")
+						? "Bearer app-jwt"
+						: "Bearer token",
+				);
+				return String(url).includes("/app/installations/")
+					? Response.json({ account: { login: "cubanx" } })
+					: String(url).includes("pulls?")
+						? Response.json([
+								{
+									number: 1,
+									title: "Defiant",
+									user: { login: "sisko" },
+									state: "open",
+								},
+							])
+						: Response.json({
+								repositories: [{ id: 2, full_name: "ds9/ops" }],
+							});
+			},
+			"app-jwt",
+		);
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
 				?.pullRequests,
@@ -208,9 +220,9 @@ test("multi-page reconciliation replaces only a complete snapshot", () =>
 			if (value.includes("/deployments")) return Response.json([]);
 			return new Response("missing", { status: 500 });
 		};
-		expect((await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt")).kind).toBe(
-			"changed",
-		);
+		expect(
+			(await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt")).kind,
+		).toBe("changed");
 		expect(
 			(
 				await db.users.findOne({ _id: "u" })
@@ -276,27 +288,31 @@ test("complete reconciliation is user-scoped and preserves webhook fields", () =
 			});
 			await db.users.replaceOne({ _id: userId }, user!);
 		}
-		await bootstrapInstallation(db, "9", "token", async (url) =>
-			String(url).includes("/app/installations/")
-				? Response.json({ account: { login: "cubanx" } })
-				: String(url).includes("installation/repositories")
-					? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] })
-					: String(url).includes("/pulls?")
-						? Response.json([
-								{
-									number: 1,
-									title: "Sisko",
-									user: { login: "sisko" },
-									state: "open",
-								},
-								{
-									number: 2,
-									title: "Kira",
-									user: { login: "kira" },
-									state: "open",
-								},
-							])
-						: Response.json([]),
+		await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) =>
+				String(url).includes("/app/installations/")
+					? Response.json({ account: { login: "cubanx" } })
+					: String(url).includes("installation/repositories")
+						? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] })
+						: String(url).includes("/pulls?")
+							? Response.json([
+									{
+										number: 1,
+										title: "Sisko",
+										user: { login: "sisko" },
+										state: "open",
+									},
+									{
+										number: 2,
+										title: "Kira",
+										user: { login: "kira" },
+										state: "open",
+									},
+								])
+							: Response.json([]),
 			"app-jwt",
 		);
 		expect(
@@ -476,21 +492,25 @@ test("complete bootstrap preserves webhook fields and OpenSpecs while removing s
 			},
 		);
 		await db.users.replaceOne({ _id: "u" }, user!);
-		await bootstrapInstallation(db, "9", "token", async (url) =>
-			String(url).includes("/app/installations/")
-				? Response.json({ account: { login: "cubanx" } })
-				: String(url).includes("installation/repositories")
-					? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] })
-					: String(url).includes("/pulls?")
-						? Response.json([
-								{
-									number: 1,
-									title: "Defiant",
-									user: { login: "sisko" },
-									state: "open",
-								},
-							])
-						: Response.json([]),
+		await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) =>
+				String(url).includes("/app/installations/")
+					? Response.json({ account: { login: "cubanx" } })
+					: String(url).includes("installation/repositories")
+						? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] })
+						: String(url).includes("/pulls?")
+							? Response.json([
+									{
+										number: 1,
+										title: "Defiant",
+										user: { login: "sisko" },
+										state: "open",
+									},
+								])
+							: Response.json([]),
 			"app-jwt",
 		);
 		const repositories =

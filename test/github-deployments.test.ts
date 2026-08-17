@@ -31,30 +31,36 @@ test("newest deployment status survives unordered bootstrap and a stale webhook"
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
 		const createdAt = "2030-01-02T00:00:00Z";
-		await bootstrapInstallation(db, "1", "token", async (url) => {
-			const value = String(url);
-			if (value.includes("/app/installations/"))
-				return Response.json({ account: { login: "cubanx" } });
-			if (value.includes("installation/repositories"))
-				return Response.json({
-					repositories: [{ id: 2, full_name: "ds9/ops" }],
-				});
-			if (value.includes("/pulls?")) return Response.json([]);
-			if (value.includes("/7/statuses"))
-				return Response.json([
-					{ id: 100, state: "in_progress", created_at: createdAt },
-					{ id: 101, state: "success", created_at: createdAt },
-				]);
-			if (value.includes("/deployments?"))
-				return Response.json([
-					{
-						id: 7,
-						environment: "production",
-						created_at: "2030-01-01T00:00:00Z",
-					},
-				]);
-			return Response.json([]);
-		}, "app-jwt");
+		await bootstrapInstallation(
+			db,
+			"1",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/app/installations/"))
+					return Response.json({ account: { login: "cubanx" } });
+				if (value.includes("installation/repositories"))
+					return Response.json({
+						repositories: [{ id: 2, full_name: "ds9/ops" }],
+					});
+				if (value.includes("/pulls?")) return Response.json([]);
+				if (value.includes("/7/statuses"))
+					return Response.json([
+						{ id: 100, state: "in_progress", created_at: createdAt },
+						{ id: 101, state: "success", created_at: createdAt },
+					]);
+				if (value.includes("/deployments?"))
+					return Response.json([
+						{
+							id: 7,
+							environment: "production",
+							created_at: "2030-01-01T00:00:00Z",
+						},
+					]);
+				return Response.json([]);
+			},
+			"app-jwt",
+		);
 		expect(
 			(await dashboardForUser(db, "u", new Date("2030-01-03"))).deployments[0],
 		).toMatchObject({
