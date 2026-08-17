@@ -33,7 +33,7 @@ test("newest deployment status survives unordered bootstrap and a stale webhook"
 		const createdAt = "2030-01-02T00:00:00Z";
 		await bootstrapInstallation(db, "1", "token", async (url) => {
 			const value = String(url);
-			if (value.endsWith("/installation"))
+			if (value.includes("/app/installations/"))
 				return Response.json({ account: { login: "cubanx" } });
 			if (value.includes("installation/repositories"))
 				return Response.json({
@@ -54,7 +54,7 @@ test("newest deployment status survives unordered bootstrap and a stale webhook"
 					},
 				]);
 			return Response.json([]);
-		});
+		}, "app-jwt");
 		expect(
 			(await dashboardForUser(db, "u", new Date("2030-01-03"))).deployments[0],
 		).toMatchObject({

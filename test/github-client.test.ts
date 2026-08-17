@@ -91,16 +91,45 @@ test("legacy bindings backfill only after approved authoritative identity", () =
 		await db.users.replaceOne({ _id: "u" }, user!);
 		let repos = 0;
 		await bootstrapInstallation(db, "9", "token", async (url) =>
-			String(url).endsWith("/installation")
+			String(url).includes("/app/installations/")
 				? Response.json({ account: { login: "Crisp-Inc" } })
 				: String(url).includes("installation/repositories")
 					? (repos++, Response.json({ repositories: [] }))
 					: Response.json([]),
+			"app-jwt",
 		);
 		expect(repos).toBe(1);
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.accountLogin,
 		).toBe("Crisp-Inc");
+	}));
+
+test("bootstrap uses the App JWT for identity and installation token for repositories", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const result = await bootstrapInstallation(
+			db,
+			"9",
+			"installation-token",
+			async (url, init) => {
+				const value = String(url),
+					authorization = new Headers(init?.headers).get("authorization");
+				if (value === "https://api.github.com/installation")
+					throw new Error("legacy installation endpoint requested");
+				if (value === "https://api.github.com/app/installations/9") {
+					expect(authorization).toBe("Bearer app-jwt");
+					return Response.json({ account: { login: "cubanx" } });
+				}
+				expect(value).toBe(
+					"https://api.github.com/installation/repositories?per_page=100",
+				);
+				expect(authorization).toBe("Bearer installation-token");
+				return Response.json({ repositories: [] });
+			},
+			"app-jwt",
+		);
+		expect(result.kind).toBe("changed");
 	}));
 
 test("serial reconciliation and complete bootstrap use installation tokens", () =>
@@ -122,9 +151,11 @@ test("serial reconciliation and complete bootstrap use installation tokens", () 
 		await bindInstallation(db, "u", "9", "cubanx");
 		await bootstrapInstallation(db, "9", "token", async (url, init) => {
 			expect(new Headers(init?.headers).get("authorization")).toBe(
-				"Bearer token",
+				String(url).includes("/app/installations/")
+					? "Bearer app-jwt"
+					: "Bearer token",
 			);
-			return String(url).endsWith("/installation")
+			return String(url).includes("/app/installations/")
 				? Response.json({ account: { login: "cubanx" } })
 				: String(url).includes("pulls?")
 					? Response.json([
@@ -136,7 +167,7 @@ test("serial reconciliation and complete bootstrap use installation tokens", () 
 							},
 						])
 					: Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] });
-		});
+		}, "app-jwt");
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
 				?.pullRequests,
@@ -158,7 +189,7 @@ test("multi-page reconciliation replaces only a complete snapshot", () =>
 		await db.users.replaceOne({ _id: "u" }, prior!);
 		const fetcher = async (url: RequestInfo | URL) => {
 			const value = String(url);
-			if (value.endsWith("/installation"))
+			if (value.includes("/app/installations/"))
 				return Response.json({ account: { login: "cubanx" } });
 			if (value.includes("repositories?page=2"))
 				return Response.json({
@@ -177,7 +208,7 @@ test("multi-page reconciliation replaces only a complete snapshot", () =>
 			if (value.includes("/deployments")) return Response.json([]);
 			return new Response("missing", { status: 500 });
 		};
-		expect((await bootstrapInstallation(db, "9", "token", fetcher)).kind).toBe(
+		expect((await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt")).kind).toBe(
 			"changed",
 		);
 		expect(
@@ -190,6 +221,7 @@ test("multi-page reconciliation replaces only a complete snapshot", () =>
 			"9",
 			"token",
 			async () => new Response("down", { status: 503 }),
+			"app-jwt",
 		);
 		expect(failed.kind).toBe("error");
 		expect(
@@ -245,7 +277,7 @@ test("complete reconciliation is user-scoped and preserves webhook fields", () =
 			await db.users.replaceOne({ _id: userId }, user!);
 		}
 		await bootstrapInstallation(db, "9", "token", async (url) =>
-			String(url).endsWith("/installation")
+			String(url).includes("/app/installations/")
 				? Response.json({ account: { login: "cubanx" } })
 				: String(url).includes("installation/repositories")
 					? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] })
@@ -265,6 +297,7 @@ test("complete reconciliation is user-scoped and preserves webhook fields", () =
 								},
 							])
 						: Response.json([]),
+			"app-jwt",
 		);
 		expect(
 			(
@@ -286,7 +319,7 @@ test("cached paginated next link survives a Link-less 304", () =>
 			pageTwo = 0;
 		const fetcher = async (url: RequestInfo | URL) => {
 			const value = String(url);
-			if (value.endsWith("/installation"))
+			if (value.includes("/app/installations/"))
 				return Response.json({ account: { login: "cubanx" } });
 			if (value.includes("repositories?page=2")) {
 				pageTwo++;
@@ -310,8 +343,8 @@ test("cached paginated next link survives a Link-less 304", () =>
 			if (value.includes("/pulls?")) return Response.json([]);
 			return Response.json([]);
 		};
-		await bootstrapInstallation(db, "9", "token", fetcher);
-		await bootstrapInstallation(db, "9", "token", fetcher);
+		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt");
+		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt");
 		expect(pageTwo).toBeGreaterThan(1);
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories,
@@ -444,7 +477,7 @@ test("complete bootstrap preserves webhook fields and OpenSpecs while removing s
 		);
 		await db.users.replaceOne({ _id: "u" }, user!);
 		await bootstrapInstallation(db, "9", "token", async (url) =>
-			String(url).endsWith("/installation")
+			String(url).includes("/app/installations/")
 				? Response.json({ account: { login: "cubanx" } })
 				: String(url).includes("installation/repositories")
 					? Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] })
@@ -458,6 +491,7 @@ test("complete bootstrap preserves webhook fields and OpenSpecs while removing s
 								},
 							])
 						: Response.json([]),
+			"app-jwt",
 		);
 		const repositories =
 				(await db.users.findOne({ _id: "u" }))?.installations[0]
@@ -481,21 +515,36 @@ test("installation reconciliation obtains tokens and bootstraps serially in stab
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "10", "cubanx");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const tokens: string[] = [];
+		const tokens: string[] = [],
+			appJwts: string[] = [];
+		let activeInstallationId = "";
 		const results = await reconcileInstallations(
 			db,
 			async (installationId) => {
 				tokens.push(installationId);
-				return `token-${installationId}`;
+				appJwts.push(`app-jwt-${installationId}`);
+				activeInstallationId = installationId;
+				return {
+					token: `token-${installationId}`,
+					appJwt: `app-jwt-${installationId}`,
+				};
 			},
-			async (url) =>
-				String(url).endsWith("/installation")
+			async (url, init) => {
+				const authorization = new Headers(init?.headers).get("authorization");
+				expect(authorization).toBe(
+					String(url).includes("/app/installations/")
+						? `Bearer app-jwt-${activeInstallationId}`
+						: `Bearer token-${activeInstallationId}`,
+				);
+				return String(url).includes("/app/installations/")
 					? Response.json({ account: { login: "cubanx" } })
 					: String(url).includes("installation/repositories")
 						? Response.json({ repositories: [] })
-						: Response.json([]),
+						: Response.json([]);
+			},
 		);
 		expect(tokens).toEqual(["10", "9"]);
+		expect(appJwts).toEqual(["app-jwt-10", "app-jwt-9"]);
 		expect(results.map((result) => result.installationId)).toEqual(["10", "9"]);
 		expect(results.every((result) => result.result.kind === "changed")).toBe(
 			true,
@@ -509,7 +558,7 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		await expect(
 			reconcileInstallations(
 				db,
-				async () => "token",
+				async () => ({ token: "token", appJwt: "app-jwt" }),
 				async () => new Response("down", { status: 500 }),
 			),
 		).rejects.toThrow("reconciliation failed for installations 9");
@@ -519,9 +568,9 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		expect((await dashboardForUser(db, "u")).stale).toBe(true);
 		await reconcileInstallations(
 			db,
-			async () => "token",
+			async () => ({ token: "token", appJwt: "app-jwt" }),
 			async (url) =>
-				String(url).endsWith("/installation")
+				String(url).includes("/app/installations/")
 					? Response.json({ account: { login: "cubanx" } })
 					: String(url).includes("installation/repositories")
 						? Response.json({ repositories: [] })

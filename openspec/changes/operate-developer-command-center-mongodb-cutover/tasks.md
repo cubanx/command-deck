@@ -1,8 +1,8 @@
 ## 1. Prerequisite and Plan Gates
 
-- [ ] 1.1 Fetch current `main` read-only, verify the exact `replace-sqlite-with-mongodb` merge SHA is present, and confirm its reviewed implementation, checks, OpenSpec, and seed command are complete; stop on any mismatch.
+- [ ] 1.1 Fetch current `main` read-only, verify the exact `replace-sqlite-with-mongodb`, `rename-command-center-identifiers`, and `fix-installation-identity` merge SHAs are present, and confirm their reviewed implementation, checks, and OpenSpec artifacts are complete; accept the installation identity fix SHA as the deployment source and stop on any mismatch.
 - [ ] 1.2 Confirm `operate-developer-command-center-production` has no executed production tasks, then retire it as superseded with spec synchronization skipped and verify it no longer appears as a competing active operation.
-- [ ] 1.3 Strictly validate this cutover change from current `main` and confirm no code PR, migration implementation, observation window, or destructive storage cleanup is hidden in its scope.
+- [ ] 1.3 Strictly validate this cutover change from current `main` and confirm no migration implementation, observation window, or destructive storage cleanup is hidden in its scope; require separate production authorization after the merge gate.
 
 ## 2. Authorized Production Preflight
 

@@ -5,14 +5,14 @@ Defines the authorized production cutover from unused SQLite state to MongoDB wh
 ## ADDED Requirements
 
 ### Requirement: Exact prerequisite merge gate
-The cutover SHALL NOT perform any repository, provider, credential, database, or deployment mutation until `replace-sqlite-with-mongodb` and `rename-command-center-identifiers` are merged, both exact merge SHAs are verified on refreshed current `main`, the foundation SHA contains the complete validated MongoDB foundation, and the rename SHA contains the complete validated Command Center.ai naming change. A branch, pull-request head, local commit, or stale `main` SHALL NOT satisfy either gate. The rename merge SHA SHALL be the deployment source and the operation SHALL NOT require another code PR.
+The cutover SHALL NOT perform any repository, provider, credential, database, or deployment mutation until `replace-sqlite-with-mongodb`, `rename-command-center-identifiers`, and `fix-installation-identity` are merged, all exact merge SHAs are verified on refreshed current `main`, the foundation SHA contains the complete validated MongoDB foundation, the rename SHA contains the complete validated Command Center.ai naming change, and the installation identity fix SHA contains the focused credential-boundary regression. A branch, pull-request head, local commit, or stale `main` SHALL NOT satisfy any gate. The installation identity fix merge SHA SHALL be the deployment source, and separate production authorization SHALL still be required before deployment or provider operations.
 
 #### Scenario: Verified prerequisite
-- **WHEN** both exact prerequisite merge SHAs are ancestors of refreshed current `main` and their required checks and artifacts are complete
+- **WHEN** all exact prerequisite merge SHAs are ancestors of refreshed current `main` and their required checks and artifacts are complete
 - **THEN** the cutover may continue to its separately authorized production prerequisites
 
 #### Scenario: Missing or stale prerequisite
-- **WHEN** either prerequisite is unmerged, either merge SHA cannot be verified, or refreshed current `main` does not contain both
+- **WHEN** any prerequisite is unmerged, any merge SHA cannot be verified, or refreshed current `main` does not contain all of them
 - **THEN** the cutover stops before any external mutation
 
 ### Requirement: Superseded SQLite operation plan

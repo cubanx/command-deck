@@ -258,7 +258,8 @@ export async function bootstrapInstallation(
 	db: Db,
 	installationId: string,
 	token: string,
-	fetcher: FetchLike = fetch,
+	fetcher: FetchLike,
+	appJwt: string,
 ): Promise<ReadResult> {
 	const request: FetchLike = (url, init) =>
 		fetcher(url, {
@@ -266,6 +267,14 @@ export async function bootstrapInstallation(
 			headers: {
 				...Object.fromEntries(new Headers(init?.headers)),
 				authorization: `Bearer ${token}`,
+			},
+		});
+	const identityRequest: FetchLike = (url, init) =>
+		fetcher(url, {
+			...init,
+			headers: {
+				...Object.fromEntries(new Headers(init?.headers)),
+				authorization: `Bearer ${appJwt}`,
 			},
 		});
 	const bound = await db.users
@@ -292,8 +301,8 @@ export async function bootstrapInstallation(
 	const installation = await conditionalGet(
 		db,
 		`installation:${installationId}:identity`,
-		"https://api.github.com/installation",
-		request,
+		`https://api.github.com/app/installations/${installationId}`,
+		identityRequest,
 	);
 	if (installation.kind === "error") return installation;
 	if (
@@ -470,8 +479,10 @@ export async function bootstrapDeployments(
 }
 export async function reconcileInstallations(
 	db: Db,
-	tokenFor: (installationId: string) => Promise<string>,
-	fetcher: FetchLike = fetch,
+	credentialsFor: (
+		installationId: string,
+	) => Promise<{ token: string; appJwt: string }>,
+	fetcher: FetchLike,
 	installationIds?: string[],
 ) {
 	const ids = installationIds
@@ -497,11 +508,13 @@ export async function reconcileInstallations(
 	for (const installationId of ids) {
 		let result: ReadResult;
 		try {
+			const { token, appJwt } = await credentialsFor(installationId);
 			result = await bootstrapInstallation(
 				db,
 				installationId,
-				await tokenFor(installationId),
+				token,
 				fetcher,
+				appJwt,
 			);
 		} catch {
 			result = { kind: "error", stale: true, message: "reconciliation failed" };
