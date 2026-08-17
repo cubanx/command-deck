@@ -365,7 +365,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 					tokenIds.push(url.match(/installations\/(\d+)/)?.[1] ?? "");
 					return Response.json({ token: "installation-token" });
 				}
-				if (url.endsWith("/installation"))
+				if (url.includes("/app/installations/"))
 					if (fail)
 						return new Response("raw provider diagnostic", { status: 500 });
 					else
@@ -926,7 +926,7 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 				});
 			if (url.includes("access_tokens"))
 				return Response.json({ token: "installation-token" });
-			if (url.endsWith("/installation"))
+			if (url.includes("/app/installations/"))
 				return new Promise((resolve) => {
 					identityRequested?.(() =>
 						resolve(Response.json({ account: { login: "Crisp-Inc" } })),
@@ -1033,7 +1033,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				});
 			if (url.includes("access_tokens"))
 				return Response.json({ token: "installation-token" });
-			if (url.endsWith("/installation"))
+			if (url.includes("/app/installations/"))
 				return fail
 					? new Response("github diagnostic", { status: 401 })
 					: Response.json({ account: { login: "Crisp-Inc" } });
@@ -1071,7 +1071,10 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			fail = false;
 			await reconcileInstallations(
 				db,
-				async () => "installation-token",
+				async () => ({
+					token: "installation-token",
+					appJwt: "app-jwt",
+				}),
 				globalThis.fetch,
 			);
 			expect(

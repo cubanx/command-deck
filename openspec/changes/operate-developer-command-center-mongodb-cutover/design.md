@@ -20,7 +20,7 @@ See `proposal.md` for scope and `specs/mongodb-cutover-operations/spec.md` for t
 
 - Preserve sessions, caches, webhook history, notifications, provider projections, or any other SQLite content.
 - Keep the service available during cutover.
-- Add application code, migration tooling, dual writes, reverse synchronization, or a second code PR.
+- Add application code, migration tooling, dual writes, or reverse synchronization.
 - Delete the SQLite volume or MongoDB database.
 - Apply or partially reuse the stale SQLite operational tasks.
 
@@ -32,13 +32,13 @@ Before production access, archive `operate-developer-command-center-production` 
 
 If the OpenSpec tooling cannot preserve that distinction clearly, stop for review instead of leaving two active plans.
 
-### Gate on the exact MongoDB merge SHA
+### Gate on the exact prerequisite merge SHAs
 
-The cutover begins from a fresh current-`main` verification. One exact merge SHA must contain the completed foundation artifacts, implementation, tests, and reviewed seed command; a second exact merge SHA must contain `rename-command-center-identifiers` and its validated Command Center.ai naming contracts. PR state, branch heads, and stale local refs are insufficient. The verified rename SHA becomes the only deployment source accepted by the operation, and no second code PR is required.
+The cutover begins from a fresh current-`main` verification. Exact merge SHAs must contain the completed foundation artifacts, implementation, tests, and reviewed seed command; `rename-command-center-identifiers` and its validated Command Center.ai naming contracts; and `fix-installation-identity` with its focused credential-boundary regression. PR state, branch heads, and stale local refs are insufficient. The verified installation identity fix SHA becomes the deployment source accepted by the operation, which still requires separate production authorization.
 
 ### Reconcile provider identities before quiescing SQLite
 
-Only after both merge gates pass, use fresh task-scoped authorization to reconcile the Atlas project and already-canonical cluster to `command-center-ai`, select the empty or isolated `command-center-ai-production` database, establish `command-center-ai-production-runtime` with only `readWrite` on that database, and project the same database and credential to both Railway projects through the approved 1Password/Railway path. Treat establishing the renamed runtime user as credential rotation: verify metadata, both destinations, least privilege, and fresh runtime behavior before any later retirement of the old identity. No provider change or credential projection may begin from the code PR.
+Only after all merge gates pass, use fresh task-scoped authorization to reconcile the Atlas project and already-canonical cluster to `command-center-ai`, select the empty or isolated `command-center-ai-production` database, establish `command-center-ai-production-runtime` with only `readWrite` on that database, and project the same database and credential to both Railway projects through the approved 1Password/Railway path. Treat establishing the renamed runtime user as credential rotation: verify metadata, both destinations, least privilege, and fresh runtime behavior before any later retirement of the old identity. No provider change or credential projection may begin before separate authorization.
 
 ### Use the production brokers and fail closed
 
@@ -77,7 +77,7 @@ Storage deletion is deliberately deferred. Cleanup is a separate destructive dec
 ## Risks / Trade-offs
 
 - [The old operation remains misleading] -> Retire it before production access and fail if OpenSpec cannot represent the superseded state cleanly.
-- [An automatic deploy could race the plan] -> Require both exact merge gates and re-check source triggers and deployed SHA before cutover mutation.
+- [An automatic deploy could race the plan] -> Require all exact merge gates and re-check source triggers and deployed SHA before cutover mutation.
 - [Renamed provider identities or either Railway projection could point at the old database or broad grants] -> Verify the exact Atlas project, cluster, shared database, runtime user, role scope, and both Railway destinations before quiescing SQLite.
 - [The narrow SQLite query omits a binding] -> Compare binding counts, require exactly one user, validate every tuple as a set, and stop on ambiguity.
 - [The partial seeded user lacks current profile identity] -> Require one normal sign-in before bootstrap or dashboard verification; preserve bindings during the identity upsert.
@@ -87,8 +87,8 @@ Storage deletion is deliberately deferred. Cleanup is a separate destructive dec
 
 ## Migration Plan
 
-1. Verify the exact MongoDB foundation merge SHA on current `main` and its completed checks.
-2. Verify the exact `rename-command-center-identifiers` merge SHA on refreshed current `main` and accept it as the deployment source.
+1. Verify the exact MongoDB foundation and `rename-command-center-identifiers` merge SHAs on current `main` and their completed checks.
+2. Verify the exact `fix-installation-identity` merge SHA on refreshed current `main` and accept it as the deployment source.
 3. Retire the unexecuted SQLite operational change without syncing stale specs.
 4. Obtain fresh production authorization; reconcile and verify the exact `command-center-ai` Atlas project/cluster, shared `command-center-ai-production` database, `command-center-ai-production-runtime` least-privilege identity, matching projection in both Railway projects, source behavior, network access, target emptiness, and rollback revisions.
 5. Stop application and webhook writes if an old service is running.

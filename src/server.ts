@@ -454,11 +454,14 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 	const { githubAppId, githubAppPrivateKey } = context.config;
 	if (!githubAppId || !githubAppPrivateKey) return;
 	queueMicrotask(() => {
-		void installationToken(
-			githubAppJwt(githubAppId, githubAppPrivateKey.replace(/\\n/g, "\n")),
-			installationId,
-		)
-			.then((token) => bootstrapInstallation(context.db, installationId, token))
+		const appJwt = githubAppJwt(
+			githubAppId,
+			githubAppPrivateKey.replace(/\\n/g, "\n"),
+		);
+		void installationToken(appJwt, installationId)
+			.then((token) =>
+				bootstrapInstallation(context.db, installationId, token, fetch, appJwt),
+			)
 			.then((result) => {
 				if (result.kind === "error")
 					console.error(
@@ -764,12 +767,19 @@ const repairRoute = async (
 	const { githubAppId, githubAppPrivateKey } = context.config;
 	if (!githubAppId || !githubAppPrivateKey)
 		return new Response("GitHub App is not configured", { status: 503 });
-	const token = await installationToken(
-		githubAppJwt(githubAppId, githubAppPrivateKey.replace(/\\n/g, "\n")),
-		installationId,
+	const appJwt = githubAppJwt(
+		githubAppId,
+		githubAppPrivateKey.replace(/\\n/g, "\n"),
 	);
+	const token = await installationToken(appJwt, installationId);
 	return Response.json(
-		await bootstrapInstallation(context.db, installationId, token),
+		await bootstrapInstallation(
+			context.db,
+			installationId,
+			token,
+			fetch,
+			appJwt,
+		),
 	);
 };
 
@@ -1007,11 +1017,10 @@ export function createApp(
 			if (reconciling) return "running";
 			const work = reconcileInstallations(
 				db,
-				(id) =>
-					installationToken(
-						githubAppJwt(appId, privateKey.replace(/\\n/g, "\n")),
-						id,
-					),
+				async (id) => {
+					const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
+					return { token: await installationToken(appJwt, id), appJwt };
+				},
 				fetch,
 				installationIds,
 			)
