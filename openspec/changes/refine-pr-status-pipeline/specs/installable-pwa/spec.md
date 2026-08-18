@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Installable application shell
-The web app SHALL deliver its operational shell through normal HTTP asset requests without a manifest, standalone-display metadata, or ongoing service worker. To retire prior same-origin registrations, it SHALL temporarily serve `/sw.js` whose install handler calls `self.skipWaiting()` and whose activate handler deletes only `dcc-shell-v1`, `dcc-shell-v4`, `dcc-shell-v6`, and `dcc-shell-v10`, then unregisters itself. The browser SHALL not offer the command center as an installable web app.
+The web app SHALL deliver its operational HTML, CSS, and JavaScript shell assets through normal HTTP requests with `Cache-Control: no-cache`, without a manifest, standalone-display metadata, or ongoing service worker. To retire prior same-origin registrations, it SHALL temporarily serve `/sw.js` whose install handler calls `self.skipWaiting()` and whose activate handler deletes only `dcc-shell-v1`, `dcc-shell-v4`, `dcc-shell-v6`, and `dcc-shell-v10`, then unregisters itself. The browser SHALL not offer the command center as an installable web app.
 
 #### Scenario: Browser loads the command center
 - **WHEN** the service is delivered over a secure origin
@@ -16,7 +16,7 @@ The web app SHALL deliver its operational shell through normal HTTP asset reques
 - **THEN** the browser cannot offer the command center as an installable standalone web app because it has no manifest or service worker
 
 ### Requirement: Safe shell caching
-The service SHALL not provide an ongoing application-controlled shell cache. Normal HTTP caching behavior MAY apply to public assets, but the dashboard SHALL not register a service worker or cache authenticated API responses, SSE data, OAuth callbacks, or webhook traffic. The temporary retirement worker MAY delete only the named legacy shell caches before unregistering.
+The service SHALL not provide an ongoing application-controlled shell cache. Its normal HTTP HTML, CSS, and JavaScript shell asset responses SHALL use `Cache-Control: no-cache`; the dashboard SHALL not register a service worker or cache authenticated API responses, SSE data, OAuth callbacks, or webhook traffic. The temporary retirement worker MAY delete only the named legacy shell caches before unregistering.
 
 #### Scenario: Application deployment changes shell assets
 - **WHEN** a developer reloads the dashboard after an application deployment

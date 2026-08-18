@@ -54,18 +54,18 @@ const mergeTarget = new URLSearchParams({
 test("public shell assets and streams are isolated without a service worker", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
-		for (const [path, type] of [
-			["/", "text/html; charset=utf-8"],
-			["/configuration", "text/html; charset=utf-8"],
-			["/app.css", "text/css"],
-			["/app.js", "text/javascript"],
-			["/icon.svg", "image/svg+xml"],
-			["/icon-adaptive.svg", "image/svg+xml"],
-			["/avatar-fixture.svg", "image/svg+xml"],
+		for (const [path, type, cacheControl] of [
+			["/", "text/html; charset=utf-8", "no-cache"],
+			["/configuration", "text/html; charset=utf-8", "no-cache"],
+			["/app.css", "text/css", "no-cache"],
+			["/app.js", "text/javascript", "no-cache"],
+			["/icon.svg", "image/svg+xml", null],
+			["/icon-adaptive.svg", "image/svg+xml", null],
+			["/avatar-fixture.svg", "image/svg+xml", null],
 		]) {
 			const response = await app.fetch(new Request(`http://local${path}`));
 			expect(response.headers.get("content-type")).toBe(type);
-			expect(response.headers.get("cache-control")).toBeNull();
+			expect(response.headers.get("cache-control")).toBe(cacheControl);
 		}
 		const shell = await (await app.fetch(new Request("http://local/"))).text();
 		expect(shell).toContain(
@@ -232,9 +232,15 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(css).toContain(".lifecycle-pill.current");
 		expect(css).toContain(".lifecycle-pill.upcoming");
 		expect(css).toContain("display: inline-flex");
-		expect(css).toContain("color: #15803d");
-		expect(css).toContain("color: #1d4ed8");
-		expect(css).toContain("color: var(--muted)");
+		expect(css).toContain("--lifecycle-complete: #15803d");
+		expect(css).toContain("--lifecycle-current: #1d4ed8");
+		expect(css).toContain("--warning: #92400e");
+		expect(css).toContain("--lifecycle-complete: #86efac");
+		expect(css).toContain("--lifecycle-current: #93c5fd");
+		expect(css).toContain("--warning: #fcd34d");
+		expect(css).toContain("color: var(--lifecycle-complete)");
+		expect(css).toContain("color: var(--lifecycle-current)");
+		expect(css).toContain("color: var(--warning)");
 		expect(css).toContain(
 			".pr-lifecycle {\n\tdisplay: flex;\n\tflex-direction: column;",
 		);

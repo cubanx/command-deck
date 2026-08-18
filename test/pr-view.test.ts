@@ -94,7 +94,7 @@ type ViewItem = { pr: Record<string, unknown> };
 const numbers = (views: ViewItem[]) => views.map(({ pr }) => Number(pr.number));
 
 test("status buckets remain exclusive while closest-to-merge uses independent blockers", () => {
-	expect(bucketFor(items[0].pr)).toBe("mergeable");
+	expect(bucketFor(items[0].pr)).toBe("draft");
 	expect(bucketFor(items[1].pr)).toBe("ready");
 	expect(bucketFor(items[2].pr)).toBe("draft");
 	expect(numbers(derivePullRequests(items, {}))).toEqual([11, 9, 12, 10]);
@@ -105,7 +105,7 @@ test("lifecycle precedence reflects current projected evidence, including regres
 	expect(bucketFor(pr)).toBe("mergeable");
 	pr.mergeable = false;
 	expect(bucketFor(pr)).toBe("ready");
-	expect(bucketFor({ draft: true, mergeable: "clean" })).toBe("mergeable");
+	expect(bucketFor({ draft: true, mergeable: "clean" })).toBe("draft");
 });
 
 test("status presentation has one warning, no positive pills, and preserves projected detail", () => {
@@ -229,6 +229,31 @@ test("stage and attention filters compose independently", () => {
 			}),
 		),
 	).toEqual([]);
+	expect(
+		numbers(
+			derivePullRequests(filtered, {
+				statuses: new Set(["draft"]),
+			}),
+		),
+	).toEqual([3]);
+	expect(
+		numbers(
+			derivePullRequests(
+				[
+					{
+						pr: {
+							number: 4,
+							full_name: "ds9/ops",
+							draft: true,
+							mergeable: "clean",
+						},
+						spec: null,
+					},
+				],
+				{ statuses: new Set(["draft"]) },
+			),
+		),
+	).toEqual([4]);
 });
 
 test("demo lifecycle states render as Draft, Ready for review, and Mergeable", () => {
@@ -343,7 +368,7 @@ test("title, repository, branch, OpenSpec, status, and multi-repository filters 
 				repositories: new Set(["ds9/ops", "ds9/reports"]),
 			}),
 		),
-	).toEqual([9, 12]);
+	).toEqual([9]);
 	expect(repositoryOptions(items, "rep")).toEqual(["ds9/reports"]);
 });
 

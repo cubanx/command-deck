@@ -80,10 +80,11 @@ type AppContext = {
 	mergeProvider?: MergeProvider;
 };
 
+const freshShellHeaders = { "cache-control": "no-cache" };
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
-	["/", [html, "text/html; charset=utf-8"]],
-	["/configuration", [html, "text/html; charset=utf-8"]],
-	["/app.css", [css, "text/css"]],
+	["/", [html, "text/html; charset=utf-8", freshShellHeaders]],
+	["/configuration", [html, "text/html; charset=utf-8", freshShellHeaders]],
+	["/app.css", [css, "text/css", freshShellHeaders]],
 ]);
 const iconAssets = new Map<string, [string, string]>([
 	["/avatar-fixture.svg", ["avatar-fixture.svg", "image/svg+xml"]],
@@ -102,7 +103,7 @@ const publicResponse = async (path: string) => {
 		});
 	if (path === "/app.js")
 		return new Response(await buildBrowserScript(), {
-			headers: { "content-type": "text/javascript" },
+			headers: { "content-type": "text/javascript", ...freshShellHeaders },
 		});
 	const text = textAssets.get(path);
 	if (text)

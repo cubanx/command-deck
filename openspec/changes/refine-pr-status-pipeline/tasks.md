@@ -103,3 +103,9 @@
 - [x] 18.1 Add focused route and static assertions for the retirement response, `skipWaiting`, its four-cache cleanup scope, self-unregistration, and absence of registration or manifest behavior.
 - [x] 18.2 Serve the bounded same-origin `/sw.js` retirement handler that activates immediately before cleanup and unregistration, without restoring PWA registration, installability, or broad CacheStorage deletion.
 - [x] 18.3 Run focused tests, typecheck, strict OpenSpec validation, and `git diff --check`.
+
+## 19. Review corrections
+
+- [x] 19.1 Add focused lifecycle/filter, shell freshness, and theme-token regression coverage.
+- [x] 19.2 Apply draft-first lifecycle bucketing, fresh shell headers, and theme semantic tokens.
+- [x] 19.3 Run focused tests, typecheck, strict OpenSpec validation, and `git diff --check`.

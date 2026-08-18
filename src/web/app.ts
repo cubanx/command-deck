@@ -468,7 +468,7 @@ export const fuzzyScore = (query: unknown, value: unknown) => {
 export const isProjectedMergeable = (pr: PullRequest) =>
 	pr.mergeable === true || ["true", "clean"].includes(normalized(pr.mergeable));
 export const bucketFor = (pr: PullRequest) =>
-	isProjectedMergeable(pr) ? "mergeable" : pr.draft ? "draft" : "ready";
+	pr.draft ? "draft" : isProjectedMergeable(pr) ? "mergeable" : "ready";
 const failedState = (value: unknown) =>
 	[
 		"action_required",

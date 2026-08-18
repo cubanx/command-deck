@@ -11,7 +11,7 @@ PR cards expose several overlapping status pills, which makes it difficult to sc
 - Consolidate PR stage filters into the same Draft, Ready for review, and Mergeable taxonomy, with a separate attention/blocker filter.
 - Reuse the existing snapshot/projection data; do not add an on-hover GitHub API call or intercept title-link navigation.
 - Replace the compact deployment pill with the newest projected deployment's full header row; reuse the sticky status-detail interaction to show the newest five existing 48-hour rows first, with a native disclosure for the remainder, and their links.
-- Present local checkout configuration as sorted unresolved and resolved repository tables, remove PWA shell caching so the dashboard always uses normal HTTP asset delivery, and temporarily retire prior same-origin service-worker registrations without restoring PWA behavior.
+- Present local checkout configuration as sorted unresolved and resolved repository tables, deliver dashboard shell assets freshly through normal HTTP `Cache-Control: no-cache`, and temporarily retire prior same-origin service-worker registrations without restoring PWA behavior.
 
 ## Capabilities
 

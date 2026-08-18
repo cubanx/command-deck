@@ -7,6 +7,12 @@
 	--muted: #667085;
 	--border: #cbd5e1;
 	--link: #175cd3;
+	--lifecycle-complete: #15803d;
+	--lifecycle-complete-bg: #f0fdf4;
+	--lifecycle-current: #1d4ed8;
+	--lifecycle-current-bg: #eff6ff;
+	--warning: #92400e;
+	--warning-bg: #fef0c7;
 	color: var(--text);
 	background: var(--page-bg);
 }
@@ -19,6 +25,12 @@
 	--muted: #b6c2d0;
 	--border: #64748b;
 	--link: #7dd3fc;
+	--lifecycle-complete: #86efac;
+	--lifecycle-complete-bg: #14532d;
+	--lifecycle-current: #93c5fd;
+	--lifecycle-current-bg: #1e3a8a;
+	--warning: #fcd34d;
+	--warning-bg: #78350f;
 }
 :root[data-appearance="light"] {
 	color-scheme: light;
@@ -372,13 +384,13 @@ caption {
 }
 
 .lifecycle-pill.complete {
-	color: #15803d;
-	background: #f0fdf4;
+	color: var(--lifecycle-complete);
+	background: var(--lifecycle-complete-bg);
 }
 
 .lifecycle-pill.current {
-	color: #1d4ed8;
-	background: #eff6ff;
+	color: var(--lifecycle-current);
+	background: var(--lifecycle-current-bg);
 }
 
 .lifecycle-pill.upcoming {
@@ -389,8 +401,8 @@ caption {
 	margin-top: 8px;
 }
 .warning {
-	background: #fef0c7;
-	color: #92400e;
+	background: var(--warning-bg);
+	color: var(--warning);
 }
 .status-detail {
 	position: fixed;
