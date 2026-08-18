@@ -95,7 +95,10 @@ const iconAssets = new Map<string, [string, string]>([
 const publicResponse = async (path: string) => {
 	if (path === "/sw.js")
 		return new Response(retirementWorker, {
-			headers: { "content-type": "text/javascript", "cache-control": "no-cache" },
+			headers: {
+				"content-type": "text/javascript",
+				"cache-control": "no-cache",
+			},
 		});
 	if (path === "/app.js")
 		return new Response(await buildBrowserScript(), {

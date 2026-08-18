@@ -190,6 +190,12 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(element("#app").innerHTML).toContain(
 		'<details class="more-deployments"><summary>More deployments</summary>',
 	);
+	element("document").listeners.get("click")?.({
+		target: null,
+	} as unknown as Event);
+	expect(element("#app").innerHTML).not.toContain(
+		'aria-label="Deployment detail"',
+	);
 	const reconcile = element("#reconcile").listeners.get("click");
 	expect(reconcile).toBeTypeOf("function");
 	await reconcile?.(new Event("click"));

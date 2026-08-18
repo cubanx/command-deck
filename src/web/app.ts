@@ -1123,7 +1123,9 @@ const warningRowMarkup = (item: DerivedPullRequest) => {
 	return warning ? `<div class="pr-warning-row">${warning}</div>` : "";
 };
 export const pullRequestStatusMarkup = (item: DerivedPullRequest) =>
-	lifecycleFrameMarkup(item) + warningRowMarkup(item) + statusDetailMarkup(item);
+	lifecycleFrameMarkup(item) +
+	warningRowMarkup(item) +
+	statusDetailMarkup(item);
 const statusDetailMarkup = (item: DerivedPullRequest) => {
 	const { pr, spec, blockers } = item;
 	return `<aside id="status-detail" class="status-detail" role="dialog" aria-label="Pull request status detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close status detail">×</button><p><strong>${esc(stageLabel(item.bucket))}</strong>${blockers.length ? ` · ${esc(blockers.join(", "))}` : ""}</p><p>Actions: ${esc(pr.workflow_state ?? "unknown")} · Checks: ${esc(pr.checks_state ?? "unknown")} · Review: ${esc(pr.review_state ?? "unknown")} · Mergeability: ${esc(pr.mergeable ?? "unknown")}</p>${pr.bot_review_state ? `<p>Automated review${pr.bot_review_actor ? ` · ${esc(pr.bot_review_actor)}` : ""}: ${esc(pr.bot_review_state)}</p>` : ""}${workflowFailuresMarkup(pr)}<p class="muted">Branch: ${esc(pr.head_ref ?? "unknown")} · SHA: ${esc(pr.head_sha ?? "unknown")} · Updated: ${esc(pr.updated_at ?? "unknown")}</p>${openSpecMarkup(spec)}</aside>`;
@@ -1264,17 +1266,31 @@ const checkoutMarkup = () => {
 				) ?? "Unresolved",
 		}))
 		.sort((left, right) =>
-			left.repository.full_name.localeCompare(right.repository.full_name, undefined, {
-				sensitivity: "accent",
-			}),
-	);
-	const roots = [...new Set(repositoryCatalog.map(({ account_login }) => account_login))]
+			left.repository.full_name.localeCompare(
+				right.repository.full_name,
+				undefined,
+				{
+					sensitivity: "accent",
+				},
+			),
+		);
+	const roots = [
+		...new Set(repositoryCatalog.map(({ account_login }) => account_login)),
+	]
 		.map(
 			(account, index) =>
 				`<p><strong>${esc(account)}</strong> <button id="checkout-root-${index}" type="button" data-connect-root="${esc(account)}">Connect organization root</button></p>`,
 		)
 		.join("");
-	return `<section class="checkout-mappings" aria-labelledby="checkout-title"><h3 id="checkout-title">Local checkouts</h3>${roots}${checkoutTableMarkup("Unresolved", "No unresolved checkouts.", rows.filter(({ state }) => state !== "Resolved"))}${checkoutTableMarkup("Resolved", "No resolved checkouts.", rows.filter(({ state }) => state === "Resolved"))}</section>`;
+	return `<section class="checkout-mappings" aria-labelledby="checkout-title"><h3 id="checkout-title">Local checkouts</h3>${roots}${checkoutTableMarkup(
+		"Unresolved",
+		"No unresolved checkouts.",
+		rows.filter(({ state }) => state !== "Resolved"),
+	)}${checkoutTableMarkup(
+		"Resolved",
+		"No resolved checkouts.",
+		rows.filter(({ state }) => state === "Resolved"),
+	)}</section>`;
 };
 const appearanceMenuMarkup = () => {
 	const selected = appearancePreference().preference;
@@ -1761,7 +1777,9 @@ const load = () =>
 			if (priorIds && globalThis.Notification?.permission === "granted")
 				notifications
 					.filter((item) => !priorIds.has(item.id))
-					.forEach((item) => new Notification(item.title, { body: item.body }));
+					.forEach((item) => {
+						new Notification(item.title, { body: item.body });
+					});
 			known = ids;
 			render(snapshot);
 			restoreCheckouts(repositoryCatalog).then(() => {

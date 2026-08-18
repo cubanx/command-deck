@@ -16,18 +16,18 @@ import {
 	mergeControlFor,
 	mergeMarkup,
 	pageFor,
-	pullRequestStatusMarkup,
 	parseTasks,
 	persistVerifiedCheckout,
+	pullRequestStatusMarkup,
 	readCheckout,
 	readRepositoryCheckout,
 	repositoryForRemote,
 	repositoryOptions,
 	revalidateCheckout,
 	sortPreference,
-	statusDetailStateFor,
 	statusDetailHoverDelay,
 	statusDetailPositionFor,
+	statusDetailStateFor,
 } from "#/web/app";
 
 const directory = (
@@ -140,20 +140,20 @@ test("status presentation has one warning, no positive pills, and preserves proj
 	expect(markup).toContain("Runabout check");
 	expect(markup).toContain("ds9/hold-the-line");
 	expect(markup).not.toContain("healthy");
-	expect(markup.match(/class=\"status warning/g) ?? []).toHaveLength(1);
+	expect(markup.match(/class="status warning/g) ?? []).toHaveLength(1);
 	expect(markup).toContain("PR lifecycle. Current stage: Ready for review");
-	expect(markup).toContain('data-status-detail=');
+	expect(markup).toContain("data-status-detail=");
 	expect(markup).not.toContain('class="lifecycle-rail" data-status-detail');
 	expect(markup).toContain('class="lifecycle-pills" aria-hidden="true"');
 	expect(markup).toContain(
 		'<fieldset class="pr-lifecycle"><legend class="pr-lifecycle-title">PR Lifecycle</legend><div',
 	);
 	expect(markup).toContain('class="lifecycle-pill complete"');
-	expect(markup).toContain('✓ Draft · Complete');
+	expect(markup).toContain("✓ Draft · Complete");
 	expect(markup).toContain('class="lifecycle-pill current"');
-	expect(markup).toContain('◐ Ready for review · Current');
+	expect(markup).toContain("◐ Ready for review · Current");
 	expect(markup).toContain('class="lifecycle-pill upcoming"');
-	expect(markup).toContain('○ Mergeable · Upcoming');
+	expect(markup).toContain("○ Mergeable · Upcoming");
 	expect(markup).toContain('class="pr-warning-row"');
 	expect(markup).not.toContain('aria-current="step"');
 });
@@ -185,7 +185,11 @@ test("hover detail waits briefly, stays open on leave, and is replaced by anothe
 		statusDetailStateFor({ key: "ds9:42:9", pinned: true }, null, "leave"),
 	).toEqual({ key: "ds9:42:9", pinned: true });
 	expect(
-		statusDetailStateFor({ key: "ds9:42:9", pinned: false }, "ds9:7:1", "inspect"),
+		statusDetailStateFor(
+			{ key: "ds9:42:9", pinned: false },
+			"ds9:7:1",
+			"inspect",
+		),
 	).toEqual({ key: "ds9:7:1", pinned: false });
 	expect(
 		statusDetailPositionFor(

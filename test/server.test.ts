@@ -76,9 +76,7 @@ test("public shell assets and streams are isolated without a service worker", ()
 		);
 		expect(shell).not.toContain("manifest.webmanifest");
 		expect(shell).not.toContain("apple-touch-icon");
-		for (const path of [
-			"/favicon-32.png",
-		])
+		for (const path of ["/favicon-32.png"])
 			expect(
 				(await app.fetch(new Request(`http://local${path}`))).headers.get(
 					"content-type",
@@ -95,9 +93,7 @@ test("public shell assets and streams are isolated without a service worker", ()
 		expect(adaptiveIcon).toContain("prefers-color-scheme:dark");
 		expect(adaptiveIcon).toContain("#f59e0b");
 		expect(adaptiveIcon).toContain("#38bdf8");
-		const retirementWorker = await app.fetch(
-			new Request("http://local/sw.js"),
-		);
+		const retirementWorker = await app.fetch(new Request("http://local/sw.js"));
 		expect(retirementWorker.headers.get("content-type")).toBe(
 			"text/javascript",
 		);
@@ -114,8 +110,9 @@ test("public shell assets and streams are isolated without a service worker", ()
 		expect(retirementSource).not.toContain("caches.keys()");
 		expect(retirementSource).not.toContain("serviceWorker.register");
 		expect(
-		(await app.fetch(new Request("http://local/manifest.webmanifest"))).status,
-	).toBe(404);
+			(await app.fetch(new Request("http://local/manifest.webmanifest")))
+				.status,
+		).toBe(404);
 		expect(shell).toContain('href="/app.css"');
 		expect(shell).toContain('src="/app.js"');
 		const javascript = await (
@@ -128,10 +125,14 @@ test("public shell assets and streams are isolated without a service worker", ()
 		expect(css).toContain("padding: 10px 12px");
 		expect(css).toContain("font-size: 16px");
 		expect(css).toContain(".brand h1 {\n\twhite-space: nowrap;");
-		expect(css).toContain("header {\n\tdisplay: grid;\n\tgrid-template-columns: max-content minmax(0, 1fr) max-content;");
+		expect(css).toContain(
+			"header {\n\tdisplay: grid;\n\tgrid-template-columns: max-content minmax(0, 1fr) max-content;",
+		);
 		expect(css).toContain("justify-self: center;");
 		expect(css).toContain("margin-left: 0;");
-		expect(css).toContain("@media (max-width: 760px) {\n\theader {\n\t\tdisplay: flex;");
+		expect(css).toContain(
+			"@media (max-width: 760px) {\n\theader {\n\t\tdisplay: flex;",
+		);
 		expect(javascript).toContain("showDirectoryPicker");
 		expect(javascript).toContain("Provider reconciliation is stale.");
 		expect(
@@ -234,8 +235,12 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(css).toContain("color: #15803d");
 		expect(css).toContain("color: #1d4ed8");
 		expect(css).toContain("color: var(--muted)");
-		expect(css).toContain(".pr-lifecycle {\n\tdisplay: flex;\n\tflex-direction: column;");
-		expect(css).toContain(".pr-lifecycle-title {\n\tmargin: 0;\n\tpadding: 0 4px;");
+		expect(css).toContain(
+			".pr-lifecycle {\n\tdisplay: flex;\n\tflex-direction: column;",
+		);
+		expect(css).toContain(
+			".pr-lifecycle-title {\n\tmargin: 0;\n\tpadding: 0 4px;",
+		);
 		expect(css).toContain(".pr-statuses + .muted {\n\tmargin-top: 8px;");
 		expect(css).toContain(".control-group");
 		expect(css).toContain(':root[data-appearance="dark"] {');
@@ -289,9 +294,10 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(javascript).toContain("requestPermission");
 		expect(javascript).toContain("Connect organization root");
 		expect(javascript).toContain("Permission required");
-		expect(javascript).toContain('<caption>Unresolved</caption>');
-		expect(javascript).toContain('<caption>Resolved</caption>');
-		expect(javascript).toContain('<thead><tr><th scope="col">Repository</th><th scope="col">Account</th><th scope="col">State</th><th scope="col">Action</th></tr></thead>');
+		expect(javascript).toContain("<caption>${caption}</caption>");
+		expect(javascript).toContain(
+			'<thead><tr><th scope="col">Repository</th><th scope="col">Account</th><th scope="col">State</th><th scope="col">Action</th></tr></thead>',
+		);
 		expect(javascript).toContain("localeCompare(right.repository.full_name");
 		expect(javascript).toContain('sensitivity: "accent"');
 		expect(javascript).toContain('state === "Resolved"');
@@ -302,7 +308,7 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(javascript).toContain("No resolved checkouts.");
 		expect(javascript).toContain('class="pr-card-header"');
 		expect(javascript).not.toContain('type="button" disabled');
-		expect(css).toContain(".pr-card-header h3 a");
+		expect(css).toContain(".pr-card-header h3 {\n\tmargin: 0;");
 		expect(css).toContain("--link: #7dd3fc");
 		expect(javascript).not.toContain("/api/checkouts");
 		expect(javascript).not.toContain("/api/local-evidence");
@@ -641,7 +647,7 @@ test("local demo serves snapshot and SSE without a session and exposes no Railwa
 		expect(
 			(await (await app.fetch(new Request("http://local/api/snapshot"))).json())
 				.pullRequests,
-		).toHaveLength(1);
+		).toHaveLength(5);
 		const stream = await app.fetch(new Request("http://local/events"));
 		expect(stream.status).toBe(200);
 		await stream.body?.cancel();
