@@ -51,7 +51,7 @@ const mergeTarget = new URLSearchParams({
 	headSha: "a".repeat(40),
 }).toString();
 
-test("public PWA assets and streams are isolated", () =>
+test("public shell assets and streams are isolated without a service worker", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
 		for (const [path, type] of [
@@ -59,7 +59,6 @@ test("public PWA assets and streams are isolated", () =>
 			["/configuration", "text/html; charset=utf-8"],
 			["/app.css", "text/css"],
 			["/app.js", "text/javascript"],
-			["/manifest.webmanifest", "application/manifest+json"],
 			["/icon.svg", "image/svg+xml"],
 			["/icon-adaptive.svg", "image/svg+xml"],
 			["/avatar-fixture.svg", "image/svg+xml"],
@@ -68,31 +67,6 @@ test("public PWA assets and streams are isolated", () =>
 			expect(response.headers.get("content-type")).toBe(type);
 			expect(response.headers.get("cache-control")).toBeNull();
 		}
-		const manifest = (await (
-			await app.fetch(new Request("http://local/manifest.webmanifest"))
-		).json()) as {
-			icons: Array<{ src: string; sizes: string; purpose: string }>;
-		};
-		expect(manifest.icons).toEqual([
-			{
-				src: "/icon-192.png",
-				sizes: "192x192",
-				type: "image/png",
-				purpose: "any",
-			},
-			{
-				src: "/icon-512.png",
-				sizes: "512x512",
-				type: "image/png",
-				purpose: "any",
-			},
-			{
-				src: "/icon-maskable-512.png",
-				sizes: "512x512",
-				type: "image/png",
-				purpose: "maskable",
-			},
-		]);
 		const shell = await (await app.fetch(new Request("http://local/"))).text();
 		expect(shell).toContain(
 			'<link rel="icon" href="/icon-adaptive.svg" type="image/svg+xml">',
@@ -100,15 +74,10 @@ test("public PWA assets and streams are isolated", () =>
 		expect(shell).toContain(
 			'<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">',
 		);
-		expect(shell).toContain(
-			'<link rel="apple-touch-icon" href="/apple-touch-icon.png">',
-		);
+		expect(shell).not.toContain("manifest.webmanifest");
+		expect(shell).not.toContain("apple-touch-icon");
 		for (const path of [
 			"/favicon-32.png",
-			"/apple-touch-icon.png",
-			"/icon-192.png",
-			"/icon-512.png",
-			"/icon-maskable-512.png",
 		])
 			expect(
 				(await app.fetch(new Request(`http://local${path}`))).headers.get(
@@ -126,29 +95,43 @@ test("public PWA assets and streams are isolated", () =>
 		expect(adaptiveIcon).toContain("prefers-color-scheme:dark");
 		expect(adaptiveIcon).toContain("#f59e0b");
 		expect(adaptiveIcon).toContain("#38bdf8");
-		const worker = await (
-			await app.fetch(new Request("http://local/sw.js"))
-		).text();
-		expect(worker).toContain("/icon-adaptive.svg");
-		expect(worker).toContain("/avatar-fixture.svg");
-		expect(worker).toContain("/apple-touch-icon.png");
-		expect(worker).toContain("/icon-maskable-512.png");
-		expect(worker).toContain("PATHS.has(u.pathname)");
-		expect(worker).not.toContain('"/api/');
-		expect(worker).not.toContain('"/events');
-		expect(worker).not.toContain('"/webhooks/');
+		const retirementWorker = await app.fetch(
+			new Request("http://local/sw.js"),
+		);
+		expect(retirementWorker.headers.get("content-type")).toBe(
+			"text/javascript",
+		);
+		expect(retirementWorker.headers.get("cache-control")).toBe("no-cache");
+		const retirementSource = await retirementWorker.text();
+		expect(retirementSource).toContain('"dcc-shell-v1"');
+		expect(retirementSource).toContain('"dcc-shell-v4"');
+		expect(retirementSource).toContain('"dcc-shell-v6"');
+		expect(retirementSource).toContain('"dcc-shell-v10"');
+		expect(retirementSource).toContain("self.skipWaiting()");
+		expect(retirementSource).toContain('self.addEventListener("activate"');
+		expect(retirementSource).toContain("caches.delete(cacheName)");
+		expect(retirementSource).toContain("self.registration.unregister()");
+		expect(retirementSource).not.toContain("caches.keys()");
+		expect(retirementSource).not.toContain("serviceWorker.register");
 		expect(
-			(await app.fetch(new Request("http://local/sw.js"))).headers.get(
-				"cache-control",
-			),
-		).toContain("no-cache");
-		expect(shell).toContain("/app.js?v=7");
+		(await app.fetch(new Request("http://local/manifest.webmanifest"))).status,
+	).toBe(404);
+		expect(shell).toContain('href="/app.css"');
+		expect(shell).toContain('src="/app.js"');
 		const javascript = await (
 			await app.fetch(new Request("http://local/app.js"))
 		).text();
 		const css = await (
 			await app.fetch(new Request("http://local/app.css"))
 		).text();
+		expect(css).toContain("width: min(420px, 100%)");
+		expect(css).toContain("padding: 10px 12px");
+		expect(css).toContain("font-size: 16px");
+		expect(css).toContain(".brand h1 {\n\twhite-space: nowrap;");
+		expect(css).toContain("header {\n\tdisplay: grid;\n\tgrid-template-columns: max-content minmax(0, 1fr) max-content;");
+		expect(css).toContain("justify-self: center;");
+		expect(css).toContain("margin-left: 0;");
+		expect(css).toContain("@media (max-width: 760px) {\n\theader {\n\t\tdisplay: flex;");
 		expect(javascript).toContain("showDirectoryPicker");
 		expect(javascript).toContain("Provider reconciliation is stale.");
 		expect(
@@ -223,13 +206,16 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain('id="pr-sort"');
 		expect(javascript).toContain('aria-describedby="codex-activity-status"');
 		expect(javascript).toContain('id="pr-direction"');
-		expect(javascript).toContain("Failed Actions");
-		expect(javascript).toContain("Failed Checks");
+		expect(javascript).toContain("Lifecycle stage");
+		expect(javascript).toContain("Needs attention");
 		expect(javascript).toContain("Newest first");
 		expect(javascript).toContain("Closest to merge");
 		expect(javascript).toContain("Codex activity (unavailable)");
 		expect(javascript).toContain("disabled");
-		expect(javascript).toContain("Blockers:");
+		expect(javascript).toContain("lifecycle-rail");
+		expect(javascript).toContain("data-status-detail");
+		expect(javascript).toContain("pointerenter");
+		expect(javascript).toContain("data-status-detail-close");
 		expect(javascript).toContain("dcc-pr-sort");
 		expect(javascript).toContain("sort: view.sort");
 		expect(javascript).not.toContain("/api/codex-activity");
@@ -241,9 +227,18 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		).text();
 		expect(css).toContain("position: sticky");
 		expect(css).toContain("flex-wrap: wrap");
-		expect(css).toContain("flex-direction: column");
+		expect(css).toContain(".lifecycle-pill.complete");
+		expect(css).toContain(".lifecycle-pill.current");
+		expect(css).toContain(".lifecycle-pill.upcoming");
+		expect(css).toContain("display: inline-flex");
+		expect(css).toContain("color: #15803d");
+		expect(css).toContain("color: #1d4ed8");
+		expect(css).toContain("color: var(--muted)");
+		expect(css).toContain(".pr-lifecycle {\n\tdisplay: flex;\n\tflex-direction: column;");
+		expect(css).toContain(".pr-lifecycle-title {\n\tmargin: 0;\n\tpadding: 0 4px;");
+		expect(css).toContain(".pr-statuses + .muted {\n\tmargin-top: 8px;");
 		expect(css).toContain(".control-group");
-		expect(css).toContain(':root[data-appearance="dark"] .openspec');
+		expect(css).toContain(':root[data-appearance="dark"] {');
 		expect(css).toContain(".openspec a");
 		await app.drain();
 	}));
@@ -294,15 +289,35 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(javascript).toContain("requestPermission");
 		expect(javascript).toContain("Connect organization root");
 		expect(javascript).toContain("Permission required");
+		expect(javascript).toContain('<caption>Unresolved</caption>');
+		expect(javascript).toContain('<caption>Resolved</caption>');
+		expect(javascript).toContain('<thead><tr><th scope="col">Repository</th><th scope="col">Account</th><th scope="col">State</th><th scope="col">Action</th></tr></thead>');
+		expect(javascript).toContain("localeCompare(right.repository.full_name");
+		expect(javascript).toContain('sensitivity: "accent"');
+		expect(javascript).toContain('state === "Resolved"');
+		expect(javascript.indexOf('checkoutTableMarkup("Unresolved"')).toBeLessThan(
+			javascript.indexOf('checkoutTableMarkup("Resolved"'),
+		);
+		expect(javascript).toContain("No unresolved checkouts.");
+		expect(javascript).toContain("No resolved checkouts.");
 		expect(javascript).toContain('class="pr-card-header"');
 		expect(javascript).not.toContain('type="button" disabled');
 		expect(css).toContain(".pr-card-header h3 a");
-		expect(css).toContain("color: #7dd3fc");
+		expect(css).toContain("--link: #7dd3fc");
 		expect(javascript).not.toContain("/api/checkouts");
 		expect(javascript).not.toContain("/api/local-evidence");
 		expect(javascript).not.toContain("response.json().catch");
 		expect(css).toContain('[data-appearance="dark"]');
 		expect(css).toContain("color-scheme");
+		expect(css).toContain("--page-bg:");
+		expect(css).toContain("--surface:");
+		expect(css).toContain("--surface-muted:");
+		expect(css).toContain("--text:");
+		expect(css).toContain("--muted:");
+		expect(css).toContain("--border:");
+		expect(css).toContain("--link:");
+		expect(css).toContain("background: var(--page-bg)");
+		expect(css).toContain("color: var(--text)");
 		expect(css).toContain(".avatar-menu");
 		expect(css).toContain(".user-avatar");
 	}));

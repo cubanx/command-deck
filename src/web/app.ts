@@ -52,6 +52,8 @@ type DeploymentProjection = {
 	id?: string;
 	full_name?: string;
 	environment?: string;
+	ref?: string;
+	sha?: string;
 	state?: string;
 	target_url?: string | null;
 	log_url?: string | null;
@@ -108,6 +110,7 @@ type ViewState = {
 	repositories: Set<string>;
 	repositoryQuery: string;
 	repositoryOpen: boolean;
+	attention: boolean;
 	failedActions: boolean;
 	failedChecks: boolean;
 	sort: SortPreference;
@@ -211,7 +214,14 @@ const isPullRequest = (value: unknown): value is PullRequest =>
 			)));
 const isDeployment = (value: unknown): value is DeploymentProjection =>
 	isRecord(value) &&
-	hasOnlyOptionalStrings(value, ["id", "full_name", "environment", "state"]) &&
+	hasOnlyOptionalStrings(value, [
+		"id",
+		"full_name",
+		"environment",
+		"ref",
+		"sha",
+		"state",
+	]) &&
 	hasOnlyOptionalNullableStrings(value, ["target_url", "log_url"]);
 const isRepository = (value: unknown): value is Repository =>
 	isRecord(value) &&
@@ -322,12 +332,17 @@ let known: Set<string> | null = null,
 	checkoutStates = new Map<string, CheckoutState>(),
 	reconciliationState: "idle" | "running" = "idle",
 	reconcileMessage = "",
+	statusDetailKey: string | null = null,
+	statusDetailPinned = false,
+	statusDetailTimer: ReturnType<typeof setTimeout> | null = null,
+	statusDetailPosition = { left: 12, top: 12 },
 	view: ViewState = {
 		query: "",
 		statuses: new Set(),
 		repositories: new Set(),
 		repositoryQuery: "",
 		repositoryOpen: false,
+		attention: false,
 		failedActions: false,
 		failedChecks: false,
 		sort: { mode: "closest", direction: "asc" },
@@ -589,6 +604,7 @@ export const derivePullRequests = (
 	const repositories = filters.repositories ?? new Set();
 	const failedActions = filters.failedActions ?? false;
 	const failedChecks = filters.failedChecks ?? false;
+	const attention = filters.attention ?? false;
 	const sort =
 		filters.sort && sortModes.has(filters.sort.mode)
 			? filters.sort
@@ -607,6 +623,9 @@ export const derivePullRequests = (
 				(!statuses.size || statuses.has(item.bucket)) &&
 				(!failedActions || failedState(item.pr.workflow_state)) &&
 				(!failedChecks || failedState(item.pr.checks_state)) &&
+				(!attention ||
+					item.pr.needs_attention === true ||
+					item.blockers.length > 0) &&
 				(!repositories.size ||
 					(typeof item.pr.full_name === "string" &&
 						repositories.has(item.pr.full_name))),
@@ -1051,6 +1070,101 @@ const workflowFailuresMarkup = (pr: PullRequest) => {
 				"</ul>"
 		: "";
 };
+const statusKeyFor = (pr: PullRequest) =>
+	[pr.installation_id, pr.repository_id, pr.number].map(String).join(":");
+export const statusDetailHoverDelay = 350;
+export const statusDetailPositionFor = (
+	trigger: { left: number; top: number; width: number; height: number },
+	viewport: { width: number; height: number },
+) => ({
+	left: Math.max(12, Math.min(trigger.left, viewport.width - 372)),
+	top: Math.max(
+		12,
+		Math.min(trigger.top + trigger.height + 8, viewport.height - 252),
+	),
+});
+export const statusDetailStateFor = (
+	state: { key: string | null; pinned: boolean },
+	key: string | null,
+	event: "inspect" | "activate" | "dismiss" | "leave",
+) => {
+	if (event === "dismiss") return { key: null, pinned: false };
+	if (event === "leave") return state;
+	if (event === "activate" && state.key === key && state.pinned)
+		return { key: null, pinned: false };
+	return { key, pinned: event === "activate" };
+};
+const stageLabel = (bucket: string) =>
+	({ draft: "Draft", ready: "Ready for review", mergeable: "Mergeable" })[
+		bucket
+	] ?? "Ready for review";
+const lifecycleMarkup = (item: DerivedPullRequest) => {
+	const stages = ["draft", "ready", "mergeable"];
+	const current = stages.indexOf(item.bucket);
+	const pills = stages
+		.map(
+			(stage, index) =>
+				`<span class="lifecycle-pill ${index < current ? "complete" : index === current ? "current" : "upcoming"}">${index < current ? "✓" : index === current ? "◐" : "○"} ${esc(stageLabel(stage))} · ${index < current ? "Complete" : index === current ? "Current" : "Upcoming"}</span>`,
+		)
+		.join("");
+	return `<div class="lifecycle-rail"><span class="sr-only">PR lifecycle. Current stage: ${esc(stageLabel(item.bucket))}</span><span class="lifecycle-pills" aria-hidden="true">${pills}</span></div>`;
+};
+const warningMarkup = (item: DerivedPullRequest) => {
+	const warning =
+		item.blockers[0] ?? (item.pr.needs_attention ? "Needs attention" : "");
+	return warning
+		? `<button type="button" class="status warning" data-status-detail="${esc(statusKeyFor(item.pr))}">${esc(warning)}</button>`
+		: "";
+};
+const lifecycleFrameMarkup = (item: DerivedPullRequest) =>
+	`<fieldset class="pr-lifecycle"><legend class="pr-lifecycle-title">PR Lifecycle</legend>${lifecycleMarkup(item)}</fieldset>`;
+const warningRowMarkup = (item: DerivedPullRequest) => {
+	const warning = warningMarkup(item);
+	return warning ? `<div class="pr-warning-row">${warning}</div>` : "";
+};
+export const pullRequestStatusMarkup = (item: DerivedPullRequest) =>
+	lifecycleFrameMarkup(item) + warningRowMarkup(item) + statusDetailMarkup(item);
+const statusDetailMarkup = (item: DerivedPullRequest) => {
+	const { pr, spec, blockers } = item;
+	return `<aside id="status-detail" class="status-detail" role="dialog" aria-label="Pull request status detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close status detail">×</button><p><strong>${esc(stageLabel(item.bucket))}</strong>${blockers.length ? ` · ${esc(blockers.join(", "))}` : ""}</p><p>Actions: ${esc(pr.workflow_state ?? "unknown")} · Checks: ${esc(pr.checks_state ?? "unknown")} · Review: ${esc(pr.review_state ?? "unknown")} · Mergeability: ${esc(pr.mergeable ?? "unknown")}</p>${pr.bot_review_state ? `<p>Automated review${pr.bot_review_actor ? ` · ${esc(pr.bot_review_actor)}` : ""}: ${esc(pr.bot_review_state)}</p>` : ""}${workflowFailuresMarkup(pr)}<p class="muted">Branch: ${esc(pr.head_ref ?? "unknown")} · SHA: ${esc(pr.head_sha ?? "unknown")} · Updated: ${esc(pr.updated_at ?? "unknown")}</p>${openSpecMarkup(spec)}</aside>`;
+};
+const deploymentLabel = (deployment: DeploymentProjection) =>
+	[deployment.full_name, deployment.environment, deployment.ref, deployment.sha]
+		.filter((value): value is string => Boolean(value?.trim()))
+		.join(" · ");
+const deploymentRowsMarkup = (deployments: DeploymentProjection[]) =>
+	deployments.length
+		? `<div class="stack">${deployments
+				.map(
+					(deployment) =>
+						"<article><h3>" +
+						esc(deploymentLabel(deployment) || "Unknown deployment") +
+						'</h3><div class="statuses">' +
+						badge("status", deployment.state) +
+						"</div>" +
+						(deployment.target_url
+							? '<p><a href="' +
+								esc(deployment.target_url) +
+								'" target="_blank" rel="noopener noreferrer">Deployment</a>' +
+								(deployment.log_url
+									? ' · <a href="' +
+										esc(deployment.log_url) +
+										'" target="_blank" rel="noopener noreferrer">Logs</a>'
+									: "") +
+								"</p>"
+							: "") +
+						"</article>",
+				)
+				.join("")}</div>`
+		: '<p class="muted">No recent deployment evidence.</p>';
+const deploymentDetailMarkup = (deployments: DeploymentProjection[]) =>
+	`<aside id="status-detail" class="status-detail" role="dialog" aria-label="Deployment detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close deployment detail">×</button><h2>GitHub deployments · last 48 hours</h2>${deploymentRowsMarkup(deployments.slice(0, 5))}${deployments.length > 5 ? `<details class="more-deployments"><summary>More deployments</summary>${deploymentRowsMarkup(deployments.slice(5))}</details>` : ""}</aside>`;
+const deploymentSummaryMarkup = (deployments: DeploymentProjection[]) => {
+	const deployment = deployments[0];
+	return deployment
+		? `<button type="button" class="deployment-summary" data-status-detail="deployments" aria-expanded="${statusDetailKey === "deployments"}" aria-controls="status-detail"><span class="deployment-summary-label">Latest deployment</span><span class="deployment-summary-detail">${esc(deploymentLabel(deployment) || "Unknown deployment")}</span><span class="status">${esc(deployment.state ?? "unknown")}</span></button>`
+		: "";
+};
 type MergeControl =
 	| { state: "enabled" }
 	| {
@@ -1114,7 +1228,7 @@ const controlsMarkup = (
 				.join("")
 		: '<span class="muted">No repositories match.</span>';
 	const searchGroup = `<div class="control-group search-results"><label for="pr-search">Search pull requests</label><input id="pr-search" type="search" value="${esc(view.query)}" autocomplete="off"><span id="pr-count" aria-live="polite">${esc(visible.length)} of ${esc(all.length)} pull requests</span><button id="clear-pr-filters" type="button">Clear</button></div>`;
-	const filterGroup = `<div class="control-group filters"><fieldset><legend>Status</legend>${statusFilters}</fieldset><fieldset><legend>Failed state</legend><label class="filter-pill"><input id="failed-actions" type="checkbox" data-aggregate-filter="failedActions" ${view.failedActions ? "checked" : ""}>Failed Actions</label><label class="filter-pill"><input id="failed-checks" type="checkbox" data-aggregate-filter="failedChecks" ${view.failedChecks ? "checked" : ""}>Failed Checks</label></fieldset><details class="repository-filter" ${view.repositoryOpen ? "open" : ""}><summary>Repositories${view.repositories.size ? ` (${view.repositories.size})` : ""}</summary><label for="repository-search">Find repository</label><input id="repository-search" type="search" value="${esc(view.repositoryQuery)}" autocomplete="off"><div class="repository-options">${repositoryChoices}</div></details></div>`;
+	const filterGroup = `<div class="control-group filters"><fieldset><legend>Lifecycle stage</legend>${statusFilters}</fieldset><fieldset><legend>Attention</legend><label class="filter-pill"><input id="attention" type="checkbox" data-attention-filter ${view.attention ? "checked" : ""}>Needs attention</label></fieldset><details class="repository-filter" ${view.repositoryOpen ? "open" : ""}><summary>Repositories${view.repositories.size ? ` (${view.repositories.size})` : ""}</summary><label for="repository-search">Find repository</label><input id="repository-search" type="search" value="${esc(view.repositoryQuery)}" autocomplete="off"><div class="repository-options">${repositoryChoices}</div></details></div>`;
 	const directionLabel =
 		view.sort.mode === "number"
 			? "PR number direction: Newest first or Oldest first"
@@ -1122,37 +1236,45 @@ const controlsMarkup = (
 	const sortingGroup = `<div class="control-group sorting"><label for="pr-sort">Sort pull requests</label><select id="pr-sort" aria-describedby="codex-activity-status"><option value="closest" ${view.sort.mode === "closest" ? "selected" : ""}>Closest to merge</option><option value="codex" disabled aria-describedby="codex-activity-status">Codex activity (unavailable)</option><option value="updated" ${view.sort.mode === "updated" ? "selected" : ""}>Recently updated</option><option value="number" ${view.sort.mode === "number" ? "selected" : ""}>PR number</option><option value="progress" ${view.sort.mode === "progress" ? "selected" : ""}>OpenSpec progress</option><option value="repository" ${view.sort.mode === "repository" ? "selected" : ""}>Repository</option></select><label for="pr-direction">${directionLabel}</label><select id="pr-direction"><option value="asc" ${view.sort.direction === "asc" ? "selected" : ""}>Ascending</option><option value="desc" ${view.sort.direction === "desc" ? "selected" : ""}>Descending</option></select><span id="codex-activity-status" class="muted">Codex activity sorting is unavailable because no activity data is collected.</span></div>`;
 	return `<div class="pr-controls">${searchGroup}${filterGroup}${sortingGroup}</div>`;
 };
-const checkoutRepositoryMarkup = (repository: Repository) => {
+const checkoutActionMarkup = (repository: Repository, state: CheckoutState) => {
 	const key = checkoutKey(repository.account_login, repository.repository_id);
-	const state = checkoutStates.get(key) ?? "Unresolved";
 	const permissionButton =
 		state === "Permission required"
 			? ` <button type="button" data-checkout-permission="${esc(key)}">Grant permission</button>`
 			: "";
-	return `<li><strong>${esc(repository.full_name)}</strong> · <span aria-live="polite">${esc(state)}</span> <button type="button" data-connect-repository="${esc(key)}">Choose checkout</button>${permissionButton}</li>`;
+	return `<button type="button" data-connect-repository="${esc(key)}">Choose checkout</button>${permissionButton}`;
 };
-const checkoutAccountMarkup = (
-	account: string,
-	repositories: Repository[],
-	index: number,
+const checkoutTableMarkup = (
+	caption: string,
+	emptyMessage: string,
+	rows: { repository: Repository; state: CheckoutState }[],
 ) =>
-	`<div><p><strong>${esc(account)}</strong> <button id="checkout-root-${index}" type="button" data-connect-root="${esc(account)}">Connect organization root</button></p><ul>${repositories.map(checkoutRepositoryMarkup).join("")}</ul></div>`;
+	`<table><caption>${caption}</caption><thead><tr><th scope="col">Repository</th><th scope="col">Account</th><th scope="col">State</th><th scope="col">Action</th></tr></thead><tbody>${rows.length ? rows.map(({ repository, state }) => `<tr><td>${esc(repository.full_name)}</td><td>${esc(repository.account_login)}</td><td aria-live="polite">${esc(state)}</td><td>${checkoutActionMarkup(repository, state)}</td></tr>`).join("") : `<tr><td colspan="4" class="muted">${emptyMessage}</td></tr>`}</tbody></table>`;
 const checkoutMarkup = () => {
 	if (!checkoutSupported())
 		return '<p class="muted" aria-live="polite">Local checkout access is Unsupported in this browser. Committed GitHub OpenSpecs remain available.</p>';
-	const groups = new Map<string, Repository[]>();
-	for (const repository of repositoryCatalog) {
-		const account = repository.account_login;
-		const repositories = groups.get(account) ?? [];
-		repositories.push(repository);
-		groups.set(account, repositories);
-	}
-	if (!groups.size)
+	if (!repositoryCatalog.length)
 		return '<p class="muted">No authorized repositories are available for local checkout mapping.</p>';
-	const accounts = [...groups].map(([account, repositories], index) =>
-		checkoutAccountMarkup(account, repositories, index),
+	const rows = repositoryCatalog
+		.map((repository) => ({
+			repository,
+			state:
+				checkoutStates.get(
+					checkoutKey(repository.account_login, repository.repository_id),
+				) ?? "Unresolved",
+		}))
+		.sort((left, right) =>
+			left.repository.full_name.localeCompare(right.repository.full_name, undefined, {
+				sensitivity: "accent",
+			}),
 	);
-	return `<section class="checkout-mappings" aria-labelledby="checkout-title"><h3 id="checkout-title">Local checkouts</h3>${accounts.join("")}</section>`;
+	const roots = [...new Set(repositoryCatalog.map(({ account_login }) => account_login))]
+		.map(
+			(account, index) =>
+				`<p><strong>${esc(account)}</strong> <button id="checkout-root-${index}" type="button" data-connect-root="${esc(account)}">Connect organization root</button></p>`,
+		)
+		.join("");
+	return `<section class="checkout-mappings" aria-labelledby="checkout-title"><h3 id="checkout-title">Local checkouts</h3>${roots}${checkoutTableMarkup("Unresolved", "No unresolved checkouts.", rows.filter(({ state }) => state !== "Resolved"))}${checkoutTableMarkup("Resolved", "No resolved checkouts.", rows.filter(({ state }) => state === "Resolved"))}</section>`;
 };
 const appearanceMenuMarkup = () => {
 	const selected = appearancePreference().preference;
@@ -1215,12 +1337,10 @@ const bindControls = () => {
 			});
 		});
 	document
-		.querySelectorAll<HTMLInputElement>("[data-aggregate-filter]")
+		.querySelectorAll<HTMLInputElement>("[data-attention-filter]")
 		.forEach((input) => {
 			input.addEventListener("change", () => {
-				const filter = input.dataset.aggregateFilter;
-				if (filter !== "failedActions" && filter !== "failedChecks") return;
-				view[filter] = input.checked;
+				view.attention = input.checked;
 				rerender(input.id);
 			});
 		});
@@ -1277,12 +1397,86 @@ const bindControls = () => {
 			repositories: new Set(),
 			repositoryQuery: "",
 			repositoryOpen: false,
+			attention: false,
 			failedActions: false,
 			failedChecks: false,
 			sort: view.sort,
 		};
 		rerender("pr-search");
 	});
+};
+const bindStatusDetails = () => {
+	const clearStatusDetailTimer = () => {
+		if (statusDetailTimer) clearTimeout(statusDetailTimer);
+		statusDetailTimer = null;
+	};
+	document
+		.querySelectorAll<HTMLElement>("[data-status-detail]")
+		.forEach((trigger) => {
+			const position = () => {
+				const rect = trigger.getBoundingClientRect();
+				statusDetailPosition = statusDetailPositionFor(rect, {
+					width: globalThis.innerWidth || 1024,
+					height: globalThis.innerHeight || 768,
+				});
+			};
+			const show = () => {
+				const next = statusDetailStateFor(
+					{ key: statusDetailKey, pinned: statusDetailPinned },
+					trigger.dataset.statusDetail ?? null,
+					"inspect",
+				);
+				statusDetailKey = next.key;
+				statusDetailPinned = next.pinned;
+				position();
+				render(current);
+			};
+			trigger.addEventListener("pointerenter", () => {
+				clearStatusDetailTimer();
+				statusDetailTimer = setTimeout(show, statusDetailHoverDelay);
+			});
+			trigger.addEventListener("pointerleave", () => {
+				clearStatusDetailTimer();
+				const next = statusDetailStateFor(
+					{ key: statusDetailKey, pinned: statusDetailPinned },
+					null,
+					"leave",
+				);
+				if (next.key !== statusDetailKey) {
+					statusDetailKey = next.key;
+					statusDetailPinned = next.pinned;
+					render(current);
+				}
+			});
+			trigger.addEventListener("focus", () => {
+				clearStatusDetailTimer();
+				show();
+			});
+			trigger.addEventListener("click", () => {
+				clearStatusDetailTimer();
+				const next = statusDetailStateFor(
+					{ key: statusDetailKey, pinned: statusDetailPinned },
+					trigger.dataset.statusDetail ?? null,
+					"activate",
+				);
+				statusDetailKey = next.key;
+				statusDetailPinned = next.pinned;
+				position();
+				render(current);
+			});
+		});
+	document
+		.querySelector("[data-status-detail-close]")
+		?.addEventListener("click", () => {
+			const next = statusDetailStateFor(
+				{ key: statusDetailKey, pinned: statusDetailPinned },
+				null,
+				"dismiss",
+			);
+			statusDetailKey = next.key;
+			statusDetailPinned = next.pinned;
+			render(current);
+		});
 };
 const render = (x: DashboardSnapshot | null) => {
 	if (!root || !x) return;
@@ -1307,72 +1501,45 @@ const render = (x: DashboardSnapshot | null) => {
 		spec: specFor(pr, x.pullRequests),
 	}));
 	const prs = derivePullRequests(allPullRequests, view);
+	const statusDetail = statusDetailKey
+		? derivePullRequests(allPullRequests).find(
+				(item) => statusKeyFor(item.pr) === statusDetailKey,
+			)
+		: null;
 	const headerMarkup =
 		'<header><a class="brand brand-home" href="/"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command center</h1><p class="muted">Open pull requests you authored.</p></div></a>' +
+		deploymentSummaryMarkup(x.deployments) +
 		avatarMenuMarkup(x.user) +
 		"</header>";
 	const dashboardMarkup =
-		'<div class="grid"><section class="card" aria-label="Pull requests">' +
+		'<section class="card" aria-label="Pull requests">' +
 		controlsMarkup(allPullRequests, prs) +
 		rows(prs, "No open authored pull requests.", (item) => {
 			const pr = item.pr;
 			return (
 				'<article><div class="pr-card-header"><h3><a href="' +
 				esc(pr.url) +
-				'" target="_blank" rel="noopener noreferrer">#' +
+				'" class="pr-title-link" data-status-detail="' +
+				esc(statusKeyFor(pr)) +
+				'" aria-expanded="' +
+				(statusDetailKey === statusKeyFor(pr) ? "true" : "false") +
+				'" aria-controls="status-detail" target="_blank" rel="noopener noreferrer">#' +
 				esc(pr.number) +
 				" · " +
 				esc(pr.title) +
 				"</a></h3>" +
 				mergeMarkup(pr) +
-				'</div><div class="statuses">' +
-				badge("attention", pr.needs_attention ? "needs attention" : "healthy") +
-				badge("draft", pr.draft ? "draft" : "ready") +
-				badge("Actions", pr.workflow_state) +
-				badge("checks", pr.checks_state) +
-				badge("review", pr.review_state) +
-				(pr.bot_review_state
-					? badge(`review · ${pr.bot_review_actor}`, pr.bot_review_state)
-					: "") +
-				badge("mergeable", pr.mergeable) +
+				'</div><div class="pr-statuses">' +
+				lifecycleFrameMarkup(item) +
+				warningRowMarkup(item) +
 				"</div>" +
-				'<p class="muted">Blockers: ' +
-				esc(item.blockers.length) +
-				(item.blockers.length ? ` · ${esc(item.blockers.join(", "))}` : "") +
-				"</p>" +
-				workflowFailuresMarkup(pr) +
-				openSpecMarkup(item.spec) +
+				(item.spec
+					? `<p class="muted">OpenSpec · ${esc(item.spec.change_name ?? "linked")}</p>`
+					: "") +
 				"</article>"
 			);
 		}) +
-		'</section><section class="card"><h2>GitHub deployments · last 48 hours</h2>' +
-		rows(
-			x.deployments,
-			"No recent deployment evidence.",
-			(deployment) =>
-				"<article><h3>" +
-				esc(deployment.full_name) +
-				" · " +
-				esc(deployment.environment) +
-				" · " +
-				esc(deployment.id) +
-				'</h3><div class="statuses">' +
-				badge("status", deployment.state) +
-				"</div>" +
-				(deployment.target_url
-					? '<p><a href="' +
-						esc(deployment.target_url) +
-						'" target="_blank" rel="noopener noreferrer">Deployment</a>' +
-						(deployment.log_url
-							? ' · <a href="' +
-								esc(deployment.log_url) +
-								'" target="_blank" rel="noopener noreferrer">Logs</a>'
-							: "") +
-						"</p>"
-					: "") +
-				"</article>",
-		) +
-		"</section></div>";
+		`</section>${statusDetail ? statusDetailMarkup(statusDetail) : statusDetailKey === "deployments" ? deploymentDetailMarkup(x.deployments) : ""}`;
 	const page = pageFor(globalThis.location?.pathname);
 	const pageMarkup =
 		page === "configuration" ? configurationMarkup() : dashboardMarkup;
@@ -1429,6 +1596,7 @@ const render = (x: DashboardSnapshot | null) => {
 			link.addEventListener("click", openLocalSource);
 		});
 	bindControls();
+	bindStatusDetails();
 };
 async function reconcileNow() {
 	if (reconciliationState === "running") return;
@@ -1591,13 +1759,9 @@ const load = () =>
 			const ids = new Set(notifications.map((item) => item.id));
 			const priorIds = known;
 			if (priorIds && globalThis.Notification?.permission === "granted")
-				navigator.serviceWorker?.ready.then((worker) =>
-					notifications
-						.filter((item) => !priorIds.has(item.id))
-						.forEach((item) => {
-							worker.showNotification(item.title, { body: item.body });
-						}),
-				);
+				notifications
+					.filter((item) => !priorIds.has(item.id))
+					.forEach((item) => new Notification(item.title, { body: item.body }));
 			known = ids;
 			render(snapshot);
 			restoreCheckouts(repositoryCatalog).then(() => {
@@ -1631,6 +1795,16 @@ if (root) {
 		const search = document.querySelector<HTMLInputElement>("#pr-search"),
 			avatarMenu = document.querySelector<HTMLDetailsElement>(".avatar-menu"),
 			target = event.target as Element | null;
+		if (event.key === "Escape" && statusDetailKey) {
+			const next = statusDetailStateFor(
+				{ key: statusDetailKey, pinned: statusDetailPinned },
+				null,
+				"dismiss",
+			);
+			statusDetailKey = next.key;
+			statusDetailPinned = next.pinned;
+			render(current);
+		}
 		if (event.key === "Escape" && avatarMenu?.open) {
 			avatarMenu.open = false;
 			avatarMenu.querySelector<HTMLElement>("summary")?.focus();
@@ -1650,6 +1824,22 @@ if (root) {
 	document.addEventListener("click", (event) => {
 		const avatarMenu =
 			document.querySelector<HTMLDetailsElement>(".avatar-menu");
+		const target = event.target as {
+			closest?: (selector: string) => unknown;
+		} | null;
+		if (
+			statusDetailKey &&
+			!target?.closest?.("[data-status-detail], #status-detail")
+		) {
+			const next = statusDetailStateFor(
+				{ key: statusDetailKey, pinned: statusDetailPinned },
+				null,
+				"dismiss",
+			);
+			statusDetailKey = next.key;
+			statusDetailPinned = next.pinned;
+			render(current);
+		}
 		if (
 			avatarMenu?.open &&
 			event.target instanceof Node &&
@@ -1657,5 +1847,4 @@ if (root) {
 		)
 			avatarMenu.open = false;
 	});
-	navigator.serviceWorker?.register("/sw.js");
 }

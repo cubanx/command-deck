@@ -16,6 +16,7 @@ import {
 	mergeControlFor,
 	mergeMarkup,
 	pageFor,
+	pullRequestStatusMarkup,
 	parseTasks,
 	persistVerifiedCheckout,
 	readCheckout,
@@ -24,6 +25,9 @@ import {
 	repositoryOptions,
 	revalidateCheckout,
 	sortPreference,
+	statusDetailStateFor,
+	statusDetailHoverDelay,
+	statusDetailPositionFor,
 } from "#/web/app";
 
 const directory = (
@@ -94,6 +98,167 @@ test("status buckets remain exclusive while closest-to-merge uses independent bl
 	expect(bucketFor(items[1].pr)).toBe("ready");
 	expect(bucketFor(items[2].pr)).toBe("draft");
 	expect(numbers(derivePullRequests(items, {}))).toEqual([11, 9, 12, 10]);
+});
+
+test("lifecycle precedence reflects current projected evidence, including regressions", () => {
+	const pr = { draft: false, mergeable: true };
+	expect(bucketFor(pr)).toBe("mergeable");
+	pr.mergeable = false;
+	expect(bucketFor(pr)).toBe("ready");
+	expect(bucketFor({ draft: true, mergeable: "clean" })).toBe("mergeable");
+});
+
+test("status presentation has one warning, no positive pills, and preserves projected detail", () => {
+	const markup = pullRequestStatusMarkup({
+		pr: {
+			number: 9,
+			draft: false,
+			mergeable: "conflicting",
+			workflow_state: "failure",
+			checks_state: "success",
+			review_state: "changes_requested",
+			head_ref: "ds9/hold-the-line",
+			head_sha: "a".repeat(40),
+			updated_at: "2026-08-18T12:00:00Z",
+			workflow_failures: [
+				{ name: "Runabout check", url: "https://github.com/ds9/actions/9" },
+			],
+		},
+		spec: { change_name: "hold-the-line", completed: 1, total: 2 },
+		bucket: "ready",
+		blockers: [
+			"Changes requested",
+			"Actions failed",
+			"Mergeability blocked",
+			"OpenSpec incomplete",
+		],
+		progress: 0.5,
+		score: 0,
+	});
+	expect(markup).toContain("Ready for review");
+	expect(markup).toContain("Changes requested");
+	expect(markup).toContain("Runabout check");
+	expect(markup).toContain("ds9/hold-the-line");
+	expect(markup).not.toContain("healthy");
+	expect(markup.match(/class=\"status warning/g) ?? []).toHaveLength(1);
+	expect(markup).toContain("PR lifecycle. Current stage: Ready for review");
+	expect(markup).toContain('data-status-detail=');
+	expect(markup).not.toContain('class="lifecycle-rail" data-status-detail');
+	expect(markup).toContain('class="lifecycle-pills" aria-hidden="true"');
+	expect(markup).toContain(
+		'<fieldset class="pr-lifecycle"><legend class="pr-lifecycle-title">PR Lifecycle</legend><div',
+	);
+	expect(markup).toContain('class="lifecycle-pill complete"');
+	expect(markup).toContain('✓ Draft · Complete');
+	expect(markup).toContain('class="lifecycle-pill current"');
+	expect(markup).toContain('◐ Ready for review · Current');
+	expect(markup).toContain('class="lifecycle-pill upcoming"');
+	expect(markup).toContain('○ Mergeable · Upcoming');
+	expect(markup).toContain('class="pr-warning-row"');
+	expect(markup).not.toContain('aria-current="step"');
+});
+
+test("status detail supports hover or focus, pinned activation, and dismissal", () => {
+	const initial = { key: null, pinned: false };
+	const inspected = statusDetailStateFor(initial, "ds9:42:9", "inspect");
+	expect(inspected).toEqual({ key: "ds9:42:9", pinned: false });
+	expect(statusDetailStateFor(inspected, "ds9:42:9", "activate")).toEqual({
+		key: "ds9:42:9",
+		pinned: true,
+	});
+	expect(
+		statusDetailStateFor(
+			{ key: "ds9:42:9", pinned: true },
+			"ds9:42:9",
+			"activate",
+		),
+	).toEqual({ key: null, pinned: false });
+	expect(statusDetailStateFor(inspected, null, "dismiss")).toEqual(initial);
+});
+
+test("hover detail waits briefly, stays open on leave, and is replaced by another trigger", () => {
+	expect(statusDetailHoverDelay).toBe(350);
+	expect(
+		statusDetailStateFor({ key: "ds9:42:9", pinned: false }, null, "leave"),
+	).toEqual({ key: "ds9:42:9", pinned: false });
+	expect(
+		statusDetailStateFor({ key: "ds9:42:9", pinned: true }, null, "leave"),
+	).toEqual({ key: "ds9:42:9", pinned: true });
+	expect(
+		statusDetailStateFor({ key: "ds9:42:9", pinned: false }, "ds9:7:1", "inspect"),
+	).toEqual({ key: "ds9:7:1", pinned: false });
+	expect(
+		statusDetailPositionFor(
+			{ left: 980, top: 740, width: 20, height: 20 },
+			{ width: 1000, height: 800 },
+		),
+	).toEqual({ left: 628, top: 548 });
+});
+
+test("stage and attention filters compose independently", () => {
+	const filtered = [
+		{ pr: { number: 3, full_name: "ds9/ops", draft: true }, spec: null },
+		{ pr: { number: 2, full_name: "ds9/ops", mergeable: true }, spec: null },
+		{
+			pr: {
+				number: 1,
+				full_name: "ds9/ops",
+				mergeable: false,
+				workflow_state: "failure",
+			},
+			spec: null,
+		},
+	];
+	expect(
+		numbers(
+			derivePullRequests(filtered, {
+				statuses: new Set(["ready"]),
+				attention: true,
+			}),
+		),
+	).toEqual([1]);
+	expect(
+		numbers(
+			derivePullRequests(filtered, {
+				statuses: new Set(["mergeable"]),
+				attention: true,
+			}),
+		),
+	).toEqual([]);
+});
+
+test("demo lifecycle states render as Draft, Ready for review, and Mergeable", () => {
+	const demo = derivePullRequests(
+		[
+			{ pr: { number: 1, draft: true, mergeable: "unknown" } },
+			{ pr: { number: 2, draft: false, mergeable: "unknown" } },
+			{ pr: { number: 3, draft: false, mergeable: "clean" } },
+			{
+				pr: {
+					number: 4,
+					draft: false,
+					mergeable: "unknown",
+					review_state: "changes_requested",
+				},
+			},
+			{
+				pr: {
+					number: 5,
+					draft: false,
+					mergeable: "clean",
+					workflow_state: "failure",
+				},
+			},
+		],
+		{},
+	);
+	expect(demo.map((item) => pullRequestStatusMarkup(item))).toEqual(
+		expect.arrayContaining([
+			expect.stringContaining("<strong>Draft</strong>"),
+			expect.stringContaining("<strong>Ready for review</strong>"),
+			expect.stringContaining("<strong>Mergeable</strong>"),
+		]),
+	);
 });
 
 test("closest-to-merge counts each unresolved gate once and shows exact labels", () => {

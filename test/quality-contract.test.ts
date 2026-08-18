@@ -29,8 +29,10 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(workflow).toContain(
 		"docker run --rm command-center-ai:quality bun -e 'await import(\"./src/server.ts\")'",
 	);
-	expect(JSON.parse(text("src/web/manifest.webmanifest"))).toMatchObject({
-		name: "Command Center.ai",
-		short_name: "Command Center",
-	});
+	expect(text("src/web/index.html")).not.toContain("manifest.webmanifest");
+	expect(text("src/web/app.ts")).not.toContain("serviceWorker");
+	const server = text("src/server.ts");
+	expect(server).toContain("self.skipWaiting()");
+	expect(server).toContain('self.addEventListener("activate"');
+	expect(server).not.toContain("caches.keys()");
 });
