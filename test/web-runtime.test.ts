@@ -7,13 +7,16 @@ class FakeElement {
 	value = "";
 	checked = false;
 	open = false;
+	focusCount = 0;
 	listeners = new Map<string, (event: Event) => unknown>();
 
 	addEventListener(name: string, listener: (event: Event) => unknown) {
 		this.listeners.set(name, listener);
 	}
 
-	focus() {}
+	focus() {
+		this.focusCount += 1;
+	}
 	setSelectionRange() {}
 	matches() {
 		return false;
@@ -170,10 +173,21 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	);
 	expect(element("#app").innerHTML).toContain("data-status-detail");
 	expect(element("#app").innerHTML).not.toContain("Battle readiness");
+	statusTrigger.listeners.get("focus")?.(new Event("focus"));
+	expect(element('[data-status-detail="12:42:9"]').focusCount).toBe(1);
+	statusTrigger.listeners.get("click")?.(new Event("click"));
+	expect(element('[data-status-detail="12:42:9"]').focusCount).toBe(2);
+	statusTrigger.listeners.get("click")?.(new Event("click"));
 	const hover = statusTrigger.listeners.get("pointerenter");
 	expect(hover).toBeTypeOf("function");
+	const focusCountBeforeHover = element(
+		'[data-status-detail="12:42:9"]',
+	).focusCount;
 	hover?.(new Event("pointerenter"));
 	await new Promise((resolve) => setTimeout(resolve, 360));
+	expect(element('[data-status-detail="12:42:9"]').focusCount).toBe(
+		focusCountBeforeHover,
+	);
 	expect(element("#app").innerHTML).toContain("Battle readiness");
 	expect(element("#app").innerHTML).toContain('style="left:16px;top:48px"');
 	expect(element("#app").innerHTML).not.toContain("bottom: 16px");

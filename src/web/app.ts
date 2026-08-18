@@ -1326,9 +1326,9 @@ const avatarMenuMarkup = (user?: DashboardSnapshot["user"]) => {
 			: `<span class="user-avatar avatar-fallback" aria-hidden="true">${esc(login.slice(0, 1).toUpperCase())}</span>`;
 	return `<details class="avatar-menu"><summary aria-label="User menu">${avatar}</summary><div class="avatar-menu-panel"><p><strong>${esc(login)}</strong></p>${appearanceMenuMarkup()}<a class="configuration-link" href="/configuration">⚙ Configuration</a></div></details>`;
 };
-const rerender = (focusId: string) => {
+const rerender = (focusSelector: string) => {
 	render(current);
-	const control = document.getElementById(focusId) as HTMLInputElement | null;
+	const control = document.querySelector<HTMLInputElement>(focusSelector);
 	control?.focus();
 	if (control?.setSelectionRange)
 		control.setSelectionRange(control.value.length, control.value.length);
@@ -1338,7 +1338,7 @@ const bindControls = () => {
 		.querySelector<HTMLInputElement>("#pr-search")
 		?.addEventListener("input", (event) => {
 			view.query = (event.currentTarget as HTMLInputElement).value;
-			rerender("pr-search");
+			rerender("#pr-search");
 		});
 	document
 		.querySelectorAll<HTMLInputElement>("[data-status]")
@@ -1349,7 +1349,7 @@ const bindControls = () => {
 				input.checked
 					? view.statuses.add(status)
 					: view.statuses.delete(status);
-				rerender(input.id);
+				rerender(`#${input.id}`);
 			});
 		});
 	document
@@ -1357,7 +1357,7 @@ const bindControls = () => {
 		.forEach((input) => {
 			input.addEventListener("change", () => {
 				view.attention = input.checked;
-				rerender(input.id);
+				rerender(`#${input.id}`);
 			});
 		});
 	document
@@ -1368,7 +1368,7 @@ const bindControls = () => {
 				mode: (event.currentTarget as HTMLSelectElement).value as SortMode,
 			};
 			saveSortPreference();
-			rerender("pr-sort");
+			rerender("#pr-sort");
 		});
 	document
 		.querySelector<HTMLSelectElement>("#pr-direction")
@@ -1379,7 +1379,7 @@ const bindControls = () => {
 					.value as SortDirection,
 			};
 			saveSortPreference();
-			rerender("pr-direction");
+			rerender("#pr-direction");
 		});
 	const repositoryFilter =
 		document.querySelector<HTMLDetailsElement>(".repository-filter");
@@ -1391,7 +1391,7 @@ const bindControls = () => {
 		?.addEventListener("input", (event) => {
 			view.repositoryQuery = (event.currentTarget as HTMLInputElement).value;
 			view.repositoryOpen = true;
-			rerender("repository-search");
+			rerender("#repository-search");
 		});
 	document
 		.querySelectorAll<HTMLInputElement>("[data-repository]")
@@ -1403,7 +1403,7 @@ const bindControls = () => {
 					? view.repositories.add(repository)
 					: view.repositories.delete(repository);
 				view.repositoryOpen = true;
-				rerender(input.id);
+				rerender(`#${input.id}`);
 			});
 		});
 	document.querySelector("#clear-pr-filters")?.addEventListener("click", () => {
@@ -1418,7 +1418,7 @@ const bindControls = () => {
 			failedChecks: false,
 			sort: view.sort,
 		};
-		rerender("pr-search");
+		rerender("#pr-search");
 	});
 };
 const bindStatusDetails = () => {
@@ -1429,6 +1429,7 @@ const bindStatusDetails = () => {
 	document
 		.querySelectorAll<HTMLElement>("[data-status-detail]")
 		.forEach((trigger) => {
+			const focusSelector = `[data-status-detail="${trigger.dataset.statusDetail}"]`;
 			const position = () => {
 				const rect = trigger.getBoundingClientRect();
 				statusDetailPosition = statusDetailPositionFor(rect, {
@@ -1436,7 +1437,7 @@ const bindStatusDetails = () => {
 					height: globalThis.innerHeight || 768,
 				});
 			};
-			const show = () => {
+			const show = (restoreFocus = false) => {
 				const next = statusDetailStateFor(
 					{ key: statusDetailKey, pinned: statusDetailPinned },
 					trigger.dataset.statusDetail ?? null,
@@ -1445,7 +1446,8 @@ const bindStatusDetails = () => {
 				statusDetailKey = next.key;
 				statusDetailPinned = next.pinned;
 				position();
-				render(current);
+				if (restoreFocus) rerender(focusSelector);
+				else render(current);
 			};
 			trigger.addEventListener("pointerenter", () => {
 				clearStatusDetailTimer();
@@ -1466,7 +1468,7 @@ const bindStatusDetails = () => {
 			});
 			trigger.addEventListener("focus", () => {
 				clearStatusDetailTimer();
-				show();
+				show(true);
 			});
 			trigger.addEventListener("click", () => {
 				clearStatusDetailTimer();
@@ -1478,7 +1480,7 @@ const bindStatusDetails = () => {
 				statusDetailKey = next.key;
 				statusDetailPinned = next.pinned;
 				position();
-				render(current);
+				rerender(focusSelector);
 			});
 		});
 	document
@@ -1836,7 +1838,7 @@ if (root) {
 		}
 		if (event.key === "Escape" && target === search && view.query) {
 			view.query = "";
-			rerender("pr-search");
+			rerender("#pr-search");
 		}
 	});
 	document.addEventListener("click", (event) => {
