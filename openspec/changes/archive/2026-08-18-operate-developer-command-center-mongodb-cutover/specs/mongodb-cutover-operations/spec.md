@@ -27,25 +27,29 @@ The SQLite-specific `operate-developer-command-center-production` change SHALL b
 - **THEN** this change becomes the sole executable production cutover plan
 
 ### Requirement: Fresh production authorization and preflight
-Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before quiescing SQLite, the operator SHALL reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, shared database `command-center-ai-production`, runtime user `command-center-ai-production-runtime` with only the required database scope, the matching database/credential projection in both Railway projects, deployment source behavior, network access, readiness configuration, and rollback targets. Ambiguous or unexpected state SHALL fail closed.
+Every production read or mutation SHALL use the approved bounded production access path and fresh task-scoped authorization appropriate to Railway or MongoDB. Before quiescing SQLite, the operator SHALL reconcile and verify Atlas project `command-center-ai`, cluster `command-center-ai`, shared database `command-center-ai-production`, runtime user `command-center-ai-production-runtime` with only the required database scope, the matching database/credential projection in the exact Railway target `Command Deck.ai` / `production` / `developer-command-center`, deployment source behavior, network access, readiness configuration, and rollback targets. Ambiguous or unexpected state SHALL fail closed.
 
 #### Scenario: Production targets verified
 - **WHEN** all exact target identities, least-privilege grants, credential destinations, source behavior, and rollback prerequisites match the reviewed plan
 - **THEN** the operator may perform only the authorized cutover operations
 
 #### Scenario: Unexpected automatic deploy or target
-- **WHEN** source changes can deploy unexpectedly, the two Railway projects disagree on the shared projection, or any project, service, environment, database, credential, or rollback target is ambiguous
+- **WHEN** source changes can deploy unexpectedly, the exact Railway target disagrees with the approved projection, or any project, service, environment, database, credential, or rollback target is ambiguous
 - **THEN** the cutover stops before mutation
 
 ### Requirement: Narrow binding handoff
-While application writes are stopped, the operator SHALL read only the GitHub user ID, GitHub App installation ID, and installation account login for each existing user-installation binding from SQLite. The handoff SHALL contain exactly one user and every installation bound to that user. Every account login SHALL exactly equal `cubanx`, `Crisp-Inc`, or `hudson-law`; missing, duplicate, conflicting, additional-user, or unapproved records SHALL fail closed.
+While application writes are stopped, the operator SHALL read only the GitHub user ID, GitHub App installation ID, and installation account login for each existing user-installation binding from SQLite. The handoff SHALL contain exactly one user and every installation bound to that user. Every account login SHALL exactly equal `cubanx`, `Crisp-Inc`, or `hudson-law`; missing, duplicate, conflicting, additional-user, or unapproved records SHALL fail closed, except only the observed missing account login for `(github_user_id=362276, installation_id=153423118)` may be reconstructed as exact `Crisp-Inc` after live authoritative GitHub App installation ownership proves that ID belongs to `Crisp-Inc`, the user interactively confirms the complete resulting tuple, and evidence records the source and proof.
 
 #### Scenario: Valid existing bindings
 - **WHEN** SQLite contains one user with one or more distinct bindings whose account logins are exactly allowlisted
 - **THEN** the operator may pass only those three-field records to the reviewed MongoDB binding-seed operation
 
+#### Scenario: Authorized exact missing account login reconstruction
+- **WHEN** the sole binding row is `(362276, 153423118, NULL)`, live authoritative GitHub App installation ownership proves installation `153423118` belongs to exact `Crisp-Inc`, and the user interactively confirms `(362276, 153423118, Crisp-Inc)`
+- **THEN** the operator may treat that confirmed tuple as complete and pass only its three fields to the reviewed MongoDB binding-seed operation
+
 #### Scenario: Ambiguous or unapproved bindings
-- **WHEN** the binding query returns no user, more than one user, duplicate installation IDs, conflicting account identities, missing fields, or an unapproved account login
+- **WHEN** the binding query returns no user, more than one user, duplicate installation IDs, conflicting account identities, an unapproved account login, or any missing field other than the authorized exact reconstruction above
 - **THEN** the cutover stops without seeding MongoDB
 
 ### Requirement: No general data migration
@@ -59,8 +63,8 @@ The cutover SHALL NOT transfer repositories, pull requests, deployments, OpenSpe
 - **WHEN** a cutover command would transfer fields beyond the approved binding records
 - **THEN** the operator rejects that command and stops for review
 
-### Requirement: Idempotent binding seed
-The operator SHALL seed the validated binding records through the foundation's reviewed maintenance operation into an empty or explicitly isolated target database. The seed SHALL be atomic for the user's binding set, idempotent when repeated with identical values, and fail without partial writes on conflict.
+### Requirement: Idempotent binding handoff or final-state acceptance
+When execution is required, the operator SHALL seed validated bindings through the reviewed maintenance operation. When the exact reviewed MongoDB runtime is already active, the operator MAY instead accept the observed final binding after authoritative ownership proof and user confirmation, without claiming a seed ran. A seed remains atomic, idempotent for identical values, and fails without partial writes on conflict.
 
 #### Scenario: First seed
 - **WHEN** the target is empty and the validated handoff is supplied
@@ -74,6 +78,10 @@ The operator SHALL seed the validated binding records through the foundation's r
 - **WHEN** the target contains a conflicting user or installation binding
 - **THEN** the operation fails without overwriting or partially merging the conflict
 
+#### Scenario: Final binding state is already active
+- **WHEN** the exact reviewed MongoDB runtime is active and evidence proves confirmed binding, current identity/session, approved projection, readiness, and retained rollback material
+- **THEN** the operator may accept final state without replaying seed or deployment and without claiming historical execution
+
 ### Requirement: Sign-in without reinstallation
 After the MongoDB runtime is deployed, the user SHALL complete one verified GitHub sign-in to establish a new hashed session and complete current user identity. The sign-in SHALL preserve every seeded installation binding and SHALL NOT require repeating the GitHub App installation or setup flow.
 
@@ -85,12 +93,16 @@ After the MongoDB runtime is deployed, the user SHALL complete one verified GitH
 - **WHEN** ordinary sign-in would remove, replace, or add an installation binding without the verified installation setup flow
 - **THEN** the system rejects that binding mutation and fails closed
 
-### Requirement: Canonical bootstrap and activation verification
-After sign-in, the operator SHALL rebuild repositories and active personal projections from GitHub using tokens scoped to each seeded installation. Production SHALL be considered activated only after MongoDB-backed readiness passes and bounded checks confirm user isolation, installation and repository authorization, allowlisted account identities, dashboard rendering, reconciliation recovery, webhook signature and idempotency behavior, notification deduplication, and absence of persisted broad OAuth user tokens.
+### Requirement: Canonical bootstrap or final-state activation verification
+When execution is required after sign-in, the operator SHALL rebuild projections using installation-scoped tokens. When the exact reviewed runtime is already active, production MAY instead be accepted from bounded final-state evidence: exact SHA, target identity/least privilege, approved projection, readiness, confirmed binding, identity/session, observed projections, bounded webhook intake/deduplication, and retained rollback material. It SHALL record uncertainty rather than claim unobserved bootstrap, ordering, rejected-signature, retry/fan-out, or exhaustive reconciliation behavior.
 
 #### Scenario: Successful bootstrap
 - **WHEN** every seeded installation can be authenticated with an installation token and canonical bootstrap completes
 - **THEN** the user's aggregate contains the current authorized projection and the dashboard can be activated
+
+#### Scenario: Final state is accepted without replay
+- **WHEN** bounded evidence proves the exact reviewed runtime is active with required identities, readiness, binding, session, projection, webhook intake/deduplication, and rollback material
+- **THEN** activation may be accepted without replaying operations and records historical execution gaps
 
 #### Scenario: Bootstrap or verification fails
 - **WHEN** any installation cannot be verified, bootstrap is incomplete, readiness fails, or a security or behavior check fails
@@ -98,7 +110,7 @@ After sign-in, the operator SHALL rebuild repositories and active personal proje
 - **AND** the operator proceeds to the reviewed rollback decision
 
 ### Requirement: Rollback preserves the old store
-The cutover SHALL leave the SQLite store and prior deployable revision unchanged. If activation fails, rollback SHALL restore the prior code and configuration without attempting to copy MongoDB writes back to SQLite or automatically deleting MongoDB data. Deletion of the old volume or the new database SHALL require a separate explicit authorization and is outside this change.
+The cutover SHALL leave the SQLite store and prior deployable revision unchanged. If activation fails, rollback SHALL restore the prior code and configuration without copying MongoDB writes back to SQLite or deleting MongoDB data. If final-state core acceptance passes, no rollback is executed. Deletion requires separate authorization and is outside this change.
 
 #### Scenario: Rollback required
 - **WHEN** deployment, sign-in, bootstrap, readiness, or verification fails
@@ -110,7 +122,7 @@ The cutover SHALL leave the SQLite store and prior deployable revision unchanged
 - **THEN** the operator records success and leaves destructive storage cleanup for a separate authorized decision
 
 ### Requirement: Bounded evidence
-The operator SHALL record the prerequisite merge SHA, superseded-change disposition, production target identities, preflight results, binding count and allowlist result, seed result, deployment identity, readiness result, bootstrap result, verification outcomes, and rollback disposition. Evidence SHALL exclude secret values, raw tokens, credentials, and unrelated SQLite or MongoDB content.
+The operator SHALL record prerequisite SHA, superseded-change disposition, target identities, preflight results, binding/allowlist result, deployment identity, readiness, bounded final-state verification, and rollback disposition. Final-state acceptance SHALL distinguish observed facts from history and SHALL NOT claim seed, ordering, bootstrap, or exhaustive webhook/reconciliation semantics not observed. Evidence excludes secrets, raw tokens, credentials, and unrelated content.
 
 #### Scenario: Cutover handoff
 - **WHEN** the cutover succeeds, rolls back, or stops at a gate
