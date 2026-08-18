@@ -38,11 +38,11 @@ The cutover begins from a fresh current-`main` verification. Exact merge SHAs mu
 
 ### Reconcile provider identities before quiescing SQLite
 
-Only after all merge gates pass, use fresh task-scoped authorization to reconcile the Atlas project and already-canonical cluster to `command-center-ai`, select the empty or isolated `command-center-ai-production` database, establish `command-center-ai-production-runtime` with only `readWrite` on that database, and project the same database and credential to both Railway projects through the approved 1Password/Railway path. Treat establishing the renamed runtime user as credential rotation: verify metadata, both destinations, least privilege, and fresh runtime behavior before any later retirement of the old identity. No provider change or credential projection may begin before separate authorization.
+Only after all merge gates pass, use fresh task-scoped authorization to reconcile the Atlas project and already-canonical cluster to `command-center-ai`, select the empty or isolated `command-center-ai-production` database, establish `command-center-ai-production-runtime` with only `readWrite` on that database, and project the same database and credential to the exact `Command Deck.ai` / `production` / `developer-command-center` Railway target through the approved 1Password/Railway path. Treat establishing the renamed runtime user as credential rotation: verify metadata, that destination, least privilege, and fresh runtime behavior before any later retirement of the old identity. No provider change or credential projection may begin before separate authorization.
 
 ### Use the production brokers and fail closed
 
-Railway and MongoDB reads or mutations run only through their approved production shells after fresh task-scoped approval. The preflight resolves both exact Railway projects, environments, services, the shared database, deployed revisions, source trigger behavior, credential destinations, network rules, and rollback revisions before mutation. Provider hints are not evidence.
+Railway and MongoDB reads or mutations run only through their approved production shells after fresh task-scoped approval. The preflight resolves the exact `Command Deck.ai` / `production` / `developer-command-center` Railway target, the shared database, deployed revisions, source trigger behavior, credential destination, network rules, and rollback revisions before mutation. Provider hints are not evidence.
 
 Automatic deployment is checked again even though the foundation PR has its own pre-merge safety gate. If the service already deployed an unexpected revision, the cutover stops and treats that as a separate incident rather than normalizing it.
 
@@ -58,15 +58,21 @@ The query returns every binding for exactly one user. Values are non-secret, but
 
 All rows are validated as a set before the foundation seed command receives structured input. Account comparison is exact and case-sensitive for `cubanx`, `Crisp-Inc`, and `hudson-law`. Missing rows, additional users, duplicate IDs, conflicts, or unknown accounts stop the cutover.
 
+The only exception is the observed `(github_user_id=362276, installation_id=153423118, installation_account_login=NULL)` row. Its account login may be reconstructed only as exact `Crisp-Inc` when live authoritative GitHub App installation ownership proves that exact installation ID belongs to `Crisp-Inc`, the user interactively confirms the resulting complete tuple, and evidence records the source and confirmation. This is not a general inference mechanism; every other missing, duplicate, conflicting, additional, or unapproved field still stops the cutover.
+
 ### Seed before deployment, then sign in once
 
 The target database must be empty or explicitly isolated for this service. The seed command creates one partial user aggregate containing the stable user ID and all validated bindings. It is safe to retry with identical input and rejects conflicts.
 
 After deploying the exact foundation SHA, the user completes ordinary GitHub sign-in. This is an interactive authentication step, not installation or rebinding. The callback fills the current login/avatar and creates a new hashed session while preserving the seeded installations.
 
+### Accept a proven final state without replay
+
+If the exact reviewed MongoDB runtime is already active, bounded final-state evidence may satisfy activation without replaying seed, deployment, or pre-traffic steps. It must prove the exact SHA, target identities and least privilege, approved projection, readiness, accepted binding, session/identity, bounded projections, and retained rollback material. It records observed state, not seed, deployment-before-traffic, or unobserved webhook/reconciliation history. This is a one-off operational acceptance for archive, not a canonical-spec update.
+
 ### Bootstrap only from installation-scoped GitHub reads
 
-After sign-in, run the canonical bootstrap or reconciliation path for every seeded installation. GitHub App installation tokens repopulate repositories and active projections. SQLite is never consulted again. A missing or unapproved account, inaccessible installation, incomplete refresh, or authorization mismatch blocks activation.
+After sign-in, run the canonical bootstrap or reconciliation path for every seeded installation when execution is required. When the exact reviewed runtime is already active, accept only the bounded final-state projection evidence above. SQLite is never consulted again. A missing or unapproved account, inaccessible installation, incomplete refresh, or authorization mismatch blocks activation.
 
 ### Prefer rollback over reverse migration
 
@@ -78,7 +84,7 @@ Storage deletion is deliberately deferred. Cleanup is a separate destructive dec
 
 - [The old operation remains misleading] -> Retire it before production access and fail if OpenSpec cannot represent the superseded state cleanly.
 - [An automatic deploy could race the plan] -> Require all exact merge gates and re-check source triggers and deployed SHA before cutover mutation.
-- [Renamed provider identities or either Railway projection could point at the old database or broad grants] -> Verify the exact Atlas project, cluster, shared database, runtime user, role scope, and both Railway destinations before quiescing SQLite.
+- [Renamed provider identities or the Railway projection could point at the old database or broad grants] -> Verify the exact Atlas project, cluster, shared database, runtime user, role scope, and Railway destination before quiescing SQLite.
 - [The narrow SQLite query omits a binding] -> Compare binding counts, require exactly one user, validate every tuple as a set, and stop on ambiguity.
 - [The partial seeded user lacks current profile identity] -> Require one normal sign-in before bootstrap or dashboard verification; preserve bindings during the identity upsert.
 - [A seed command result is uncertain] -> Make identical retries idempotent and conflicting retries fail closed.
@@ -90,7 +96,7 @@ Storage deletion is deliberately deferred. Cleanup is a separate destructive dec
 1. Verify the exact MongoDB foundation and `rename-command-center-identifiers` merge SHAs on current `main` and their completed checks.
 2. Verify the exact `fix-installation-identity` merge SHA on refreshed current `main` and accept it as the deployment source.
 3. Retire the unexecuted SQLite operational change without syncing stale specs.
-4. Obtain fresh production authorization; reconcile and verify the exact `command-center-ai` Atlas project/cluster, shared `command-center-ai-production` database, `command-center-ai-production-runtime` least-privilege identity, matching projection in both Railway projects, source behavior, network access, target emptiness, and rollback revisions.
+4. Obtain fresh production authorization; reconcile and verify the exact `command-center-ai` Atlas project/cluster, shared `command-center-ai-production` database, `command-center-ai-production-runtime` least-privilege identity, matching projection in the exact `Command Deck.ai` / `production` / `developer-command-center` Railway target, source behavior, network access, target emptiness, and rollback revisions.
 5. Stop application and webhook writes if an old service is running.
 6. Read and interactively confirm the narrow SQLite binding set; validate the exact account allowlist.
 7. Seed the binding set idempotently into MongoDB.
