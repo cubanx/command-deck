@@ -166,7 +166,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	);
 	expect(element("#app").innerHTML).toContain('class="pr-warning-row"');
 	expect(element("#app").innerHTML).toContain(
-		"PR lifecycle. Current stage: Mergeable",
+		"PR lifecycle. Current stage: Draft",
 	);
 	expect(element("#app").innerHTML).toContain(
 		'<a href="https://github.com/ds9/defiant/pull/9" class="pr-title-link" data-status-detail="12:42:9"',
