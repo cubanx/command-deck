@@ -1,8 +1,5 @@
-# command-center-dashboard Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
-## Requirements
 ### Requirement: Personal operational summary
 The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, projected Draft → Ready for review → Mergeable lifecycle pills in a native `fieldset` with a `PR Lifecycle` legend that interrupts its top border, attention classification, accessible detail for Actions/check/formal-review/automated-review/mergeability evidence, branch/SHA-linked OpenSpec status, and recent GitHub deployment projections, from local installation-scoped projections. The pills SHALL show exactly one current stage using draft-first, then mergeable, then ready-for-review precedence, and SHALL reflect current projected evidence even when that moves a pull request backward. Completed pills SHALL display a green check and `Complete`; the current pill SHALL display a blue half-moon (`◐`) and `Current`; upcoming pills SHALL display a slate open circle (`○`) and `Upcoming`. A PR card SHALL show no default positive-status pills and SHALL show at most one actionable warning pill on a separate row below the lifecycle frame when attention is required. Pull requests requiring attention SHALL appear before healthy pull requests.
 
@@ -69,20 +66,7 @@ The dashboard SHALL use a compact neutral shell, bordered cards, responsive grid
 - **WHEN** a developer opens Configuration with authorized repositories
 - **THEN** the app presents accessible Unresolved and Resolved tables in that order, each sorted case-insensitively by full repository name, while retaining organization-root and per-repository checkout controls
 
-### Requirement: Explicit focus states
-The dashboard SHALL distinguish loading, signed-out, no-installation, empty, stale, and error states with concise next actions.
-
-#### Scenario: Signed-in developer has no installation
-- **WHEN** a developer has authenticated but bound no GitHub App installation
-- **THEN** the dashboard explains that no repositories are connected and provides the installation action
-
-#### Scenario: Projection is empty
-- **WHEN** a bound developer has no open pull requests or OpenSpecs
-- **THEN** the dashboard shows a calm explicit empty state rather than an ambiguous blank region
-
-#### Scenario: Local developer opens the seeded dashboard
-- **WHEN** the command center is running through the standard development command
-- **THEN** the same dashboard renders representative pull-request, deploy, OpenSpec, and notification states without contacting a provider
+## ADDED Requirements
 
 ### Requirement: Accessible pull request status detail
 The system SHALL provide one shared status-detail interaction for each PR warning/problem pill or title link that exposes the projected Actions, checks, formal review, automated review, mergeability, exact blockers, failed-workflow links, branch/SHA, freshness, and linked OpenSpec context without making a GitHub request. Lifecycle pills SHALL remain visual only.

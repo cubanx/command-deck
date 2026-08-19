@@ -7,6 +7,14 @@ The web app SHALL provide a manifest, application icons, standalone display meta
 - **WHEN** the service is delivered over a secure origin with its manifest and icons
 - **THEN** the browser receives the metadata required to present Command Deck.ai as a standalone web app where supported
 
+#### Scenario: Browser loads the command center
+- **WHEN** the service is delivered over a secure origin
+- **THEN** the browser requests the current HTML, CSS, and JavaScript without service-worker cache interception
+
+#### Scenario: Prior shell worker is updated
+- **WHEN** a browser with a previously registered command-center service worker fetches `/sw.js`
+- **THEN** the cleanup worker skips waiting, clears all Cache Storage entries during activation, unregisters, and refreshes its controlled clients without registering a replacement
+
 ### Requirement: Safe shell delivery
 The application SHALL NOT cache browser-shell or runtime responses through a service worker. During retirement of a previously installed worker, the service SHALL provide a non-cached cleanup worker that clears Cache Storage, unregisters, and refreshes its controlled clients. The service SHALL deliver the HTML shell and its JavaScript and CSS with response directives that require fresh retrieval on ordinary reloads. The application MUST NOT alter authenticated API responses, SSE data, OAuth callbacks, webhook traffic, or notification behavior.
 

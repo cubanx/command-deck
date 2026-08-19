@@ -262,6 +262,46 @@ test("local demo projections are deterministic and isolated", () =>
 				total: 27,
 			},
 		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 118),
+		).toMatchObject({
+			title: "Tune the wormhole transit monitor",
+			draft: 0,
+			mergeable: "clean",
+			review_state: "approved",
+			checks_state: "success",
+			workflow_state: "success",
+			needs_attention: false,
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 117),
+		).toMatchObject({
+			title: "Add Bajoran calendar import",
+			mergeable: "clean",
+			review_state: "approved",
+			checks_state: "success",
+			workflow_state: "success",
+			needs_attention: false,
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 116),
+		).toMatchObject({
+			title: "Retire obsolete docking alerts",
+			draft: 0,
+			mergeable: "clean",
+			review_state: "approved",
+			checks_state: "success",
+			workflow_state: "failure",
+			needs_attention: true,
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 115),
+		).toMatchObject({
+			title: "Harden the promenade inventory sync",
+			mergeable: "clean",
+			workflow_state: "success",
+			needs_attention: true,
+		});
 	}));
 
 test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or ambiguous links", () =>

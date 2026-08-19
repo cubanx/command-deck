@@ -45,8 +45,7 @@ const webAsset = (name: string) =>
 	readFileSync(new URL(`./web/${name}`, import.meta.url), "utf8");
 const html = webAsset("index.html");
 const css = webAsset("app.css");
-const manifest = webAsset("manifest.webmanifest");
-const worker = webAsset("sw.js");
+const retirementWorker = webAsset("sw.js");
 
 type SessionIdentity = { id: string; login?: string };
 type MergeProvider = {
@@ -71,15 +70,12 @@ type AppContext = {
 	mergeProvider?: MergeProvider;
 };
 
+const freshShellHeaders = { "cache-control": "no-cache" };
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
-	["/", [html, "text/html; charset=utf-8", { "cache-control": "no-cache" }]],
-	[
-		"/configuration",
-		[html, "text/html; charset=utf-8", { "cache-control": "no-cache" }],
-	],
-	["/app.css", [css, "text/css", { "cache-control": "no-cache" }]],
-	["/manifest.webmanifest", [manifest, "application/manifest+json"]],
-	["/sw.js", [worker, "text/javascript", { "cache-control": "no-cache" }]],
+	["/", [html, "text/html; charset=utf-8", freshShellHeaders]],
+	["/configuration", [html, "text/html; charset=utf-8", freshShellHeaders]],
+	["/app.css", [css, "text/css", freshShellHeaders]],
+	["/manifest.webmanifest", [webAsset("manifest.webmanifest"), "application/manifest+json"]],
 ]);
 const iconAssets = new Map<string, [string, string]>([
 	["/avatar-fixture.svg", ["avatar-fixture.svg", "image/svg+xml"]],
@@ -93,12 +89,16 @@ const iconAssets = new Map<string, [string, string]>([
 ]);
 
 const publicResponse = async (path: string) => {
+	if (path === "/sw.js")
+		return new Response(retirementWorker, {
+			headers: {
+				"content-type": "text/javascript",
+				"cache-control": "no-cache",
+			},
+		});
 	if (path === "/app.js")
 		return new Response(await buildBrowserScript(), {
-			headers: {
-				"cache-control": "no-cache",
-				"content-type": "text/javascript",
-			},
+			headers: { "content-type": "text/javascript", ...freshShellHeaders },
 		});
 	const text = textAssets.get(path);
 	if (text)
