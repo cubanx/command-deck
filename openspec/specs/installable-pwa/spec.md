@@ -28,4 +28,3 @@ The service SHALL not provide an ongoing application-controlled shell cache. Its
 #### Scenario: Network is unavailable
 - **WHEN** a client opens without network access
 - **THEN** the browser does not serve a stale application-controlled shell cache
-

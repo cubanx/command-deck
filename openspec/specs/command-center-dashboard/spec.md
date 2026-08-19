@@ -124,4 +124,3 @@ The dashboard SHALL filter PR cards by the mutually exclusive Draft, Ready for r
 #### Scenario: Developer filters by attention
 - **WHEN** a developer enables the attention filter
 - **THEN** the dashboard shows PR cards with projected attention conditions regardless of their lifecycle stage
-
