@@ -45,8 +45,17 @@ const webAsset = (name: string) =>
 	readFileSync(new URL(`./web/${name}`, import.meta.url), "utf8");
 const html = webAsset("index.html");
 const css = webAsset("app.css");
-const manifest = webAsset("manifest.webmanifest");
-const worker = webAsset("sw.js");
+const retirementWorker = `const retiredCacheNames = ["dcc-shell-v1", "dcc-shell-v4", "dcc-shell-v6", "dcc-shell-v10"];
+self.addEventListener("install", (event) =>
+	event.waitUntil(self.skipWaiting()),
+);
+self.addEventListener("activate", (event) =>
+	event.waitUntil(
+		Promise.all(retiredCacheNames.map((cacheName) => caches.delete(cacheName))).then(
+			() => self.registration.unregister(),
+		),
+	),
+);`;
 
 type SessionIdentity = { id: string; login?: string };
 type MergeProvider = {
@@ -71,28 +80,30 @@ type AppContext = {
 	mergeProvider?: MergeProvider;
 };
 
+const freshShellHeaders = { "cache-control": "no-cache" };
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
-	["/", [html, "text/html; charset=utf-8"]],
-	["/configuration", [html, "text/html; charset=utf-8"]],
-	["/app.css", [css, "text/css"]],
-	["/manifest.webmanifest", [manifest, "application/manifest+json"]],
-	["/sw.js", [worker, "text/javascript", { "cache-control": "no-cache" }]],
+	["/", [html, "text/html; charset=utf-8", freshShellHeaders]],
+	["/configuration", [html, "text/html; charset=utf-8", freshShellHeaders]],
+	["/app.css", [css, "text/css", freshShellHeaders]],
 ]);
 const iconAssets = new Map<string, [string, string]>([
 	["/avatar-fixture.svg", ["avatar-fixture.svg", "image/svg+xml"]],
 	["/icon.svg", ["icon.svg", "image/svg+xml"]],
 	["/icon-adaptive.svg", ["icon-adaptive.svg", "image/svg+xml"]],
 	["/favicon-32.png", ["favicon-32.png", "image/png"]],
-	["/apple-touch-icon.png", ["apple-touch-icon.png", "image/png"]],
-	["/icon-192.png", ["icon-192.png", "image/png"]],
-	["/icon-512.png", ["icon-512.png", "image/png"]],
-	["/icon-maskable-512.png", ["icon-maskable-512.png", "image/png"]],
 ]);
 
 const publicResponse = async (path: string) => {
+	if (path === "/sw.js")
+		return new Response(retirementWorker, {
+			headers: {
+				"content-type": "text/javascript",
+				"cache-control": "no-cache",
+			},
+		});
 	if (path === "/app.js")
 		return new Response(await buildBrowserScript(), {
-			headers: { "content-type": "text/javascript" },
+			headers: { "content-type": "text/javascript", ...freshShellHeaders },
 		});
 	const text = textAssets.get(path);
 	if (text)

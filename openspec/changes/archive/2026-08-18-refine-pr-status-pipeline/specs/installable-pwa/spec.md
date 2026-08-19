@@ -1,8 +1,5 @@
-# installable-pwa Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
-## Requirements
 ### Requirement: Installable application shell
 The web app SHALL deliver its operational HTML, CSS, and JavaScript shell assets through normal HTTP requests with `Cache-Control: no-cache`, without a manifest, standalone-display metadata, or ongoing service worker. To retire prior same-origin registrations, it SHALL temporarily serve `/sw.js` whose install handler calls `self.skipWaiting()` and whose activate handler deletes only `dcc-shell-v1`, `dcc-shell-v4`, `dcc-shell-v6`, and `dcc-shell-v10`, then unregisters itself. The browser SHALL not offer the command center as an installable web app.
 

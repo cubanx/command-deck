@@ -241,22 +241,73 @@ test("local demo projections are deterministic and isolated", () =>
 		await seedLocalDemo(db);
 		const dashboard = await dashboardForUser(db, LOCAL_DEMO_USER.id);
 		expect(dashboard.installationCount).toBe(1);
-		expect(dashboard.pullRequests).toHaveLength(1);
+		expect(dashboard.pullRequests).toHaveLength(5);
 		expect(dashboard.deployments).toHaveLength(3);
 		expect(dashboard.notifications).toHaveLength(1);
 		expect(dashboard.user).toEqual({
 			login: "sisko",
 			fixture_avatar: true,
 		});
-		expect(dashboard.pullRequests[0]).toMatchObject({
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 1),
+		).toMatchObject({
 			title: "Build developer command center MVP",
 			url: "https://github.com/cubanx/dev-command-center/pull/1",
 			draft: 1,
+			bot_review_state: "in_progress",
+			workflow_failures: [
+				{
+					name: "Local demo workflow",
+					url: "https://github.com/cubanx/dev-command-center/actions/runs/1",
+				},
+			],
 			open_spec: {
 				change_name: "build-developer-command-center-mvp",
 				completed: 26,
 				total: 27,
 			},
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 2),
+		).toMatchObject({
+			draft: false,
+			mergeable: "unknown",
+			review_state: "approved",
+			checks_state: "success",
+			workflow_state: "success",
+			needs_attention: false,
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 3),
+		).toMatchObject({
+			mergeable: "clean",
+			review_state: "approved",
+			checks_state: "success",
+			workflow_state: "success",
+			needs_attention: false,
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 4),
+		).toMatchObject({
+			draft: false,
+			mergeable: "unknown",
+			review_state: "changes_requested",
+			checks_state: "success",
+			workflow_state: "success",
+			needs_attention: true,
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 5),
+		).toMatchObject({
+			mergeable: "clean",
+			workflow_state: "failure",
+			workflow_failures: [
+				{
+					name: "Merge readiness",
+					url: "https://github.com/cubanx/dev-command-center/actions/runs/5",
+				},
+			],
+			needs_attention: true,
 		});
 	}));
 
