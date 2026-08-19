@@ -22,6 +22,9 @@ class FakeElement {
 
 test("the compiled browser runtime renders and reconciles with native controls", async () => {
 	const elements = new Map<string, FakeElement>();
+	const repositoryCheckbox = new FakeElement();
+	repositoryCheckbox.dataset.repository = "ds9/defiant";
+	repositoryCheckbox.checked = true;
 	const element = (selector: string) => {
 		const existing = elements.get(selector);
 		if (existing) return existing;
@@ -32,7 +35,8 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	const document = {
 		documentElement: new FakeElement(),
 		querySelector: (selector: string) => element(selector),
-		querySelectorAll: () => [],
+		querySelectorAll: (selector: string) =>
+			selector === "[data-repository]" ? [repositoryCheckbox] : [],
 		getElementById: (id: string) => element(`#${id}`),
 		createElement: () => new FakeElement(),
 		addEventListener: (name: string, listener: (event: Event) => unknown) =>
@@ -94,6 +98,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 			? new Response(JSON.stringify({ status: "success" }))
 			: new Response(JSON.stringify(snapshot)),
 	);
+	const register = vi.fn();
 	Object.defineProperties(globalThis, {
 		document: { configurable: true, value: document },
 		localStorage: {
@@ -110,7 +115,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 				onLine: true,
 				serviceWorker: {
 					ready: Promise.resolve({ showNotification: () => undefined }),
-					register: () => undefined,
+					register,
 				},
 			},
 		},
@@ -127,7 +132,17 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	await vi.waitFor(() =>
 		expect(element("#app").innerHTML).toContain("Prepare the Defiant"),
 	);
+	expect(register).not.toHaveBeenCalled();
 	expect(element("#app").innerHTML).toContain("Battle readiness");
+	expect(element("#app").innerHTML).toContain(
+		'data-repository="ds9/defiant" checked',
+	);
+	expect(element("#app").innerHTML).not.toContain("repository-search");
+	repositoryCheckbox.checked = false;
+	repositoryCheckbox.listeners.get("change")?.(new Event("change"));
+	expect(element("#app").innerHTML).toContain(
+		"No open authored pull requests.",
+	);
 	const reconcile = element("#reconcile").listeners.get("click");
 	expect(reconcile).toBeTypeOf("function");
 	await reconcile?.(new Event("click"));

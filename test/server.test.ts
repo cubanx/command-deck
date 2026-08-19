@@ -59,6 +59,12 @@ test("public PWA assets and streams are isolated", () =>
 			["/configuration", "text/html; charset=utf-8"],
 			["/app.css", "text/css"],
 			["/app.js", "text/javascript"],
+		]) {
+			const response = await app.fetch(new Request(`http://local${path}`));
+			expect(response.headers.get("content-type")).toBe(type);
+			expect(response.headers.get("cache-control")).toContain("no-cache");
+		}
+		for (const [path, type] of [
 			["/manifest.webmanifest", "application/manifest+json"],
 			["/icon.svg", "image/svg+xml"],
 			["/icon-adaptive.svg", "image/svg+xml"],
@@ -94,6 +100,7 @@ test("public PWA assets and streams are isolated", () =>
 			},
 		]);
 		const shell = await (await app.fetch(new Request("http://local/"))).text();
+		expect(shell).toContain("<title>Command Deck.ai</title>");
 		expect(shell).toContain(
 			'<link rel="icon" href="/icon-adaptive.svg" type="image/svg+xml">',
 		);
@@ -129,23 +136,26 @@ test("public PWA assets and streams are isolated", () =>
 		const worker = await (
 			await app.fetch(new Request("http://local/sw.js"))
 		).text();
-		expect(worker).toContain("/icon-adaptive.svg");
-		expect(worker).toContain("/avatar-fixture.svg");
-		expect(worker).toContain("/apple-touch-icon.png");
-		expect(worker).toContain("/icon-maskable-512.png");
-		expect(worker).toContain("PATHS.has(u.pathname)");
-		expect(worker).not.toContain('"/api/');
-		expect(worker).not.toContain('"/events');
-		expect(worker).not.toContain('"/webhooks/');
+		expect(worker).toContain("self.skipWaiting()");
+		expect(worker).toMatch(/caches\s*\.keys\(\)/);
+		expect(worker).toContain("caches.delete(cache)");
+		expect(worker).toContain("self.registration.unregister()");
+		expect(worker).toContain("client.navigate(client.url)");
+		expect(worker).not.toContain("const CACHE");
+		expect(worker).not.toContain("const ASSETS");
+		expect(worker).not.toContain('addEventListener("fetch"');
 		expect(
 			(await app.fetch(new Request("http://local/sw.js"))).headers.get(
 				"cache-control",
 			),
 		).toContain("no-cache");
-		expect(shell).toContain("/app.js?v=7");
+		expect(shell).toContain('href="/app.css"');
+		expect(shell).toContain('src="/app.js"');
+		expect(shell).not.toContain("?v=");
 		const javascript = await (
 			await app.fetch(new Request("http://local/app.js"))
 		).text();
+		expect(javascript).not.toContain("serviceWorker?.register");
 		const css = await (
 			await app.fetch(new Request("http://local/app.css"))
 		).text();
@@ -207,6 +217,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain(
 			'<img class="brand-icon" src="/icon-adaptive.svg" alt="">',
 		);
+		expect(javascript).toContain("<h1>Command Deck.ai</h1>");
 		expect(javascript).toContain("Open tasks");
 		expect(javascript).toContain('aria-label="Pull requests"');
 		expect(javascript).not.toContain("Your open pull requests");
@@ -216,19 +227,30 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain('class="control-group search-results"');
 		expect(javascript).toContain('class="control-group filters"');
 		expect(javascript).toContain('class="control-group sorting"');
+		expect(javascript).toContain(
+			'<fieldset class="repository-filter"><legend>Repositories</legend>',
+		);
+		expect(javascript).not.toContain('<details class="repository-filter"');
+		expect(javascript).not.toContain("repository-search");
+		expect(javascript).not.toContain("repositoryQuery");
 		expect(javascript).toContain('aria-live="polite"');
 		expect(javascript).toContain("Clear");
 		expect(javascript).toContain('event.key === "/"');
 		expect(javascript).toContain('event.key === "Escape"');
 		expect(javascript).toContain('id="pr-sort"');
-		expect(javascript).toContain('aria-describedby="codex-activity-status"');
+		expect(javascript).not.toContain(
+			'aria-describedby="codex-activity-status"',
+		);
 		expect(javascript).toContain('id="pr-direction"');
 		expect(javascript).toContain("Failed Actions");
 		expect(javascript).toContain("Failed Checks");
 		expect(javascript).toContain("Newest first");
 		expect(javascript).toContain("Closest to merge");
-		expect(javascript).toContain("Codex activity (unavailable)");
-		expect(javascript).toContain("disabled");
+		expect(javascript).not.toContain("Codex activity (unavailable)");
+		expect(javascript).not.toContain("codex-activity-status");
+		expect(javascript).toContain(
+			"${repositoryGroup}${filterGroup}${sortingGroup}${searchGroup}",
+		);
 		expect(javascript).toContain("Blockers:");
 		expect(javascript).toContain("dcc-pr-sort");
 		expect(javascript).toContain("sort: view.sort");
@@ -243,6 +265,16 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(css).toContain("flex-wrap: wrap");
 		expect(css).toContain("flex-direction: column");
 		expect(css).toContain(".control-group");
+		expect(css).not.toContain(".sorting #codex-activity-status");
+		expect(css).toContain(
+			".repository-options {\n\tdisplay: flex;\n\tflex-wrap: wrap;",
+		);
+		expect(javascript).toContain('class="stack"');
+		expect(javascript).toContain(
+			'<article class="card"><div class="pr-card-header">',
+		);
+		expect(css).toContain(".stack > :not(.card) + :not(.card)");
+		expect(css).toContain(".stack > article.card + article.card");
 		expect(css).toContain(':root[data-appearance="dark"] .openspec');
 		expect(css).toContain(".openspec a");
 		await app.drain();
@@ -623,10 +655,14 @@ test("local demo serves snapshot and SSE without a session and exposes no Railwa
 			localDemo: true,
 			hostname: "127.0.0.1",
 		});
-		expect(
-			(await (await app.fetch(new Request("http://local/api/snapshot"))).json())
-				.pullRequests,
-		).toHaveLength(1);
+		const snapshot = await (
+			await app.fetch(new Request("http://local/api/snapshot"))
+		).json();
+		expect(snapshot.pullRequests).toHaveLength(19);
+		expect(snapshot.repositories[0]?.account_login).toBe("cubanx");
+		expect(snapshot.notifications[0]?.body).toBe(
+			"Restore the Defiant launch checklist needs attention.",
+		);
 		const stream = await app.fetch(new Request("http://local/events"));
 		expect(stream.status).toBe(200);
 		await stream.body?.cancel();

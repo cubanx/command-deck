@@ -241,19 +241,23 @@ test("local demo projections are deterministic and isolated", () =>
 		await seedLocalDemo(db);
 		const dashboard = await dashboardForUser(db, LOCAL_DEMO_USER.id);
 		expect(dashboard.installationCount).toBe(1);
-		expect(dashboard.pullRequests).toHaveLength(1);
+		expect(dashboard.pullRequests).toHaveLength(19);
 		expect(dashboard.deployments).toHaveLength(3);
 		expect(dashboard.notifications).toHaveLength(1);
 		expect(dashboard.user).toEqual({
 			login: "sisko",
 			fixture_avatar: true,
 		});
-		expect(dashboard.pullRequests[0]).toMatchObject({
-			title: "Build developer command center MVP",
-			url: "https://github.com/cubanx/dev-command-center/pull/1",
+		const defiantChecklist = dashboard.pullRequests.find(
+			(pr) => pr.title === "Restore the Defiant launch checklist",
+		);
+		expect(dashboard.pullRequests.filter((pr) => pr.open_spec)).toHaveLength(1);
+		expect(defiantChecklist).toMatchObject({
+			title: "Restore the Defiant launch checklist",
+			url: "https://github.com/ds9/ops-console/pull/119",
 			draft: 1,
 			open_spec: {
-				change_name: "build-developer-command-center-mvp",
+				change_name: "restore-defiant-launch-checklist",
 				completed: 26,
 				total: 27,
 			},

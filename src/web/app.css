@@ -158,9 +158,12 @@ p {
 	border-color: #475467;
 	background: #202b3d;
 }
-.stack > * + * {
+.stack > :not(.card) + :not(.card) {
 	border-top: 1px solid #e7ebef;
 	padding-top: 12px;
+	margin-top: 12px;
+}
+.stack > article.card + article.card {
 	margin-top: 12px;
 }
 .pr-controls {
@@ -190,9 +193,6 @@ p {
 .search-results #pr-count {
 	margin-left: auto;
 }
-.sorting #codex-activity-status {
-	flex-basis: 100%;
-}
 .pr-controls fieldset {
 	display: flex;
 	gap: 6px;
@@ -219,21 +219,12 @@ p {
 	border-radius: 99px;
 }
 .repository-filter {
-	position: relative;
-}
-.repository-filter > :not(summary) {
-	display: block;
-	margin-top: 7px;
-}
-.repository-filter[open] {
-	padding: 7px;
-	border: 1px solid #cbd5e1;
-	border-radius: 6px;
-	background: #fff;
+	align-items: center;
 }
 .repository-options {
-	max-height: 180px;
-	overflow: auto;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
 }
 .workflow-failures {
 	margin: 8px 0 0;
@@ -332,7 +323,6 @@ summary:focus-visible {
 	color: #b6c2d0;
 }
 :root[data-appearance="dark"] .pr-controls,
-:root[data-appearance="dark"] .repository-filter[open],
 :root[data-appearance="dark"] .avatar-menu-panel {
 	border-color: #475467;
 	background: #202b3d;

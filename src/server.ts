@@ -72,9 +72,12 @@ type AppContext = {
 };
 
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
-	["/", [html, "text/html; charset=utf-8"]],
-	["/configuration", [html, "text/html; charset=utf-8"]],
-	["/app.css", [css, "text/css"]],
+	["/", [html, "text/html; charset=utf-8", { "cache-control": "no-cache" }]],
+	[
+		"/configuration",
+		[html, "text/html; charset=utf-8", { "cache-control": "no-cache" }],
+	],
+	["/app.css", [css, "text/css", { "cache-control": "no-cache" }]],
 	["/manifest.webmanifest", [manifest, "application/manifest+json"]],
 	["/sw.js", [worker, "text/javascript", { "cache-control": "no-cache" }]],
 ]);
@@ -92,7 +95,10 @@ const iconAssets = new Map<string, [string, string]>([
 const publicResponse = async (path: string) => {
 	if (path === "/app.js")
 		return new Response(await buildBrowserScript(), {
-			headers: { "content-type": "text/javascript" },
+			headers: {
+				"cache-control": "no-cache",
+				"content-type": "text/javascript",
+			},
 		});
 	const text = textAssets.get(path);
 	if (text)

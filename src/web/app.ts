@@ -105,9 +105,7 @@ type DerivedPullRequest = PullRequestItem & {
 type ViewState = {
 	query: string;
 	statuses: Set<string>;
-	repositories: Set<string>;
-	repositoryQuery: string;
-	repositoryOpen: boolean;
+	repositories: Set<string> | null;
 	failedActions: boolean;
 	failedChecks: boolean;
 	sort: SortPreference;
@@ -325,9 +323,7 @@ let known: Set<string> | null = null,
 	view: ViewState = {
 		query: "",
 		statuses: new Set(),
-		repositories: new Set(),
-		repositoryQuery: "",
-		repositoryOpen: false,
+		repositories: null,
 		failedActions: false,
 		failedChecks: false,
 		sort: { mode: "closest", direction: "asc" },
@@ -586,7 +582,7 @@ export const derivePullRequests = (
 ): DerivedPullRequest[] => {
 	const query = normalized(filters.query);
 	const statuses = filters.statuses ?? new Set();
-	const repositories = filters.repositories ?? new Set();
+	const repositories = filters.repositories === undefined ? null : filters.repositories;
 	const failedActions = filters.failedActions ?? false;
 	const failedChecks = filters.failedChecks ?? false;
 	const sort =
@@ -607,13 +603,13 @@ export const derivePullRequests = (
 				(!statuses.size || statuses.has(item.bucket)) &&
 				(!failedActions || failedState(item.pr.workflow_state)) &&
 				(!failedChecks || failedState(item.pr.checks_state)) &&
-				(!repositories.size ||
+				(repositories === null ||
 					(typeof item.pr.full_name === "string" &&
 						repositories.has(item.pr.full_name))),
 		)
 		.sort((left, right) => sortCompare(left, right, sort));
 };
-export const repositoryOptions = (items: PullRequestItem[], query = "") =>
+export const repositoryOptions = (items: PullRequestItem[]) =>
 	[
 		...new Set(
 			items
@@ -621,7 +617,6 @@ export const repositoryOptions = (items: PullRequestItem[], query = "") =>
 				.filter((name): name is string => typeof name === "string"),
 		),
 	]
-		.filter((name) => Number.isFinite(fuzzyScore(query, name)))
 		.sort(codePointCompare);
 export const parseTasks = (content: string) => {
 	const groups: OpenSpecGroup[] = [];
@@ -1093,7 +1088,7 @@ const controlsMarkup = (
 	all: PullRequestItem[],
 	visible: DerivedPullRequest[],
 ) => {
-	const repositories = repositoryOptions(all, view.repositoryQuery);
+	const repositories = repositoryOptions(all);
 	const statusLabel = {
 		mergeable: "Mergeable",
 		ready: "Ready for review",
@@ -1109,18 +1104,19 @@ const controlsMarkup = (
 		? repositories
 				.map(
 					(name, index) =>
-						`<label><input id="repository-${index}" type="checkbox" data-repository="${esc(name)}" ${view.repositories.has(name) ? "checked" : ""}>${esc(name)}</label>`,
+						`<label><input id="repository-${index}" type="checkbox" data-repository="${esc(name)}" ${view.repositories === null || view.repositories.has(name) ? "checked" : ""}>${esc(name)}</label>`,
 				)
 				.join("")
-		: '<span class="muted">No repositories match.</span>';
+		: '<span class="muted">No repositories.</span>';
+	const repositoryGroup = `<fieldset class="repository-filter"><legend>Repositories</legend><div class="repository-options">${repositoryChoices}</div></fieldset>`;
 	const searchGroup = `<div class="control-group search-results"><label for="pr-search">Search pull requests</label><input id="pr-search" type="search" value="${esc(view.query)}" autocomplete="off"><span id="pr-count" aria-live="polite">${esc(visible.length)} of ${esc(all.length)} pull requests</span><button id="clear-pr-filters" type="button">Clear</button></div>`;
-	const filterGroup = `<div class="control-group filters"><fieldset><legend>Status</legend>${statusFilters}</fieldset><fieldset><legend>Failed state</legend><label class="filter-pill"><input id="failed-actions" type="checkbox" data-aggregate-filter="failedActions" ${view.failedActions ? "checked" : ""}>Failed Actions</label><label class="filter-pill"><input id="failed-checks" type="checkbox" data-aggregate-filter="failedChecks" ${view.failedChecks ? "checked" : ""}>Failed Checks</label></fieldset><details class="repository-filter" ${view.repositoryOpen ? "open" : ""}><summary>Repositories${view.repositories.size ? ` (${view.repositories.size})` : ""}</summary><label for="repository-search">Find repository</label><input id="repository-search" type="search" value="${esc(view.repositoryQuery)}" autocomplete="off"><div class="repository-options">${repositoryChoices}</div></details></div>`;
+	const filterGroup = `<div class="control-group filters"><fieldset><legend>Status</legend>${statusFilters}</fieldset><fieldset><legend>Failed state</legend><label class="filter-pill"><input id="failed-actions" type="checkbox" data-aggregate-filter="failedActions" ${view.failedActions ? "checked" : ""}>Failed Actions</label><label class="filter-pill"><input id="failed-checks" type="checkbox" data-aggregate-filter="failedChecks" ${view.failedChecks ? "checked" : ""}>Failed Checks</label></fieldset></div>`;
 	const directionLabel =
 		view.sort.mode === "number"
 			? "PR number direction: Newest first or Oldest first"
 			: "Sort direction";
-	const sortingGroup = `<div class="control-group sorting"><label for="pr-sort">Sort pull requests</label><select id="pr-sort" aria-describedby="codex-activity-status"><option value="closest" ${view.sort.mode === "closest" ? "selected" : ""}>Closest to merge</option><option value="codex" disabled aria-describedby="codex-activity-status">Codex activity (unavailable)</option><option value="updated" ${view.sort.mode === "updated" ? "selected" : ""}>Recently updated</option><option value="number" ${view.sort.mode === "number" ? "selected" : ""}>PR number</option><option value="progress" ${view.sort.mode === "progress" ? "selected" : ""}>OpenSpec progress</option><option value="repository" ${view.sort.mode === "repository" ? "selected" : ""}>Repository</option></select><label for="pr-direction">${directionLabel}</label><select id="pr-direction"><option value="asc" ${view.sort.direction === "asc" ? "selected" : ""}>Ascending</option><option value="desc" ${view.sort.direction === "desc" ? "selected" : ""}>Descending</option></select><span id="codex-activity-status" class="muted">Codex activity sorting is unavailable because no activity data is collected.</span></div>`;
-	return `<div class="pr-controls">${searchGroup}${filterGroup}${sortingGroup}</div>`;
+	const sortingGroup = `<div class="control-group sorting"><label for="pr-sort">Sort pull requests</label><select id="pr-sort"><option value="closest" ${view.sort.mode === "closest" ? "selected" : ""}>Closest to merge</option><option value="updated" ${view.sort.mode === "updated" ? "selected" : ""}>Recently updated</option><option value="number" ${view.sort.mode === "number" ? "selected" : ""}>PR number</option><option value="progress" ${view.sort.mode === "progress" ? "selected" : ""}>OpenSpec progress</option><option value="repository" ${view.sort.mode === "repository" ? "selected" : ""}>Repository</option></select><label for="pr-direction">${directionLabel}</label><select id="pr-direction"><option value="asc" ${view.sort.direction === "asc" ? "selected" : ""}>Ascending</option><option value="desc" ${view.sort.direction === "desc" ? "selected" : ""}>Descending</option></select></div>`;
+	return `<div class="pr-controls">${repositoryGroup}${filterGroup}${sortingGroup}${searchGroup}</div>`;
 };
 const checkoutRepositoryMarkup = (repository: Repository) => {
 	const key = checkoutKey(repository.account_login, repository.repository_id);
@@ -1245,28 +1241,21 @@ const bindControls = () => {
 			saveSortPreference();
 			rerender("pr-direction");
 		});
-	const repositoryFilter =
-		document.querySelector<HTMLDetailsElement>(".repository-filter");
-	repositoryFilter?.addEventListener("toggle", () => {
-		view.repositoryOpen = repositoryFilter.open;
-	});
-	document
-		.querySelector<HTMLInputElement>("#repository-search")
-		?.addEventListener("input", (event) => {
-			view.repositoryQuery = (event.currentTarget as HTMLInputElement).value;
-			view.repositoryOpen = true;
-			rerender("repository-search");
-		});
 	document
 		.querySelectorAll<HTMLInputElement>("[data-repository]")
 		.forEach((input) => {
 			input.addEventListener("change", () => {
 				const repository = input.dataset.repository;
 				if (!repository) return;
+				if (view.repositories === null)
+					view.repositories = new Set(
+						[...document.querySelectorAll<HTMLInputElement>("[data-repository]")]
+							.map(({ dataset }) => dataset.repository)
+							.filter((name): name is string => Boolean(name)),
+					);
 				input.checked
-					? view.repositories.add(repository)
-					: view.repositories.delete(repository);
-				view.repositoryOpen = true;
+					? view.repositories?.add(repository)
+					: view.repositories?.delete(repository);
 				rerender(input.id);
 			});
 		});
@@ -1274,9 +1263,7 @@ const bindControls = () => {
 		view = {
 			query: "",
 			statuses: new Set(),
-			repositories: new Set(),
-			repositoryQuery: "",
-			repositoryOpen: false,
+			repositories: null,
 			failedActions: false,
 			failedChecks: false,
 			sort: view.sort,
@@ -1308,7 +1295,7 @@ const render = (x: DashboardSnapshot | null) => {
 	}));
 	const prs = derivePullRequests(allPullRequests, view);
 	const headerMarkup =
-		'<header><a class="brand brand-home" href="/"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command center</h1><p class="muted">Open pull requests you authored.</p></div></a>' +
+		'<header><a class="brand brand-home" href="/"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command Deck.ai</h1><p class="muted">Open pull requests you authored.</p></div></a>' +
 		avatarMenuMarkup(x.user) +
 		"</header>";
 	const dashboardMarkup =
@@ -1317,7 +1304,7 @@ const render = (x: DashboardSnapshot | null) => {
 		rows(prs, "No open authored pull requests.", (item) => {
 			const pr = item.pr;
 			return (
-				'<article><div class="pr-card-header"><h3><a href="' +
+				'<article class="card"><div class="pr-card-header"><h3><a href="' +
 				esc(pr.url) +
 				'" target="_blank" rel="noopener noreferrer">#' +
 				esc(pr.number) +
@@ -1657,5 +1644,4 @@ if (root) {
 		)
 			avatarMenu.open = false;
 	});
-	navigator.serviceWorker?.register("/sw.js");
 }
