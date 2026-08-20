@@ -1,8 +1,5 @@
-# installable-pwa Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
-## Requirements
 ### Requirement: Installable application shell
 The web app SHALL provide a manifest, application icons, standalone display metadata, and theme colors so supported macOS browsers can expose it as a standalone web app. The application SHALL NOT register a service worker for its normal browser shell.
 

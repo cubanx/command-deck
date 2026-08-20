@@ -241,45 +241,32 @@ test("local demo projections are deterministic and isolated", () =>
 		await seedLocalDemo(db);
 		const dashboard = await dashboardForUser(db, LOCAL_DEMO_USER.id);
 		expect(dashboard.installationCount).toBe(1);
-		expect(dashboard.pullRequests).toHaveLength(5);
+		expect(dashboard.pullRequests).toHaveLength(19);
 		expect(dashboard.deployments).toHaveLength(3);
 		expect(dashboard.notifications).toHaveLength(1);
 		expect(dashboard.user).toEqual({
 			login: "sisko",
 			fixture_avatar: true,
 		});
-		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 1),
-		).toMatchObject({
-			title: "Build developer command center MVP",
-			url: "https://github.com/cubanx/dev-command-center/pull/1",
+		const defiantChecklist = dashboard.pullRequests.find(
+			(pr) => pr.title === "Restore the Defiant launch checklist",
+		);
+		expect(dashboard.pullRequests.filter((pr) => pr.open_spec)).toHaveLength(1);
+		expect(defiantChecklist).toMatchObject({
+			title: "Restore the Defiant launch checklist",
+			url: "https://github.com/ds9/ops-console/pull/119",
 			draft: 1,
-			bot_review_state: "in_progress",
-			workflow_failures: [
-				{
-					name: "Local demo workflow",
-					url: "https://github.com/cubanx/dev-command-center/actions/runs/1",
-				},
-			],
 			open_spec: {
-				change_name: "build-developer-command-center-mvp",
+				change_name: "restore-defiant-launch-checklist",
 				completed: 26,
 				total: 27,
 			},
 		});
 		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 2),
+			dashboard.pullRequests.find((pr: any) => pr.number === 118),
 		).toMatchObject({
-			draft: false,
-			mergeable: "unknown",
-			review_state: "approved",
-			checks_state: "success",
-			workflow_state: "success",
-			needs_attention: false,
-		});
-		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 3),
-		).toMatchObject({
+			title: "Tune the wormhole transit monitor",
+			draft: 0,
 			mergeable: "clean",
 			review_state: "approved",
 			checks_state: "success",
@@ -287,26 +274,32 @@ test("local demo projections are deterministic and isolated", () =>
 			needs_attention: false,
 		});
 		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 4),
+			dashboard.pullRequests.find((pr: any) => pr.number === 117),
 		).toMatchObject({
-			draft: false,
-			mergeable: "unknown",
-			review_state: "changes_requested",
+			title: "Add Bajoran calendar import",
+			mergeable: "clean",
+			review_state: "approved",
 			checks_state: "success",
 			workflow_state: "success",
+			needs_attention: false,
+		});
+		expect(
+			dashboard.pullRequests.find((pr: any) => pr.number === 116),
+		).toMatchObject({
+			title: "Retire obsolete docking alerts",
+			draft: 0,
+			mergeable: "clean",
+			review_state: "approved",
+			checks_state: "success",
+			workflow_state: "failure",
 			needs_attention: true,
 		});
 		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 5),
+			dashboard.pullRequests.find((pr: any) => pr.number === 115),
 		).toMatchObject({
+			title: "Harden the promenade inventory sync",
 			mergeable: "clean",
-			workflow_state: "failure",
-			workflow_failures: [
-				{
-					name: "Merge readiness",
-					url: "https://github.com/cubanx/dev-command-center/actions/runs/5",
-				},
-			],
+			workflow_state: "success",
 			needs_attention: true,
 		});
 	}));

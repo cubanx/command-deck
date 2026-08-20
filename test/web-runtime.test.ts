@@ -28,6 +28,9 @@ class FakeElement {
 
 test("the compiled browser runtime renders and reconciles with native controls", async () => {
 	const elements = new Map<string, FakeElement>();
+	const repositoryCheckbox = new FakeElement();
+	repositoryCheckbox.dataset.repository = "ds9/defiant";
+	repositoryCheckbox.checked = true;
 	const statusTrigger = new FakeElement();
 	statusTrigger.dataset.statusDetail = "12:42:9";
 	const deploymentTrigger = new FakeElement();
@@ -43,9 +46,11 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		documentElement: new FakeElement(),
 		querySelector: (selector: string) => element(selector),
 		querySelectorAll: (selector: string) =>
-			selector === "[data-status-detail]"
-				? [statusTrigger, deploymentTrigger]
-				: [],
+			selector === "[data-repository]"
+				? [repositoryCheckbox]
+				: selector === "[data-status-detail]"
+					? [statusTrigger, deploymentTrigger]
+					: [],
 		getElementById: (id: string) => element(`#${id}`),
 		createElement: () => new FakeElement(),
 		addEventListener: (name: string, listener: (event: Event) => unknown) =>
@@ -88,7 +93,14 @@ test("the compiled browser runtime renders and reconciles with native controls",
 					change_name: "prepare-defiant",
 					completed: 1,
 					total: 2,
-					active_group: { title: "Readiness", tasks: [] },
+					source_url: "https://github.com/ds9/defiant/issues/9",
+					active_group: {
+						title: "Readiness",
+						tasks: [
+							{ text: "Calibrate the phaser array", completed: true },
+							{ text: "Run the readiness drill", completed: false },
+						],
+					},
 				},
 			},
 		],
@@ -117,6 +129,8 @@ test("the compiled browser runtime renders and reconciles with native controls",
 			? new Response(JSON.stringify({ status: "success" }))
 			: new Response(JSON.stringify(snapshot));
 	};
+	function Notification() {}
+	Object.assign(Notification, { permission: "granted" });
 	Object.defineProperties(globalThis, {
 		document: { configurable: true, value: document },
 		localStorage: {
@@ -130,10 +144,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		navigator: { configurable: true, value: { onLine: true } },
 		Notification: {
 			configurable: true,
-			value: class {
-				static permission = "granted";
-				constructor(_title: string, _options: NotificationOptions) {}
-			},
+			value: Notification,
 		},
 		fetch: { configurable: true, value: fetch },
 		EventSource: {
@@ -146,6 +157,13 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	const app = await import("#/web/app");
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	expect(element("#app").innerHTML).toContain("Prepare the Defiant");
+	expect(element("#app").innerHTML).toContain(
+		"OpenSpec · prepare-defiant · 1/2 · Readiness",
+	);
+	expect(element("#app").innerHTML).toContain('<details class="openspec">');
+	expect(element("#app").innerHTML).toContain("Calibrate the phaser array");
+	expect(element("#app").innerHTML).toContain("Run the readiness drill");
+	expect(element("#app").innerHTML).toContain("Open tasks");
 	expect(element("#app").innerHTML).toContain('class="deployment-summary"');
 	expect(element("#app").innerHTML).toContain("Latest deployment");
 	expect(element("#app").innerHTML).toContain(
@@ -189,6 +207,18 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		focusCountBeforeHover,
 	);
 	expect(element("#app").innerHTML).toContain("Battle readiness");
+	expect(element("#app").innerHTML).toContain(
+		'data-repository="ds9/defiant" checked',
+	);
+	expect(element("#app").innerHTML).not.toContain("repository-search");
+	repositoryCheckbox.checked = false;
+	repositoryCheckbox.listeners.get("change")?.(new Event("change"));
+	expect(element("#app").innerHTML).toContain(
+		"No open authored pull requests.",
+	);
+	// Restore the selected repository before exercising the independent detail UI.
+	repositoryCheckbox.checked = true;
+	repositoryCheckbox.listeners.get("change")?.(new Event("change"));
 	expect(element("#app").innerHTML).toContain('style="left:16px;top:48px"');
 	expect(element("#app").innerHTML).not.toContain("bottom: 16px");
 	statusTrigger.listeners.get("pointerleave")?.(new Event("pointerleave"));

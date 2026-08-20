@@ -43,6 +43,42 @@ const emptyUser = (id: string): UserAggregate => ({
 	createdAt: new Date(),
 	updatedAt: new Date(),
 });
+const localDemoPullRequests = [
+	"Restore the Defiant launch checklist",
+	"Tune the wormhole transit monitor",
+	"Add Bajoran calendar import",
+	"Retire obsolete docking alerts",
+	"Harden the promenade inventory sync",
+	"Repair runabout maintenance report",
+	"Document the holosuite failover drill",
+	"Simplify replicator supply filters",
+	"Show science lab sensor freshness",
+	"Fix shuttle bay assignment sorting",
+	"Improve Quark's tab reconciliation",
+	"Audit cargo manifest export",
+	"Prepare gamma quadrant survey view",
+	"Add senior staff rotation reminder",
+	"Correct infirmary shift coverage",
+	"Move celestial temple backups",
+	"Refresh federation relay credentials",
+	"Test phaser array diagnostics",
+	"Publish the station status digest",
+].map((title, index) => ({
+	number: 119 - index,
+	title,
+	url: `https://github.com/ds9/ops-console/pull/${119 - index}`,
+	author_login: LOCAL_DEMO_USER.login,
+	state: "open",
+	draft: Number(index % 6 === 0),
+	head_ref: `demo/${title.toLowerCase().replaceAll(" ", "-")}`,
+	head_sha: `local-demo-${119 - index}`,
+	mergeable: index % 5 === 0 ? "conflicting" : "clean",
+	review_state: index % 4 === 0 ? "changes_requested" : "approved",
+	checks_state: index % 7 === 0 ? "failure" : "success",
+	workflow_state: index % 3 === 0 ? "failure" : "success",
+	bot_review_actor: "odo[bot]",
+	bot_review_state: index % 3 === 0 ? "in_progress" : "approved",
+}));
 const pullRequestUrl = (fullName: unknown, number: unknown) => {
 	if (fullName == null || number == null) return null;
 	return `https://github.com/${String(fullName)}/pull/${String(number)}`;
@@ -137,100 +173,22 @@ export async function seedLocalDemo(db: Db) {
 		"cubanx",
 	);
 	await mutateUser(db, LOCAL_DEMO_USER.id, (user) => {
-		const installation = user.installations[0]!;
+		const installation = user.installations.find(
+			(item) => item.installationId === "local-demo-installation",
+		)!;
+		installation.accountLogin = "cubanx";
 		installation.repositories = [
 			{
 				repositoryId: "local-demo-repository",
-				full_name: "cubanx/dev-command-center",
-				pullRequests: [
-					{
-						number: 1,
-						title: "Build developer command center MVP",
-						url: "https://github.com/cubanx/dev-command-center/pull/1",
-						author_login: LOCAL_DEMO_USER.login,
-						state: "open",
-						draft: 1,
-						head_ref: "dcc/build-developer-command-center-mvp",
-						head_sha: "local-demo",
-						mergeable: "unknown",
-						review_state: "pending",
-						checks_state: "success",
-						workflow_state: "failure",
-						bot_review_actor: "claude[bot]",
-						bot_review_state: "in_progress",
-						workflow_failures: [
-							{
-								name: "Local demo workflow",
-								url: "https://github.com/cubanx/dev-command-center/actions/runs/1",
-							},
-						],
-					},
-					{
-						number: 2,
-						title: "Review local dashboard",
-						author_login: LOCAL_DEMO_USER.login,
-						state: "open",
-						draft: false,
-						head_ref: "dcc/review-local-dashboard",
-						head_sha: "local-demo-2",
-						mergeable: "unknown",
-						review_state: "approved",
-						checks_state: "success",
-						workflow_state: "success",
-					},
-					{
-						number: 3,
-						title: "Merge command center shell",
-						author_login: LOCAL_DEMO_USER.login,
-						state: "open",
-						draft: false,
-						head_ref: "dcc/merge-shell",
-						head_sha: "local-demo-3",
-						mergeable: "clean",
-						review_state: "approved",
-						checks_state: "success",
-						workflow_state: "success",
-					},
-					{
-						number: 4,
-						title: "Address review notes",
-						author_login: LOCAL_DEMO_USER.login,
-						state: "open",
-						draft: false,
-						head_ref: "dcc/address-review-notes",
-						head_sha: "local-demo-4",
-						mergeable: "unknown",
-						review_state: "changes_requested",
-						checks_state: "success",
-						workflow_state: "success",
-					},
-					{
-						number: 5,
-						title: "Fix merge readiness",
-						author_login: LOCAL_DEMO_USER.login,
-						state: "open",
-						draft: false,
-						head_ref: "dcc/fix-merge-readiness",
-						head_sha: "local-demo-5",
-						mergeable: "clean",
-						review_state: "approved",
-						checks_state: "success",
-						workflow_state: "failure",
-						workflow_failures: [
-							{
-								name: "Merge readiness",
-								url: "https://github.com/cubanx/dev-command-center/actions/runs/5",
-							},
-						],
-					},
-				],
+				full_name: "ds9/ops-console",
+				pullRequests: localDemoPullRequests,
 				openSpecs: [
 					{
-						change_name: "build-developer-command-center-mvp",
+						change_name: "restore-defiant-launch-checklist",
 						completed: 26,
 						total: 27,
-						source_commit: "local-demo",
-						source_ref: "dcc/build-developer-command-center-mvp",
+						source_commit: "local-demo-119",
+						source_ref: "demo/restore-the-defiant-launch-checklist",
 						active_group: JSON.stringify({
 							title: "Tasks",
 							tasks: [{ completed: false, text: "Review the local dashboard" }],
@@ -248,12 +206,14 @@ export async function seedLocalDemo(db: Db) {
 	await db.notifications.updateOne(
 		{ userId: LOCAL_DEMO_USER.id, transitionKey: "demo:checks-failed:1701" },
 		{
+			$set: {
+				title: "Checks failed",
+				body: "Restore the Defiant launch checklist needs attention.",
+			},
 			$setOnInsert: {
 				_id: "local-demo-notification",
 				userId: LOCAL_DEMO_USER.id,
 				transitionKey: "demo:checks-failed:1701",
-				title: "Checks failed",
-				body: "Build developer command center MVP needs attention.",
 				createdAt: new Date(),
 			},
 		},

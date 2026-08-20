@@ -352,7 +352,7 @@ test("search ranks exact, prefix, substring, then typo matches and keeps numeric
 	]);
 });
 
-test("title, repository, branch, OpenSpec, status, and multi-repository filters compose", () => {
+test("title, repository, branch, OpenSpec, status, and repository selections compose", () => {
 	for (const query of [
 		"readiness",
 		"ds9/ops",
@@ -360,16 +360,19 @@ test("title, repository, branch, OpenSpec, status, and multi-repository filters 
 		"upgrade-defiant",
 	])
 		expect(numbers(derivePullRequests(items, { query }))).toContain(12);
+	const filters = { query: "defiant", statuses: new Set(["mergeable"]) };
+	expect(
+		numbers(derivePullRequests(items, { ...filters, repositories: null })),
+	).toEqual([9]);
 	expect(
 		numbers(
-			derivePullRequests(items, {
-				query: "defiant",
-				statuses: new Set(["mergeable"]),
-				repositories: new Set(["ds9/ops", "ds9/reports"]),
-			}),
+			derivePullRequests(items, { repositories: new Set(["ds9/reports"]) }),
 		),
-	).toEqual([9]);
-	expect(repositoryOptions(items, "rep")).toEqual(["ds9/reports"]);
+	).toEqual([11]);
+	expect(
+		numbers(derivePullRequests(items, { repositories: new Set() })),
+	).toEqual([]);
+	expect(repositoryOptions(items)).toEqual(["ds9/ops", "ds9/reports"]);
 });
 
 test("failed Actions and Checks are composable filters using projected aggregate states", () => {

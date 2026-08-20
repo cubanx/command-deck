@@ -29,10 +29,29 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(workflow).toContain(
 		"docker run --rm command-center-ai:quality bun -e 'await import(\"./src/server.ts\")'",
 	);
-	expect(text("src/web/index.html")).not.toContain("manifest.webmanifest");
-	expect(text("src/web/app.ts")).not.toContain("serviceWorker");
-	const server = text("src/server.ts");
-	expect(server).toContain("self.skipWaiting()");
-	expect(server).toContain('self.addEventListener("activate"');
-	expect(server).not.toContain("caches.keys()");
+	expect(JSON.parse(text("src/web/manifest.webmanifest"))).toMatchObject({
+		name: "Command Deck.ai",
+		short_name: "Command Deck",
+		display: "standalone",
+	});
+	expect(text("src/web/index.html")).toContain(
+		'<link rel="manifest" href="/manifest.webmanifest">',
+	);
+	expect(text("src/web/app.ts")).not.toContain(
+		"navigator.serviceWorker.register",
+	);
+	const worker = text("src/web/sw.js");
+	expect(worker).toContain("self.skipWaiting()");
+	expect(worker).toContain('self.addEventListener("activate"');
+	const claim = worker.search(/self\.clients\s*\.claim\(\)/);
+	const matchAll = worker.indexOf(".matchAll(");
+	expect(claim).toBeGreaterThanOrEqual(0);
+	expect(claim).toBeLessThan(matchAll);
+	expect(matchAll).toBeLessThan(worker.indexOf("client.navigate(client.url)"));
+	expect(worker).toMatch(/caches\s*\.\s*keys\(\)/);
+	expect(worker).toMatch(/caches\s*\.\s*delete\(cache\)/);
+	expect(worker).toContain("self.registration.unregister()");
+	expect(worker).toContain("client.navigate(client.url)");
+	expect(worker).not.toContain('self.addEventListener("fetch"');
+	expect(worker).not.toMatch(/(?:const|let|var)\s+\w*cache\w*/i);
 });
