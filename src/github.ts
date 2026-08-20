@@ -3,11 +3,18 @@ import type { Db } from "#/db";
 import { mutateUser } from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
+import { projectOpenSpec } from "#/openspec";
 
 type FetchLike = (
 	input: RequestInfo | URL,
 	init?: RequestInit,
 ) => Promise<Response>;
+export type TaskFetcher = (input: {
+	installationId: string;
+	repositoryId: string;
+	path: string;
+	sha: string;
+}) => Promise<string | null>;
 export type ReadResult =
 	| { kind: "changed"; body: unknown }
 	| { kind: "unchanged" }
@@ -260,6 +267,7 @@ export async function bootstrapInstallation(
 	token: string,
 	fetcher: FetchLike,
 	appJwt: string,
+	fetchTasks?: TaskFetcher,
 ): Promise<ReadResult> {
 	const request: FetchLike = (url, init) =>
 		fetcher(url, {
@@ -276,6 +284,15 @@ export async function bootstrapInstallation(
 				...Object.fromEntries(new Headers(init?.headers)),
 				authorization: `Bearer ${appJwt}`,
 			},
+		});
+	const taskFetcher =
+		fetchTasks ??
+		(async (input) => {
+			const response = await request(
+				`https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`,
+				{ headers: { accept: "application/vnd.github.raw" } },
+			);
+			return response.ok ? response.text() : null;
 		});
 	const bound = await db.users
 		.find(
@@ -329,6 +346,12 @@ export async function bootstrapInstallation(
 		openSpecs: Record<string, unknown>[];
 		deployments: Record<string, unknown>[];
 	}>;
+	const openSpecTasks: Array<{
+		repositoryId: string;
+		path: string;
+		sha: string;
+		content: string;
+	}> = [];
 	for (const repo of repositories) {
 		const prs = await pagedGet(
 			db,
@@ -347,6 +370,58 @@ export async function bootstrapInstallation(
 		if (deployments.kind === "error") return deployments;
 		const deploymentRows =
 			deployments.kind === "changed" ? deployments.body : [];
+		const pullRequests = Array.isArray(prs.body) ? prs.body : [];
+		for (const pr of pullRequests) {
+			const sha =
+				typeof (pr as any).head?.sha === "string"
+					? (pr as any).head.sha
+					: undefined;
+			if (!sha) continue;
+			const changes = await conditionalGet(
+				db,
+				`installation:${installationId}:repo:${repo.id}:openspec:${sha}`,
+				`https://api.github.com/repositories/${repo.id}/contents/openspec/changes?ref=${sha}`,
+				async (url, init) => {
+					const response = await request(url, init);
+					return response.status === 404 ? Response.json([]) : response;
+				},
+			);
+			if (changes.kind === "unchanged") return changes;
+			if (changes.kind === "error") return changes;
+			if (!Array.isArray(changes.body))
+				return {
+					kind: "error",
+					stale: true,
+					message: "GitHub OpenSpec listing payload was invalid",
+				};
+			for (const change of changes.body) {
+				const name = (change as any)?.name;
+				if (
+					(change as any)?.type !== "dir" ||
+					!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)
+				)
+					continue;
+				const path = `openspec/changes/${name}/tasks.md`;
+				const content = await taskFetcher({
+					installationId,
+					repositoryId: String(repo.id),
+					path,
+					sha,
+				});
+				if (content === null)
+					return {
+						kind: "error",
+						stale: true,
+						message: "GitHub OpenSpec artifact fetch failed",
+					};
+				openSpecTasks.push({
+					repositoryId: String(repo.id),
+					path,
+					sha,
+					content,
+				});
+			}
+		}
 		snapshots.push({
 			repositoryId: String(repo.id),
 			full_name: repo.full_name,
@@ -406,7 +481,7 @@ export async function bootstrapInstallation(
 								);
 								return { ...old, ...pr };
 							}),
-						openSpecs: previous?.openSpecs ?? [],
+						openSpecs: snapshot.openSpecs,
 						deployments: snapshot.deployments.slice(0, 20),
 					};
 				});
@@ -415,6 +490,12 @@ export async function bootstrapInstallation(
 			}),
 		),
 	);
+	for (const task of openSpecTasks)
+		await projectOpenSpec(db, {
+			installationId,
+			accountLogin: account,
+			...task,
+		});
 	return repos;
 }
 export async function bootstrapDeployments(
@@ -484,6 +565,7 @@ export async function reconcileInstallations(
 	) => Promise<{ token: string; appJwt: string }>,
 	fetcher: FetchLike,
 	installationIds?: string[],
+	fetchTasks?: TaskFetcher,
 ) {
 	const ids = installationIds
 		? [...new Set(installationIds)].sort()
@@ -515,6 +597,7 @@ export async function reconcileInstallations(
 				token,
 				fetcher,
 				appJwt,
+				fetchTasks,
 			);
 		} catch {
 			result = { kind: "error", stale: true, message: "reconciliation failed" };

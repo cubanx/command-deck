@@ -244,18 +244,59 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(reconcile).toBeTypeOf("function");
 	await reconcile?.(new Event("click"));
 	expect(fetchCalls).toContain("/api/reconcile");
+	const request = <Result>(result: Result) => {
+		const value: {
+			result: Result;
+			onsuccess?: () => void;
+			onerror?: () => void;
+		} = { result };
+		queueMicrotask(() => value.onsuccess?.());
+		return value;
+	};
+	const database = {
+		transaction: () => ({
+			objectStore: () => ({
+				getAll: () => request([]),
+				put: (record: unknown) => request(record),
+			}),
+		}),
+	};
+	const missingCheckoutDirectory = () =>
+		Object.assign(new Error("missing checkout directory"), {
+			name: "NotFoundError",
+		});
+	const checkout = {
+		getDirectoryHandle: async (name: string) => {
+			if (name === ".git")
+				return {
+					getDirectoryHandle: async () => {
+						throw missingCheckoutDirectory();
+					},
+					getFileHandle: async (file: string) => ({
+						getFile: async () => ({
+							text: async () =>
+								file === "config"
+									? '[remote "origin"]\n\turl = git@github.com:ds9/defiant\n'
+									: "ref: refs/heads/main\n",
+						}),
+					}),
+				};
+			throw missingCheckoutDirectory();
+		},
+	};
 	Object.defineProperties(globalThis, {
-		indexedDB: { configurable: true, value: {} },
+		indexedDB: { configurable: true, value: { open: () => request(database) } },
+		location: { configurable: true, value: { pathname: "/configuration" } },
 		showDirectoryPicker: {
 			configurable: true,
-			value: async () => {
-				const error = new Error("cancelled");
-				error.name = "AbortError";
-				throw error;
-			},
+			value: async () => checkout,
 		},
 	});
 	await app.connectRepository("ds9:42");
+	expect(element("#app").innerHTML).toContain(
+		'<td aria-live="polite">Resolved</td>',
+	);
+	expect(element("#app").innerHTML).toContain("Change checkout");
 	const keydown = element("document").listeners.get("keydown");
 	keydown?.({
 		key: "/",

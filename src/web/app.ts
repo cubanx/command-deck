@@ -1240,7 +1240,7 @@ const checkoutActionMarkup = (repository: Repository, state: CheckoutState) => {
 		state === "Permission required"
 			? ` <button type="button" data-checkout-permission="${esc(key)}">Grant permission</button>`
 			: "";
-	return `<button type="button" data-connect-repository="${esc(key)}">Choose checkout</button>${permissionButton}`;
+	return `<button type="button" data-connect-repository="${esc(key)}">${state === "Resolved" ? "Change" : "Choose"} checkout</button>${permissionButton}`;
 };
 const checkoutTableMarkup = (
 	caption: string,
