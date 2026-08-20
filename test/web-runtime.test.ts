@@ -93,7 +93,14 @@ test("the compiled browser runtime renders and reconciles with native controls",
 					change_name: "prepare-defiant",
 					completed: 1,
 					total: 2,
-					active_group: { title: "Readiness", tasks: [] },
+					source_url: "https://github.com/ds9/defiant/issues/9",
+					active_group: {
+						title: "Readiness",
+						tasks: [
+							{ text: "Calibrate the phaser array", completed: true },
+							{ text: "Run the readiness drill", completed: false },
+						],
+					},
 				},
 			},
 		],
@@ -148,6 +155,13 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	const app = await import("#/web/app");
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	expect(element("#app").innerHTML).toContain("Prepare the Defiant");
+	expect(element("#app").innerHTML).toContain(
+		"OpenSpec · prepare-defiant · 1/2 · Readiness",
+	);
+	expect(element("#app").innerHTML).toContain('<details class="openspec">');
+	expect(element("#app").innerHTML).toContain("Calibrate the phaser array");
+	expect(element("#app").innerHTML).toContain("Run the readiness drill");
+	expect(element("#app").innerHTML).toContain("Open tasks");
 	expect(element("#app").innerHTML).toContain('class="deployment-summary"');
 	expect(element("#app").innerHTML).toContain("Latest deployment");
 	expect(element("#app").innerHTML).toContain(

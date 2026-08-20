@@ -1538,9 +1538,7 @@ const render = (x: DashboardSnapshot | null) => {
 				lifecycleFrameMarkup(item) +
 				warningRowMarkup(item) +
 				"</div>" +
-				(item.spec
-					? `<p class="muted">OpenSpec · ${esc(item.spec.change_name ?? "linked")}</p>`
-					: "") +
+				openSpecMarkup(item.spec) +
 				"</article>"
 			);
 		}) +
