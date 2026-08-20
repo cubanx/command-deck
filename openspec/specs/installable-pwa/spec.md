@@ -18,13 +18,13 @@ The web app SHALL deliver its operational HTML, CSS, and JavaScript shell assets
 - **WHEN** the service is delivered over a secure origin
 - **THEN** the browser cannot offer the command center as an installable standalone web app because it has no manifest or service worker
 
-### Requirement: Safe shell caching
-The service SHALL not provide an ongoing application-controlled shell cache. Its normal HTTP HTML, CSS, and JavaScript shell asset responses SHALL use `Cache-Control: no-cache`; the dashboard SHALL not register a service worker or cache authenticated API responses, SSE data, OAuth callbacks, or webhook traffic. The temporary retirement worker MAY delete only the named legacy shell caches before unregistering.
+### Requirement: Safe shell delivery
+The application SHALL NOT cache browser-shell or runtime responses through a service worker. During retirement of a previously installed worker, the service SHALL provide a non-cached cleanup worker that clears Cache Storage, unregisters, and refreshes its controlled clients. The service SHALL deliver the HTML shell and its JavaScript and CSS with response directives that require fresh retrieval on ordinary reloads. The application MUST NOT alter authenticated API responses, SSE data, OAuth callbacks, webhook traffic, or notification behavior.
 
-#### Scenario: Application deployment changes shell assets
-- **WHEN** a developer reloads the dashboard after an application deployment
-- **THEN** the browser obtains the current server-delivered shell without a prior service-worker cache
+#### Scenario: Existing client retires cached shell
+- **WHEN** a client controlled by a previously installed application worker loads the cleanup worker
+- **THEN** the worker clears Cache Storage, unregisters itself, and refreshes the controlled client without intercepting application requests
 
-#### Scenario: Network is unavailable
-- **WHEN** a client opens without network access
-- **THEN** the browser does not serve a stale application-controlled shell cache
+#### Scenario: Ordinary reload receives current shell
+- **WHEN** a user reloads the application after a shell update
+- **THEN** the browser revalidates the HTML, JavaScript, and CSS shell responses rather than using an application-managed cached copy
