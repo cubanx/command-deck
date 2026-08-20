@@ -75,7 +75,10 @@ const textAssets = new Map<string, [string, string, HeadersInit?]>([
 	["/", [html, "text/html; charset=utf-8", freshShellHeaders]],
 	["/configuration", [html, "text/html; charset=utf-8", freshShellHeaders]],
 	["/app.css", [css, "text/css", freshShellHeaders]],
-	["/manifest.webmanifest", [webAsset("manifest.webmanifest"), "application/manifest+json"]],
+	[
+		"/manifest.webmanifest",
+		[webAsset("manifest.webmanifest"), "application/manifest+json"],
+	],
 ]);
 const iconAssets = new Map<string, [string, string]>([
 	["/avatar-fixture.svg", ["avatar-fixture.svg", "image/svg+xml"]],

@@ -597,7 +597,8 @@ export const derivePullRequests = (
 ): DerivedPullRequest[] => {
 	const query = normalized(filters.query);
 	const statuses = filters.statuses ?? new Set();
-	const repositories = filters.repositories === undefined ? null : filters.repositories;
+	const repositories =
+		filters.repositories === undefined ? null : filters.repositories;
 	const failedActions = filters.failedActions ?? false;
 	const failedChecks = filters.failedChecks ?? false;
 	const attention = filters.attention ?? false;
@@ -635,8 +636,7 @@ export const repositoryOptions = (items: PullRequestItem[]) =>
 				.map(({ pr }) => pr.full_name)
 				.filter((name): name is string => typeof name === "string"),
 		),
-	]
-		.sort(codePointCompare);
+	].sort(codePointCompare);
 export const parseTasks = (content: string) => {
 	const groups: OpenSpecGroup[] = [];
 	let title = "Tasks";
@@ -1385,7 +1385,11 @@ const bindControls = () => {
 				if (!repository) return;
 				if (view.repositories === null)
 					view.repositories = new Set(
-						[...document.querySelectorAll<HTMLInputElement>("[data-repository]")]
+						[
+							...document.querySelectorAll<HTMLInputElement>(
+								"[data-repository]",
+							),
+						]
 							.map(({ dataset }) => dataset.repository)
 							.filter((name): name is string => Boolean(name)),
 					);
@@ -1399,8 +1403,8 @@ const bindControls = () => {
 		view = {
 			query: "",
 			statuses: new Set(),
-		repositories: null,
-		attention: false,
+			repositories: null,
+			attention: false,
 			failedActions: false,
 			failedChecks: false,
 			sort: view.sort,

@@ -361,9 +361,17 @@ test("title, repository, branch, OpenSpec, status, and repository selections com
 	])
 		expect(numbers(derivePullRequests(items, { query }))).toContain(12);
 	const filters = { query: "defiant", statuses: new Set(["mergeable"]) };
-	expect(numbers(derivePullRequests(items, { ...filters, repositories: null }))).toEqual([9]);
-	expect(numbers(derivePullRequests(items, { repositories: new Set(["ds9/reports"]) }))).toEqual([11]);
-	expect(numbers(derivePullRequests(items, { repositories: new Set() }))).toEqual([]);
+	expect(
+		numbers(derivePullRequests(items, { ...filters, repositories: null })),
+	).toEqual([9]);
+	expect(
+		numbers(
+			derivePullRequests(items, { repositories: new Set(["ds9/reports"]) }),
+		),
+	).toEqual([11]);
+	expect(
+		numbers(derivePullRequests(items, { repositories: new Set() })),
+	).toEqual([]);
 	expect(repositoryOptions(items)).toEqual(["ds9/ops", "ds9/reports"]);
 });
 

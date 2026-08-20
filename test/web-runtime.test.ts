@@ -129,6 +129,8 @@ test("the compiled browser runtime renders and reconciles with native controls",
 			? new Response(JSON.stringify({ status: "success" }))
 			: new Response(JSON.stringify(snapshot));
 	};
+	function Notification() {}
+	Object.assign(Notification, { permission: "granted" });
 	Object.defineProperties(globalThis, {
 		document: { configurable: true, value: document },
 		localStorage: {
@@ -140,10 +142,10 @@ test("the compiled browser runtime renders and reconciles with native controls",
 			value: () => ({ matches: false, addEventListener: () => undefined }),
 		},
 		navigator: { configurable: true, value: { onLine: true } },
-		Notification: { configurable: true, value: class {
-				static permission = "granted";
-				constructor(_title: string, _options: NotificationOptions) {}
-			} },
+		Notification: {
+			configurable: true,
+			value: Notification,
+		},
 		fetch: { configurable: true, value: fetch },
 		EventSource: {
 			configurable: true,
