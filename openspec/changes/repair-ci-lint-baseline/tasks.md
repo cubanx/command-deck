@@ -4,4 +4,4 @@
 
 ## 2. Validation
 
-- [ ] 2.1 Run `bun run typecheck`, `openspec validate repair-ci-lint-baseline --strict`, and `git diff --check`; verify all commands succeed.
+- [x] 2.1 Run `bun run typecheck`, `openspec validate repair-ci-lint-baseline --strict`, and `git diff --check`; verify all commands succeed.

@@ -114,7 +114,8 @@ export async function upsertIdentity(
 			$setOnInsert: { schemaVersion: 1, installations: [], createdAt: now },
 			$inc: { revision: 1 },
 		};
-	if (safeAvatar) update.$set["github.avatarUrl"] = safeAvatar;
+	if (safeAvatar)
+		update.$set = { ...update.$set, "github.avatarUrl": safeAvatar };
 	else update.$unset = { "github.avatarUrl": "" };
 	await db.users.updateOne({ _id: id }, update, { upsert: true });
 }
