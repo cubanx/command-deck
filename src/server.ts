@@ -488,7 +488,16 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 				classification = error instanceof Error ? "Error" : "unknown";
 			}
 			if (result.kind === "error") {
-				await persistReconciliationFailure(context.db, installationId, result);
+				try {
+					await persistReconciliationFailure(context.db, installationId, result);
+				} catch (error) {
+					logReconciliationFailure(
+						"installation bootstrap persistence failed",
+						installationId,
+						result,
+						error instanceof Error ? "Error" : "unknown",
+					);
+				}
 				logReconciliationFailure(
 					"installation bootstrap failed",
 					installationId,

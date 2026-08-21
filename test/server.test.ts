@@ -1204,9 +1204,22 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			originalError = console.error,
 			logs: unknown[][] = [];
 		let fail = true;
+		const originalReplace = db.users.replaceOne.bind(db.users) as (
+			...args: Parameters<typeof db.users.replaceOne>
+		) => ReturnType<typeof db.users.replaceOne>;
+		let rejectPersistence = false;
+		const unhandled: unknown[] = [];
+		const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+		(db.users as any).replaceOne = async (
+			...args: Parameters<typeof db.users.replaceOne>
+		) => {
+			if (rejectPersistence) throw new Error("persistence diagnostic");
+			return originalReplace(...args);
+		};
 		console.error = (...args: unknown[]) => {
 			logs.push(args);
 		};
+		process.on("unhandledRejection", onUnhandledRejection);
 		fetchTarget.fetch = async (input) => {
 			const url = String(input);
 			if (url.includes("access_token"))
@@ -1220,7 +1233,8 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				return Response.json({ token: "installation-token" });
 			if (url.includes("/app/installations/"))
 				return fail
-					? new Response("github diagnostic", { status: 401 })
+					? ((rejectPersistence = true),
+						new Response("github diagnostic", { status: 401 }))
 					: Response.json({ account: { login: "Crisp-Inc" } });
 			if (url.includes("installation/repositories"))
 				return Response.json({
@@ -1252,18 +1266,18 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			});
 			const failedInstallation = (await db.users.findOne({ _id: "9" }))
 				?.installations[0];
-			expect(failedInstallation).toMatchObject({
-				lastSyncError: "GitHub request failed (401)",
-			});
-			expect(failedInstallation?.reconciliationEvidence?.at(-1)).toMatchObject({
-				outcome: "failure",
-				operation: "installation_identity",
-				status: 401,
-			});
+			expect(failedInstallation).not.toHaveProperty("lastSyncError");
+			expect(failedInstallation?.reconciliationEvidence).toBeUndefined();
 			expect(JSON.stringify(failedInstallation)).not.toContain(
 				"github diagnostic",
 			);
 			expect(logs).toEqual([
+				[
+					"installation bootstrap persistence failed",
+					"12",
+					"installation_identity",
+					"Error",
+				],
 				[
 					"installation bootstrap failed",
 					"12",
@@ -1271,8 +1285,11 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					"ReadResult",
 				],
 			]);
-			expect(JSON.stringify(logs)).not.toContain("github diagnostic");
+			expect(JSON.stringify(logs)).not.toContain("diagnostic");
+			await new Promise((resolve) => setTimeout(resolve));
+			expect(unhandled).toEqual([]);
 			fail = false;
+			(db.users as any).replaceOne = originalReplace;
 			await reconcileInstallations(
 				db,
 				async () => ({
@@ -1287,6 +1304,8 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 		} finally {
 			globalThis.fetch = original;
 			console.error = originalError;
+			process.off("unhandledRejection", onUnhandledRejection);
+			(db.users as any).replaceOne = originalReplace;
 		}
 	}));
 
