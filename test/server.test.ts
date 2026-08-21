@@ -412,6 +412,11 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			githubAppPrivateKey: pem,
 		});
 		const original = globalThis.fetch;
+		const originalError = console.error,
+			logs: unknown[][] = [];
+		console.error = (...args: unknown[]) => {
+			logs.push(args);
+		};
 		const tokenIds: string[] = [];
 		let releaseIdentity: (() => void) | undefined,
 			fail = false;
@@ -419,14 +424,12 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			fetchTarget.fetch = async (input) => {
 				const url = String(input);
 				if (url.includes("access_tokens")) {
+					if (fail) throw new Error("raw provider diagnostic");
 					tokenIds.push(url.match(/installations\/(\d+)/)?.[1] ?? "");
 					return Response.json({ token: "installation-token" });
 				}
 				if (url.includes("/app/installations/"))
-					if (fail)
-						return new Response("raw provider diagnostic", { status: 500 });
-					else
-						return new Promise((release) => {
+					return new Promise((release) => {
 							releaseIdentity = () =>
 								release(Response.json({ account: { login: "cubanx" } }));
 							resolve();
@@ -503,6 +506,16 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const body = await failed.text();
 			expect(JSON.parse(body)).toEqual({ status: "failed" });
 			expect(body).not.toContain("raw provider diagnostic");
+			const reconciliationLog = logs.find(
+				(log) => log[0] === "installation reconciliation failed",
+			);
+			expect(reconciliationLog?.slice(0, 2)).toEqual([
+				"installation reconciliation failed",
+				"12",
+			]);
+			expect(String(reconciliationLog?.[2])).toContain(
+				"raw provider diagnostic",
+			);
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
 			const failedInstallation = failedUser.installations[0];
@@ -510,9 +523,11 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
 			expect(failedEvidence).toMatchObject({
 				outcome: "failure",
-				operation: "installation_identity",
-				status: 500,
+				operation: "reconciliation",
 			});
+			expect(JSON.stringify(failedEvidence)).not.toContain(
+				"raw provider diagnostic",
+			);
 			const failedForeignUser = await db.users.findOne({ _id: "foreign" });
 			if (!failedForeignUser) throw new Error("foreign test user missing");
 			const failedForeignInstallation = failedForeignUser.installations[0];
@@ -521,6 +536,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			expect(failedForeignInstallation.reconciliationEvidence).toBeUndefined();
 		} finally {
 			globalThis.fetch = original;
+			console.error = originalError;
 		}
 	}));
 
