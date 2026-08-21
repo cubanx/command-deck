@@ -509,13 +509,13 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const reconciliationLog = logs.find(
 				(log) => log[0] === "installation reconciliation failed",
 			);
-			expect(reconciliationLog?.slice(0, 2)).toEqual([
+			expect(reconciliationLog).toEqual([
 				"installation reconciliation failed",
 				"12",
+				"reconciliation",
+				"Error",
 			]);
-			expect(String(reconciliationLog?.[2])).toContain(
-				"raw provider diagnostic",
-			);
+			expect(JSON.stringify(logs)).not.toContain("raw provider diagnostic");
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
 			const failedInstallation = failedUser.installations[0];
@@ -1009,6 +1009,63 @@ test("repair permits legacy and canonical bindings but rejects unapproved ones",
 		expect((await app.fetch(request())).status).toBe(404);
 	}));
 
+test("repair persists a sanitized stale failure when its installation token request throws", () =>
+	withDatabase(async (db) => {
+		const { privateKey } = await crypto.subtle.generateKey(
+			{
+				name: "RSASSA-PKCS1-v1_5",
+				modulusLength: 2048,
+				publicExponent: new Uint8Array([1, 0, 1]),
+				hash: "SHA-256",
+			},
+			true,
+			["sign", "verify"],
+		);
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
+			await crypto.subtle.exportKey("pkcs8", privateKey),
+		)
+			.toString("base64")
+			.match(/.{1,64}/g)
+			?.join("\n")}\n-----END PRIVATE KEY-----`;
+		await upsertIdentity(db, "u", "kira");
+		await bindInstallation(db, "u", "12", "cubanx");
+		const session = await createSession(db, "u");
+		const app = createApp(db, {
+			...testConfig,
+			githubAppId: "1",
+			githubAppPrivateKey: pem,
+		});
+		const original = globalThis.fetch;
+		fetchTarget.fetch = async () => {
+			throw new Error("raw repair provider diagnostic");
+		};
+		try {
+			const response = await app.fetch(
+				new Request("http://local/api/installations/12/repair", {
+					method: "POST",
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			expect(response.status).toBe(200);
+			const body = await response.text();
+			expect(body).not.toContain("raw repair provider diagnostic");
+			const installation = (await db.users.findOne({ _id: "u" }))
+				?.installations[0];
+			expect(installation).toMatchObject({
+				lastSyncError: "reconciliation failed",
+			});
+			expect(installation?.reconciliationEvidence?.at(-1)).toMatchObject({
+				outcome: "failure",
+				operation: "reconciliation",
+			});
+			expect(JSON.stringify(installation)).not.toContain(
+				"raw repair provider diagnostic",
+			);
+		} finally {
+			globalThis.fetch = original;
+		}
+	}));
+
 test("OAuth binding redirects before its background bootstrap projects the allowed installation", () =>
 	withDatabase(async (db) => {
 		const { privateKey } = await crypto.subtle.generateKey(
@@ -1193,9 +1250,21 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				accountLogin: "Crisp-Inc",
 				repositories: [],
 			});
+			const failedInstallation = (await db.users.findOne({ _id: "9" }))
+				?.installations[0];
+			expect(failedInstallation).toMatchObject({
+				lastSyncError: "GitHub request failed (401)",
+			});
+			expect(failedInstallation?.reconciliationEvidence?.at(-1)).toMatchObject({
+				outcome: "failure",
+				operation: "installation_identity",
+				status: 401,
+			});
+			expect(JSON.stringify(failedInstallation)).not.toContain("github diagnostic");
 			expect(logs).toEqual([
-				["installation bootstrap failed", "GitHub request failed (401)"],
+				["installation bootstrap failed", "12", "installation_identity", "ReadResult"],
 			]);
+			expect(JSON.stringify(logs)).not.toContain("github diagnostic");
 			fail = false;
 			await reconcileInstallations(
 				db,

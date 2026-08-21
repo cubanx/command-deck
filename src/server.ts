@@ -25,6 +25,10 @@ import {
 	githubAppJwt,
 	githubNextLink,
 	installationToken,
+	logReconciliationFailure,
+	normalizedReconciliationFailure,
+	persistReconciliationFailure,
+	type ReadResult,
 	reconcileInstallations,
 } from "#/github";
 import { approvedInstallationAccount } from "#/installations";
@@ -463,29 +467,36 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 	const { githubAppId, githubAppPrivateKey } = context.config;
 	if (!githubAppId || !githubAppPrivateKey) return;
 	queueMicrotask(() => {
-		const appJwt = githubAppJwt(
-			githubAppId,
-			githubAppPrivateKey.replace(/\\n/g, "\n"),
-		);
-		void installationToken(appJwt, installationId)
-			.then((token) =>
-				bootstrapInstallation(context.db, installationId, token, fetch, appJwt),
-			)
-			.then((result) => {
-				if (result.kind === "error")
-					console.error(
-						"installation bootstrap failed",
-						result.message.slice(0, 200),
-					);
-			})
-			.catch((error) =>
-				console.error(
+		void (async () => {
+			let result: ReadResult,
+				classification = "ReadResult";
+			try {
+				const appJwt = githubAppJwt(
+					githubAppId,
+					githubAppPrivateKey.replace(/\\n/g, "\n"),
+				);
+				const token = await installationToken(appJwt, installationId);
+				result = await bootstrapInstallation(
+					context.db,
+					installationId,
+					token,
+					fetch,
+					appJwt,
+				);
+			} catch (error) {
+				result = normalizedReconciliationFailure();
+				classification = error instanceof Error ? "Error" : "unknown";
+			}
+			if (result.kind === "error") {
+				await persistReconciliationFailure(context.db, installationId, result);
+				logReconciliationFailure(
 					"installation bootstrap failed",
-					error instanceof Error
-						? error.message.slice(0, 200)
-						: "unknown error",
-				),
-			);
+					installationId,
+					result,
+					classification,
+				);
+			}
+		})();
 	});
 };
 
@@ -776,20 +787,33 @@ const repairRoute = async (
 	const { githubAppId, githubAppPrivateKey } = context.config;
 	if (!githubAppId || !githubAppPrivateKey)
 		return new Response("GitHub App is not configured", { status: 503 });
-	const appJwt = githubAppJwt(
-		githubAppId,
-		githubAppPrivateKey.replace(/\\n/g, "\n"),
-	);
-	const token = await installationToken(appJwt, installationId);
-	return Response.json(
-		await bootstrapInstallation(
+	try {
+		const appJwt = githubAppJwt(
+			githubAppId,
+			githubAppPrivateKey.replace(/\\n/g, "\n"),
+		);
+		const token = await installationToken(appJwt, installationId);
+		const result = await bootstrapInstallation(
 			context.db,
 			installationId,
 			token,
 			fetch,
 			appJwt,
-		),
-	);
+		);
+		if (result.kind === "error")
+			await persistReconciliationFailure(context.db, installationId, result);
+		return Response.json(result);
+	} catch (error) {
+		const result = normalizedReconciliationFailure();
+		await persistReconciliationFailure(context.db, installationId, result);
+		logReconciliationFailure(
+			"installation repair failed",
+			installationId,
+			result,
+			error instanceof Error ? "Error" : "unknown",
+		);
+		return Response.json(result);
+	}
 };
 
 const reconcileRoute = async (

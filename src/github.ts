@@ -692,52 +692,17 @@ export async function reconcileInstallations(
 				fetchTasks,
 			);
 		} catch (error) {
-			console.error(
+			result = normalizedReconciliationFailure();
+			logReconciliationFailure(
 				"installation reconciliation failed",
 				installationId,
-				error,
+				result,
+				error instanceof Error ? "Error" : "unknown",
 			);
-			result = {
-				kind: "error",
-				stale: true,
-				message: "reconciliation failed",
-				operation: "reconciliation",
-				summary: "Reconciliation failed",
-			};
 		}
 		results.push({ installationId, result });
-		if (result.kind === "error") {
-			const users = await db.users
-				.find(
-					{ "installations.installationId": installationId },
-					{ projection: { _id: 1 } },
-				)
-				.toArray();
-			await Promise.all(
-				users.map((user) =>
-					mutateUser(db, user._id, (aggregate) => {
-						const installation = aggregate.installations.find(
-							(item) => item.installationId === installationId,
-						);
-						if (
-							installation &&
-							(!installation.accountLogin ||
-								approvedInstallationAccount(installation.accountLogin))
-						) {
-							installation.lastSyncError = result.message.slice(0, 200);
-							appendReconciliationEvidence(installation, {
-								completedAt: new Date(),
-								outcome: "failure",
-								operation: result.operation ?? "reconciliation",
-								summary: result.summary ?? "Reconciliation failed",
-								repository: result.repository,
-								status: result.status,
-							});
-						}
-					}),
-				),
-			);
-		}
+		if (result.kind === "error")
+			await persistReconciliationFailure(db, installationId, result);
 	}
 	const failures = results.filter((item) => item.result.kind === "error");
 	if (failures.length)
@@ -745,6 +710,67 @@ export async function reconcileInstallations(
 			`reconciliation failed for installations ${failures.map((item) => item.installationId).join(",")}`,
 		);
 	return results;
+}
+
+export const normalizedReconciliationFailure = (): Extract<
+	ReadResult,
+	{ kind: "error" }
+> => ({
+	kind: "error",
+	stale: true,
+	message: "reconciliation failed",
+	operation: "reconciliation",
+	summary: "Reconciliation failed",
+});
+
+export const logReconciliationFailure = (
+	event: string,
+	installationId: string,
+	result: Extract<ReadResult, { kind: "error" }>,
+	classification: string,
+) =>
+	console.error(
+		event,
+		installationId,
+		result.operation ?? "reconciliation",
+		classification,
+	);
+
+export async function persistReconciliationFailure(
+	db: Db,
+	installationId: string,
+	result: Extract<ReadResult, { kind: "error" }>,
+) {
+	const users = await db.users
+		.find(
+			{ "installations.installationId": installationId },
+			{ projection: { _id: 1 } },
+		)
+		.toArray();
+	await Promise.all(
+		users.map((user) =>
+			mutateUser(db, user._id, (aggregate) => {
+				const installation = aggregate.installations.find(
+					(item) => item.installationId === installationId,
+				);
+				if (
+					installation &&
+					(!installation.accountLogin ||
+						approvedInstallationAccount(installation.accountLogin))
+				) {
+					installation.lastSyncError = result.message.slice(0, 200);
+					appendReconciliationEvidence(installation, {
+						completedAt: new Date(),
+						outcome: "failure",
+						operation: result.operation ?? "reconciliation",
+						summary: result.summary ?? "Reconciliation failed",
+						repository: result.repository,
+						status: result.status,
+					});
+				}
+			}),
+		),
+	);
 }
 
 export async function approvedInstallationIdsForUser(db: Db, userId: string) {
