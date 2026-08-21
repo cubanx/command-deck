@@ -2,13 +2,23 @@
 
 ## Purpose
 TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Installable application shell
 The web app SHALL provide a manifest, application icons, standalone display metadata, and theme colors so supported macOS browsers can expose it as a standalone web app. The application SHALL NOT register a service worker for its normal browser shell.
 
 #### Scenario: Browser evaluates installability
 - **WHEN** the service is delivered over a secure origin with its manifest and icons
 - **THEN** the browser receives the metadata required to present Command Deck.ai as a standalone web app where supported
+
+#### Scenario: Developer inspects icon provenance
+- **WHEN** the repository distributes the adapted application artwork
+- **THEN** it identifies OpenMoji, the original author and source, the modifications, and CC BY-SA 4.0 terms
+
+#### Scenario: Browser applies an adaptive favicon
+- **WHEN** a browser supports color-scheme media queries in SVG favicons
+- **THEN** it shows Signal for light appearance and Night Deck for dark appearance while unsupported browsers retain the stable Night Deck fallback
 
 #### Scenario: Browser loads the command center
 - **WHEN** the service is delivered over a secure origin

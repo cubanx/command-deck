@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: User-scoped deduplication
 Every notification SHALL belong to one developer and have a user-scoped transition key that prevents duplicate delivery.
 
@@ -39,3 +41,9 @@ The system SHALL persist notifications only for review requests, failed checks, 
 - **WHEN** a deployment status is queued, pending, or in progress
 - **THEN** the projection updates without a terminal notification
 
+### Requirement: Notification configuration is centralized
+The existing developer-action permission request and authenticated browser notification behavior SHALL be configured from the shared configuration screen without expanding notification triggers or delivery behavior.
+
+#### Scenario: Developer configures notifications
+- **WHEN** the developer opens configuration and activates the notification permission control
+- **THEN** the existing permission-based browser notification flow runs and denied permission preserves live visual updates

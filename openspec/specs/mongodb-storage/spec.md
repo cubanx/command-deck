@@ -2,7 +2,9 @@
 
 ## Purpose
 Defines the MongoDB ownership, isolation, lifecycle, consistency, and readiness contracts used to persist each user's active command-center projection.
+
 ## Requirements
+
 ### Requirement: User-owned aggregate
 The system SHALL persist each GitHub user as one aggregate root keyed by the user's stable GitHub ID. The aggregate SHALL contain that user's identity, bound GitHub App installations and account identities, repositories visible through those installations, open pull requests authored by that user, active OpenSpec progress, and bounded recent deployment projections. The system SHALL NOT introduce shared installation, repository, or pull-request documents as the source for personal dashboard reads.
 
@@ -84,16 +86,27 @@ The system SHALL retain only active personal projections in the user aggregate: 
 - **AND** emits sanitized diagnostics identifying the affected user and installation
 
 ### Requirement: MongoDB initialization and readiness
-The application SHALL initialize the required MongoDB collections and indexes idempotently and SHALL report ready only after it can reach the configured database and verify the required storage initialization. Production startup SHALL NOT require a SQLite path or persistent Railway filesystem volume.
+The application SHALL initialize the required MongoDB collections and indexes idempotently and SHALL report ready only after it can reach the configured database and verify the required storage initialization. Production and both Railway projects SHALL use exactly `command-center-ai-production`; every Railway deployment SHALL reject local-demo mode and apply production secret, HTTPS-origin, and trusted-origin safeguards regardless of `NODE_ENV`; local databases SHALL use the `command-center-ai-local` family; and destructive tests SHALL use isolated `command-center-ai-test-*` databases. Startup and destructive-test guards SHALL fail closed when the configured database does not match the required hosted or isolated name. Production startup SHALL NOT require a SQLite path or persistent Railway filesystem volume.
 
 #### Scenario: Ready MongoDB store
-- **WHEN** the application can connect to MongoDB and all required indexes are present or created successfully
+- **WHEN** the application can connect to MongoDB using the canonical database for its environment and all required indexes are present or created successfully
 - **THEN** the readiness endpoint reports ready
 
 #### Scenario: Unavailable or invalid MongoDB store
-- **WHEN** MongoDB is unreachable or required storage initialization fails
+- **WHEN** MongoDB is unreachable, required storage initialization fails, or the configured database does not match the required environment-specific name
 - **THEN** the readiness endpoint reports not ready
 - **AND** the application does not claim production readiness
+
+#### Scenario: Hosted database is exact
+- **WHEN** the application starts in production or in either Railway project
+- **THEN** it accepts only `command-center-ai-production` as the configured MongoDB database
+- **AND** it applies production configuration and origin validation
+- **AND** it rejects local-demo mode
+
+#### Scenario: Destructive test database is isolated
+- **WHEN** a destructive MongoDB test is prepared
+- **THEN** its database name starts with `command-center-ai-test-`
+- **AND** the guard rejects every database outside that prefix
 
 ### Requirement: Narrow binding seed
 The system SHALL provide an idempotent maintenance operation that accepts one stable GitHub user ID and one or more pairs of GitHub App installation ID and installation account login. It SHALL accept only the exact account logins `cubanx`, `Crisp-Inc`, and `hudson-law`, SHALL reject missing, duplicate, conflicting, or unapproved bindings, and SHALL write no provider projection or historical SQLite data. A seeded user MAY remain unavailable to dashboard access until the next verified GitHub sign-in completes the user's current identity and session.
@@ -118,4 +131,3 @@ The MongoDB runtime SHALL NOT read from or write to the legacy SQLite store and 
 - **WHEN** repositories, pull requests, deployments, notifications, sessions, OAuth states, webhook deliveries, or cache entries exist only in SQLite
 - **THEN** the system does not copy them into MongoDB
 - **AND** provider-owned projections are recovered only through canonical bootstrap and reconciliation
-

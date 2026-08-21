@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Installation-token provider reads
 The system SHALL use GitHub App installation access tokens for repository automation reads, SHALL authoritatively verify that the installation account is `cubanx`, `Crisp-Inc`, or `hudson-law` before repository or deployment reads and projection mutation, SHALL retrieve every page of repositories and open pull requests available to the approved installation, and MUST NOT use a developer's GitHub user token for projection bootstrap or reconciliation.
 
@@ -38,11 +40,15 @@ The system SHALL reserve provider reads for explicit bootstrap, targeted repair,
 - **THEN** the system updates local state without performing a list or search request
 
 ### Requirement: Conditional serial reconciliation
-The system SHALL make reconciliation reads serially, store authenticated response ETags and the minimum cached page data needed to reconstruct unchanged paginated results, preserve projections on `304`, honor provider rate-limit reset and retry headers, and use bounded exponential backoff for retryable failures. A paginated resource SHALL be reconciled as one complete snapshot before absent rows are removed.
+The system SHALL make reconciliation reads serially, store authenticated response ETags, preserve projections on `304`, select the authoritative latest deployment status by provider status identity and creation time rather than response position alone, honor provider rate-limit reset and retry headers, and use bounded exponential backoff for retryable failures.
 
 #### Scenario: Reconciled resource is unchanged
-- **WHEN** GitHub returns `304` to an authenticated conditional page request
-- **THEN** the system uses the cached page data, retains the existing projection, and records a successful no-change reconciliation
+- **WHEN** GitHub returns `304` to an authenticated conditional request
+- **THEN** the system retains the existing projection and records a successful no-change reconciliation
+
+#### Scenario: Deployment status response contains multiple or unordered states
+- **WHEN** GitHub returns deployment status records whose response position alone does not prove recency
+- **THEN** reconciliation projects the authoritative newest status and retains its provider status identity for later ordering
 
 #### Scenario: Provider rate limit is reached
 - **WHEN** a provider response supplies a retry or reset time
@@ -62,3 +68,14 @@ The system MUST preserve the last known evidence and expose stale/error state wh
 #### Scenario: Paginated repair is incomplete
 - **WHEN** an authoritative provider read obtains some pages but fails before reaching the final page
 - **THEN** none of the partial result is applied as a complete snapshot and the prior projection remains available with an explicit stale/error indicator
+
+### Requirement: User-scoped immediate reconciliation
+An authenticated developer SHALL be able to request immediate reconciliation for only approved installations bound to that signed-in user, using the same installation bootstrap behavior as scheduled reconciliation.
+
+#### Scenario: User requests immediate reconciliation
+- **WHEN** the signed-in user triggers reconciliation
+- **THEN** the system deduplicates and serially reconciles that user's approved bound installations and no others
+
+#### Scenario: User has no eligible installation
+- **WHEN** the signed-in user has no approved bound installation
+- **THEN** the request returns not found without starting provider work
