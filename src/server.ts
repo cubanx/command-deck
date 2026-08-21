@@ -1032,7 +1032,6 @@ export function createApp(
 				},
 				fetch,
 				installationIds,
-				githubTasks,
 			)
 				.then(() => "success" as const)
 				.catch((error) => {
