@@ -276,7 +276,19 @@ async function fetchOpenSpecTasksForPullRequests(
 	taskFetcher: TaskFetcher,
 ): Promise<OpenSpecTask[] | ReadResult> {
 	const tasks: OpenSpecTask[] = [];
-	for (const pr of pullRequests) {
+	for (const pr of [...pullRequests].sort((a, b) => {
+		const aUpdatedAt = Date.parse(a.updated_at),
+			bUpdatedAt = Date.parse(b.updated_at),
+			aHasValidUpdatedAt = Number.isFinite(aUpdatedAt),
+			bHasValidUpdatedAt = Number.isFinite(bUpdatedAt);
+		if (aHasValidUpdatedAt !== bHasValidUpdatedAt)
+			return Number(bHasValidUpdatedAt) - Number(aHasValidUpdatedAt);
+		return (
+			bUpdatedAt - aUpdatedAt ||
+			Number(a.number) - Number(b.number) ||
+			String(a.head?.sha ?? "").localeCompare(String(b.head?.sha ?? ""))
+		);
+	})) {
 		const sha = typeof pr.head?.sha === "string" ? pr.head.sha : undefined;
 		if (!sha) continue;
 		const changes = await conditionalGet(
@@ -319,7 +331,13 @@ async function fetchOpenSpecTasksForPullRequests(
 			tasks.push({ repositoryId, path, sha, content });
 		}
 	}
-	return tasks;
+	const changes = new Set<string>();
+	return tasks.filter((task) => {
+		const key = `${task.repositoryId}:${task.path.split("/")[2]}`;
+		if (changes.has(key)) return false;
+		changes.add(key);
+		return true;
+	});
 }
 export async function bootstrapInstallation(
 	db: Db,

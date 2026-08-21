@@ -532,6 +532,9 @@ test("complete bootstrap preserves webhook fields and clears OpenSpecs without c
 
 test("complete bootstrap refreshes OpenSpecs from current pull request heads", () =>
 	withDatabase(async (db) => {
+		const invalidSha = "c".repeat(40),
+			olderSha = "a".repeat(40),
+			newerSha = "b".repeat(40);
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
 		const user = await db.users.findOne({ _id: "u" });
@@ -557,10 +560,27 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 				return Response.json([
 					{
 						number: 1,
+						title: "Q Who",
+						user: { login: "sisko" },
+						state: "open",
+						updated_at: "not-a-timestamp",
+						head: { sha: invalidSha },
+					},
+					{
+						number: 7,
 						title: "Wolf 359",
 						user: { login: "sisko" },
 						state: "open",
-						head: { sha: "a".repeat(40) },
+						updated_at: "2026-08-20T12:00:00Z",
+						head: { sha: olderSha },
+					},
+					{
+						number: 8,
+						title: "Best of Both Worlds",
+						user: { login: "sisko" },
+						state: "open",
+						updated_at: "2026-08-21T12:00:00Z",
+						head: { sha: newerSha },
 					},
 				]);
 			if (value.includes("/contents/openspec/changes"))
@@ -576,9 +596,10 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 		const fetchTasks = async (input: { path: string; sha: string }) => {
 			expect(input).toMatchObject({
 				path: "openspec/changes/capture-wolf-359/tasks.md",
-				sha: "a".repeat(40),
 			});
-			return "- [x] Hold the line";
+			return input.sha === newerSha
+				? "- [x] Hold the line"
+				: "- [ ] Resistance is futile";
 		};
 		await bootstrapInstallation(
 			db,
@@ -592,8 +613,24 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
 				?.openSpecs,
 		).toMatchObject([
-			{ change_name: "capture-wolf-359", completed: 1, total: 1 },
+			{
+				change_name: "capture-wolf-359",
+				completed: 1,
+				total: 1,
+				source_commit: newerSha,
+			},
 		]);
+		const dashboard = await dashboardForUser(db, "u");
+		expect(dashboard.pullRequests).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					number: 8,
+					open_spec: expect.objectContaining({ source_commit: newerSha }),
+				}),
+				expect.objectContaining({ number: 1, open_spec: null }),
+				expect.objectContaining({ number: 7, open_spec: null }),
+			]),
+		);
 		listingUnchanged = true;
 		expect(
 			await bootstrapInstallation(
