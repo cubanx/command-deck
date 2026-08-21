@@ -277,8 +277,7 @@ async function fetchOpenSpecTasksForPullRequests(
 ): Promise<OpenSpecTask[] | ReadResult> {
 	const tasks: OpenSpecTask[] = [];
 	for (const pr of pullRequests) {
-		const sha =
-			typeof pr.head?.sha === "string" ? pr.head.sha : undefined;
+		const sha = typeof pr.head?.sha === "string" ? pr.head.sha : undefined;
 		if (!sha) continue;
 		const changes = await conditionalGet(
 			db,
@@ -289,7 +288,8 @@ async function fetchOpenSpecTasksForPullRequests(
 				return response.status === 404 ? Response.json([]) : response;
 			},
 		);
-		if (changes.kind === "unchanged" || changes.kind === "error") return changes;
+		if (changes.kind === "unchanged" || changes.kind === "error")
+			return changes;
 		if (!Array.isArray(changes.body))
 			return {
 				kind: "error",
