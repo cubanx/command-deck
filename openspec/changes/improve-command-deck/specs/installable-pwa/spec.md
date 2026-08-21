@@ -14,3 +14,11 @@ The web app SHALL provide a manifest, an adaptive SVG favicon that uses Signal i
 #### Scenario: Browser applies an adaptive favicon
 - **WHEN** a browser supports color-scheme media queries in SVG favicons
 - **THEN** it shows Signal for light appearance and Night Deck for dark appearance while unsupported browsers retain the stable Night Deck fallback
+
+#### Scenario: Browser loads the command center
+- **WHEN** the service is delivered over a secure origin
+- **THEN** the browser requests the current HTML, CSS, and JavaScript without service-worker cache interception
+
+#### Scenario: Prior shell worker is updated
+- **WHEN** a browser with a previously registered command-center service worker fetches `/sw.js`
+- **THEN** the cleanup worker skips waiting, clears all Cache Storage entries during activation, unregisters, and refreshes its controlled clients without registering a replacement

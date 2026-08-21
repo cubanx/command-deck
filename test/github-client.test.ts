@@ -458,7 +458,7 @@ test("deployment status cache preserves authoritative state on 304", () =>
 		});
 	}));
 
-test("complete bootstrap preserves webhook fields and OpenSpecs while removing stale projections", () =>
+test("complete bootstrap preserves webhook fields and clears OpenSpecs without current tasks", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
@@ -527,7 +527,141 @@ test("complete bootstrap preserves webhook fields and OpenSpecs while removing s
 			mergeable: "clean",
 			bot_review_state: "complete",
 		});
-		expect(repo?.openSpecs).toMatchObject([{ change_name: "defiant" }]);
+		expect(repo?.openSpecs).toEqual([]);
+	}));
+
+test("complete bootstrap refreshes OpenSpecs from current pull request heads", () =>
+	withDatabase(async (db) => {
+		const invalidSha = "c".repeat(40),
+			olderSha = "a".repeat(40),
+			newerSha = "b".repeat(40);
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [],
+			openSpecs: [{ change_name: "stale-change", completed: 0, total: 1 }],
+			deployments: [],
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		let hasChange = true,
+			listingUnchanged = false;
+		const fetcher = async (url: RequestInfo | URL) => {
+			const value = String(url);
+			if (value.includes("/app/installations/"))
+				return Response.json({ account: { login: "cubanx" } });
+			if (value.includes("installation/repositories"))
+				return Response.json({
+					repositories: [{ id: 2, full_name: "ds9/ops" }],
+				});
+			if (value.includes("/pulls?"))
+				return Response.json([
+					{
+						number: 1,
+						title: "Q Who",
+						user: { login: "sisko" },
+						state: "open",
+						updated_at: "not-a-timestamp",
+						head: { sha: invalidSha },
+					},
+					{
+						number: 7,
+						title: "Wolf 359",
+						user: { login: "sisko" },
+						state: "open",
+						updated_at: "2026-08-20T12:00:00Z",
+						head: { sha: olderSha },
+					},
+					{
+						number: 8,
+						title: "Best of Both Worlds",
+						user: { login: "sisko" },
+						state: "open",
+						updated_at: "2026-08-21T12:00:00Z",
+						head: { sha: newerSha },
+					},
+				]);
+			if (value.includes("/contents/openspec/changes"))
+				if (listingUnchanged) return new Response(null, { status: 304 });
+				else
+					return hasChange
+						? Response.json([{ type: "dir", name: "capture-wolf-359" }], {
+								headers: { etag: "changes-v1" },
+							})
+						: new Response(null, { status: 404 });
+			return Response.json([]);
+		};
+		const fetchTasks = async (input: { path: string; sha: string }) => {
+			expect(input).toMatchObject({
+				path: "openspec/changes/capture-wolf-359/tasks.md",
+			});
+			return input.sha === newerSha
+				? "- [x] Hold the line"
+				: "- [ ] Resistance is futile";
+		};
+		await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			fetcher,
+			"app-jwt",
+			fetchTasks,
+		);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.openSpecs,
+		).toMatchObject([
+			{
+				change_name: "capture-wolf-359",
+				completed: 1,
+				total: 1,
+				source_commit: newerSha,
+			},
+		]);
+		const dashboard = await dashboardForUser(db, "u");
+		expect(dashboard.pullRequests).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					number: 8,
+					open_spec: expect.objectContaining({ source_commit: newerSha }),
+				}),
+				expect.objectContaining({ number: 1, open_spec: null }),
+				expect.objectContaining({ number: 7, open_spec: null }),
+			]),
+		);
+		listingUnchanged = true;
+		expect(
+			await bootstrapInstallation(
+				db,
+				"9",
+				"token",
+				fetcher,
+				"app-jwt",
+				fetchTasks,
+			),
+		).toMatchObject({ kind: "changed" });
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.openSpecs,
+		).toMatchObject([
+			{ change_name: "capture-wolf-359", completed: 1, total: 1 },
+		]);
+		listingUnchanged = false;
+		hasChange = false;
+		await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			fetcher,
+			"app-jwt",
+			fetchTasks,
+		);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.openSpecs,
+		).toEqual([]);
 	}));
 
 test("installation reconciliation obtains tokens and bootstraps serially in stable order", () =>

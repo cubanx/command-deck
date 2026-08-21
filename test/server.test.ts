@@ -432,7 +432,24 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 							resolve();
 						});
 				if (url.includes("installation/repositories"))
-					return Response.json({ repositories: [] });
+					return Response.json({
+						repositories: [{ id: 2, full_name: "cubanx/defiant" }],
+					});
+				if (url.includes("/pulls"))
+					return Response.json([
+						{
+							number: 1,
+							title: "Repair the defiant",
+							user: { login: "kira" },
+							state: "open",
+							head: { sha: "a".repeat(40) },
+						},
+					]);
+				if (url.includes("/deployments")) return Response.json([]);
+				if (url.includes("contents/openspec/changes/repair-defiant/tasks.md"))
+					return new Response("## 1. Repair the defiant");
+				if (url.includes("contents/openspec/changes"))
+					return Response.json([{ name: "repair-defiant", type: "dir" }]);
 				throw new Error(`unexpected ${url}`);
 			};
 		});

@@ -19,6 +19,10 @@ The system SHALL present every authorized open pull request authored by the sign
 - **WHEN** an authored open pull request has no projected attention condition
 - **THEN** the dashboard includes it with a clear healthy state in its authoritative status bucket
 
+#### Scenario: Pull request moves backward in the lifecycle
+- **WHEN** a pull request previously displayed as Mergeable receives projected evidence that no longer satisfies that stage
+- **THEN** the dashboard displays its current earlier lifecycle stage and applicable warning without implying irreversible progress
+
 #### Scenario: GitHub Actions workflow fails
 - **WHEN** a signed `workflow_run` projection reports one or more failed workflows with authoritative names and GitHub run URLs
 - **THEN** the PR card shows each failed workflow name linked to its run while preserving the separate Checks aggregate
