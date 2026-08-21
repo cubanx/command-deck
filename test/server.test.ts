@@ -1207,10 +1207,15 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 		const originalReplace = db.users.replaceOne.bind(db.users) as (
 			...args: Parameters<typeof db.users.replaceOne>
 		) => ReturnType<typeof db.users.replaceOne>;
+		const users = db.users as {
+			replaceOne: (
+				...args: Parameters<typeof db.users.replaceOne>
+			) => ReturnType<typeof db.users.replaceOne>;
+		};
 		let rejectPersistence = false;
 		const unhandled: unknown[] = [];
 		const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
-		(db.users as any).replaceOne = async (
+		users.replaceOne = async (
 			...args: Parameters<typeof db.users.replaceOne>
 		) => {
 			if (rejectPersistence) throw new Error("persistence diagnostic");
@@ -1231,11 +1236,13 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				});
 			if (url.includes("access_tokens"))
 				return Response.json({ token: "installation-token" });
-			if (url.includes("/app/installations/"))
-				return fail
-					? ((rejectPersistence = true),
-						new Response("github diagnostic", { status: 401 }))
-					: Response.json({ account: { login: "Crisp-Inc" } });
+			if (url.includes("/app/installations/")) {
+				if (fail) {
+					rejectPersistence = true;
+					return new Response("github diagnostic", { status: 401 });
+				}
+				return Response.json({ account: { login: "Crisp-Inc" } });
+			}
 			if (url.includes("installation/repositories"))
 				return Response.json({
 					repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }],
@@ -1289,7 +1296,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			await new Promise((resolve) => setTimeout(resolve));
 			expect(unhandled).toEqual([]);
 			fail = false;
-			(db.users as any).replaceOne = originalReplace;
+			users.replaceOne = originalReplace;
 			await reconcileInstallations(
 				db,
 				async () => ({
@@ -1305,7 +1312,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			globalThis.fetch = original;
 			console.error = originalError;
 			process.off("unhandledRejection", onUnhandledRejection);
-			(db.users as any).replaceOne = originalReplace;
+			users.replaceOne = originalReplace;
 		}
 	}));
 

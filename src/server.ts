@@ -489,7 +489,11 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 			}
 			if (result.kind === "error") {
 				try {
-					await persistReconciliationFailure(context.db, installationId, result);
+					await persistReconciliationFailure(
+						context.db,
+						installationId,
+						result,
+					);
 				} catch (error) {
 					logReconciliationFailure(
 						"installation bootstrap persistence failed",
