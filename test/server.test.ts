@@ -430,10 +430,10 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 				}
 				if (url.includes("/app/installations/"))
 					return new Promise((release) => {
-							releaseIdentity = () =>
-								release(Response.json({ account: { login: "cubanx" } }));
-							resolve();
-						});
+						releaseIdentity = () =>
+							release(Response.json({ account: { login: "cubanx" } }));
+						resolve();
+					});
 				if (url.includes("installation/repositories"))
 					return Response.json({
 						repositories: [{ id: 2, full_name: "cubanx/defiant" }],

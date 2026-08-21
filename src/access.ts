@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { UpdateFilter } from "mongodb";
 import type { Db, UserAggregate } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
@@ -108,7 +109,7 @@ export async function upsertIdentity(
 ) {
 	const safeAvatar = safeAvatarUrl(avatarUrl);
 	const now = new Date(),
-		update: any = {
+		update: UpdateFilter<UserAggregate> = {
 			$set: { "github.login": login, updatedAt: now },
 			$setOnInsert: { schemaVersion: 1, installations: [], createdAt: now },
 			$inc: { revision: 1 },
@@ -175,7 +176,9 @@ export async function seedLocalDemo(db: Db) {
 	await mutateUser(db, LOCAL_DEMO_USER.id, (user) => {
 		const installation = user.installations.find(
 			(item) => item.installationId === "local-demo-installation",
-		)!;
+		);
+		if (!installation)
+			throw new Error("local demo installation missing after binding");
 		installation.accountLogin = "cubanx";
 		installation.repositories = [
 			{

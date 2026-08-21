@@ -26,7 +26,7 @@ export type ReadResult =
 			summary?: string;
 			repository?: string;
 			status?: number;
-		};
+	  };
 type OpenSpecTask = {
 	repositoryId: string;
 	path: string;
@@ -692,7 +692,11 @@ export async function reconcileInstallations(
 				fetchTasks,
 			);
 		} catch (error) {
-			console.error("installation reconciliation failed", installationId, error);
+			console.error(
+				"installation reconciliation failed",
+				installationId,
+				error,
+			);
 			result = {
 				kind: "error",
 				stale: true,
@@ -719,18 +723,17 @@ export async function reconcileInstallations(
 							installation &&
 							(!installation.accountLogin ||
 								approvedInstallationAccount(installation.accountLogin))
-						)
-							{
-								installation.lastSyncError = result.message.slice(0, 200);
-								appendReconciliationEvidence(installation, {
-									completedAt: new Date(),
-									outcome: "failure",
-									operation: result.operation ?? "reconciliation",
-									summary: result.summary ?? "Reconciliation failed",
-									repository: result.repository,
-									status: result.status,
-								});
-							}
+						) {
+							installation.lastSyncError = result.message.slice(0, 200);
+							appendReconciliationEvidence(installation, {
+								completedAt: new Date(),
+								outcome: "failure",
+								operation: result.operation ?? "reconciliation",
+								summary: result.summary ?? "Reconciliation failed",
+								repository: result.repository,
+								status: result.status,
+							});
+						}
 					}),
 				),
 			);
