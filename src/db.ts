@@ -23,6 +23,15 @@ export type Installation = {
 	repositories: Repository[];
 	lastSuccessfulSyncAt?: Date;
 	lastSyncError?: string;
+	reconciliationEvidence?: ReconciliationEvidence[];
+};
+export type ReconciliationEvidence = {
+	completedAt: Date;
+	outcome: "success" | "failure";
+	operation: string;
+	summary: string;
+	repository?: string;
+	status?: number;
 };
 export type UserAggregate = {
 	_id: string;
@@ -198,4 +207,14 @@ export async function mutateUser(
 			return next;
 	}
 	throw new Error("user aggregate changed concurrently");
+}
+
+export function appendReconciliationEvidence(
+	installation: Installation,
+	evidence: ReconciliationEvidence,
+) {
+	installation.reconciliationEvidence = [
+		...(installation.reconciliationEvidence ?? []),
+		evidence,
+	].slice(-20);
 }

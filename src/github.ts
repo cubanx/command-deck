@@ -1,6 +1,6 @@
 import { createSign } from "node:crypto";
-import type { Db } from "#/db";
-import { mutateUser } from "#/db";
+import type { Db, ReconciliationEvidence } from "#/db";
+import { appendReconciliationEvidence, mutateUser } from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 import { projectOpenSpec } from "#/openspec";
@@ -18,7 +18,15 @@ export type TaskFetcher = (input: {
 export type ReadResult =
 	| { kind: "changed"; body: unknown }
 	| { kind: "unchanged" }
-	| { kind: "error"; message: string; stale: true };
+	| {
+			kind: "error";
+			message: string;
+			stale: true;
+			operation?: string;
+			summary?: string;
+			repository?: string;
+			status?: number;
+	  };
 type OpenSpecTask = {
 	repositoryId: string;
 	path: string;
@@ -109,6 +117,9 @@ async function pagedGet(
 	key: string,
 	url: string,
 	fetcher: FetchLike,
+	evidence: Pick<ReconciliationEvidence, "operation" | "repository"> = {
+		operation: "unknown",
+	},
 ): Promise<ReadResult> {
 	const all: unknown[] = [],
 		seen = new Set([url]);
@@ -136,6 +147,9 @@ async function pagedGet(
 				kind: "error",
 				message: `GitHub request failed (${response?.status ?? "unknown"})`,
 				stale: true,
+				...evidence,
+				summary: "GitHub request failed",
+				status: response?.status,
 			};
 		const page = response.status === 304 ? cached?.body : await response.json();
 		if (page === undefined)
@@ -143,12 +157,16 @@ async function pagedGet(
 				kind: "error",
 				message: "GitHub cached page is unavailable",
 				stale: true,
+				...evidence,
+				summary: "GitHub cached page is unavailable",
 			};
 		if (!Array.isArray(page) && !Array.isArray((page as any).repositories))
 			return {
 				kind: "error",
 				message: "GitHub pagination payload was invalid",
 				stale: true,
+				...evidence,
+				summary: "GitHub pagination payload was invalid",
 			};
 		let following: string | undefined;
 		try {
@@ -164,6 +182,8 @@ async function pagedGet(
 				message:
 					error instanceof Error ? error.message : "GitHub pagination failed",
 				stale: true,
+				...evidence,
+				summary: "GitHub pagination failed",
 			};
 		}
 		if (response.status !== 304)
@@ -194,6 +214,9 @@ export async function conditionalGet(
 	key: string,
 	url: string,
 	fetcher: FetchLike = fetch,
+	evidence: Pick<ReconciliationEvidence, "operation" | "repository"> = {
+		operation: "unknown",
+	},
 ): Promise<ReadResult> {
 	const cached = await db.providerCache.findOne({ _id: key });
 	let response: Response | undefined;
@@ -211,7 +234,13 @@ export async function conditionalGet(
 		await new Promise((resolve) => setTimeout(resolve, delay));
 	}
 	if (!response)
-		return { kind: "error", message: "GitHub request failed", stale: true };
+		return {
+			kind: "error",
+			message: "GitHub request failed",
+			stale: true,
+			...evidence,
+			summary: "GitHub request failed",
+		};
 	if (response.status === 304) {
 		await db.providerCache.updateOne(
 			{ _id: key },
@@ -222,6 +251,8 @@ export async function conditionalGet(
 					kind: "error",
 					message: "GitHub cached response is unavailable",
 					stale: true,
+					...evidence,
+					summary: "GitHub cached response is unavailable",
 				}
 			: { kind: "changed", body: cached.body };
 	}
@@ -230,6 +261,9 @@ export async function conditionalGet(
 			kind: "error",
 			message: `GitHub request failed (${response.status})`,
 			stale: true,
+			...evidence,
+			summary: "GitHub request failed",
+			status: response.status,
 		};
 	const body = await response.json();
 	await db.providerCache.updateOne(
@@ -274,6 +308,7 @@ async function fetchOpenSpecTasksForPullRequests(
 	pullRequests: any[],
 	request: FetchLike,
 	taskFetcher: TaskFetcher,
+	repository?: string,
 ): Promise<OpenSpecTask[] | ReadResult> {
 	const tasks: OpenSpecTask[] = [];
 	for (const pr of [...pullRequests].sort((a, b) => {
@@ -299,6 +334,7 @@ async function fetchOpenSpecTasksForPullRequests(
 				const response = await request(url, init);
 				return response.status === 404 ? Response.json([]) : response;
 			},
+			{ operation: "openspec", repository },
 		);
 		if (changes.kind === "unchanged" || changes.kind === "error")
 			return changes;
@@ -307,6 +343,9 @@ async function fetchOpenSpecTasksForPullRequests(
 				kind: "error",
 				stale: true,
 				message: "GitHub OpenSpec listing payload was invalid",
+				operation: "openspec",
+				repository,
+				summary: "GitHub OpenSpec listing payload was invalid",
 			};
 		for (const change of changes.body) {
 			const name = (change as any)?.name;
@@ -327,6 +366,9 @@ async function fetchOpenSpecTasksForPullRequests(
 					kind: "error",
 					stale: true,
 					message: "GitHub OpenSpec artifact fetch failed",
+					operation: "openspec",
+					repository,
+					summary: "GitHub OpenSpec artifact fetch failed",
 				};
 			tasks.push({ repositoryId, path, sha, content });
 		}
@@ -392,12 +434,15 @@ export async function bootstrapInstallation(
 			kind: "error",
 			stale: true,
 			message: "installation account is not approved",
+			operation: "installation_identity",
+			summary: "Installation account is not approved",
 		};
 	const installation = await conditionalGet(
 		db,
 		`installation:${installationId}:identity`,
 		`https://api.github.com/app/installations/${installationId}`,
 		identityRequest,
+		{ operation: "installation_identity" },
 	);
 	if (installation.kind === "error") return installation;
 	if (
@@ -408,12 +453,15 @@ export async function bootstrapInstallation(
 			kind: "error",
 			stale: true,
 			message: "installation account is not approved",
+			operation: "installation_identity",
+			summary: "Installation account is not approved",
 		};
 	const repos = await pagedGet(
 		db,
 		`installation:${installationId}:repos`,
 		"https://api.github.com/installation/repositories?per_page=100",
 		request,
+		{ operation: "repository_list" },
 	);
 	if (repos.kind !== "changed") return repos;
 	const repositories = repos.body as Array<{ id: number; full_name: string }>;
@@ -431,6 +479,7 @@ export async function bootstrapInstallation(
 			`installation:${installationId}:repo:${repo.id}:prs`,
 			`https://api.github.com/repositories/${repo.id}/pulls?state=open&per_page=100`,
 			request,
+			{ operation: "pull_requests", repository: repo.full_name },
 		);
 		if (prs.kind !== "changed") return prs;
 		const deployments = await bootstrapDeployments(
@@ -439,6 +488,7 @@ export async function bootstrapInstallation(
 			String(repo.id),
 			token,
 			fetcher,
+			repo.full_name,
 		);
 		if (deployments.kind === "error") return deployments;
 		const deploymentRows =
@@ -451,6 +501,7 @@ export async function bootstrapInstallation(
 			pullRequests,
 			request,
 			taskFetcher,
+			repo.full_name,
 		);
 		if (!Array.isArray(tasks)) return tasks;
 		openSpecTasks.push(...tasks);
@@ -519,6 +570,12 @@ export async function bootstrapInstallation(
 				});
 				installation.lastSuccessfulSyncAt = new Date();
 				delete installation.lastSyncError;
+				appendReconciliationEvidence(installation, {
+					completedAt: new Date(),
+					outcome: "success",
+					operation: "reconciliation",
+					summary: "Reconciliation completed",
+				});
 			}),
 		),
 	);
@@ -536,6 +593,7 @@ export async function bootstrapDeployments(
 	repositoryId: string,
 	token: string,
 	fetcher: FetchLike = fetch,
+	repository?: string,
 ): Promise<ReadResult> {
 	const request: FetchLike = (url, init) =>
 		fetcher(url, {
@@ -550,6 +608,7 @@ export async function bootstrapDeployments(
 		`installation:${installationId}:repo:${repositoryId}:deployments`,
 		`https://api.github.com/repositories/${repositoryId}/deployments?per_page=20`,
 		request,
+		{ operation: "deployments", repository },
 	);
 	if (list.kind !== "changed" || !Array.isArray(list.body)) return list;
 	const deployments: Record<string, unknown>[] = [];
@@ -559,6 +618,7 @@ export async function bootstrapDeployments(
 			`installation:${installationId}:repo:${repositoryId}:deployment:${deployment.id}:statuses`,
 			`https://api.github.com/repositories/${repositoryId}/deployments/${deployment.id}/statuses?per_page=100`,
 			request,
+			{ operation: "deployments", repository },
 		);
 		if (status.kind === "error") return status;
 		const latest =
@@ -631,33 +691,18 @@ export async function reconcileInstallations(
 				appJwt,
 				fetchTasks,
 			);
-		} catch {
-			result = { kind: "error", stale: true, message: "reconciliation failed" };
-		}
-		results.push({ installationId, result });
-		if (result.kind === "error") {
-			const users = await db.users
-				.find(
-					{ "installations.installationId": installationId },
-					{ projection: { _id: 1 } },
-				)
-				.toArray();
-			await Promise.all(
-				users.map((user) =>
-					mutateUser(db, user._id, (aggregate) => {
-						const installation = aggregate.installations.find(
-							(item) => item.installationId === installationId,
-						);
-						if (
-							installation &&
-							(!installation.accountLogin ||
-								approvedInstallationAccount(installation.accountLogin))
-						)
-							installation.lastSyncError = result.message.slice(0, 200);
-					}),
-				),
+		} catch (error) {
+			result = normalizedReconciliationFailure();
+			logReconciliationFailure(
+				"installation reconciliation failed",
+				installationId,
+				result,
+				error instanceof Error ? "Error" : "unknown",
 			);
 		}
+		results.push({ installationId, result });
+		if (result.kind === "error")
+			await persistReconciliationFailure(db, installationId, result);
 	}
 	const failures = results.filter((item) => item.result.kind === "error");
 	if (failures.length)
@@ -665,6 +710,67 @@ export async function reconcileInstallations(
 			`reconciliation failed for installations ${failures.map((item) => item.installationId).join(",")}`,
 		);
 	return results;
+}
+
+export const normalizedReconciliationFailure = (): Extract<
+	ReadResult,
+	{ kind: "error" }
+> => ({
+	kind: "error",
+	stale: true,
+	message: "reconciliation failed",
+	operation: "reconciliation",
+	summary: "Reconciliation failed",
+});
+
+export const logReconciliationFailure = (
+	event: string,
+	installationId: string,
+	result: Extract<ReadResult, { kind: "error" }>,
+	classification: string,
+) =>
+	console.error(
+		event,
+		installationId,
+		result.operation ?? "reconciliation",
+		classification,
+	);
+
+export async function persistReconciliationFailure(
+	db: Db,
+	installationId: string,
+	result: Extract<ReadResult, { kind: "error" }>,
+) {
+	const users = await db.users
+		.find(
+			{ "installations.installationId": installationId },
+			{ projection: { _id: 1 } },
+		)
+		.toArray();
+	await Promise.all(
+		users.map((user) =>
+			mutateUser(db, user._id, (aggregate) => {
+				const installation = aggregate.installations.find(
+					(item) => item.installationId === installationId,
+				);
+				if (
+					installation &&
+					(!installation.accountLogin ||
+						approvedInstallationAccount(installation.accountLogin))
+				) {
+					installation.lastSyncError = result.message.slice(0, 200);
+					appendReconciliationEvidence(installation, {
+						completedAt: new Date(),
+						outcome: "failure",
+						operation: result.operation ?? "reconciliation",
+						summary: result.summary ?? "Reconciliation failed",
+						repository: result.repository,
+						status: result.status,
+					});
+				}
+			}),
+		),
+	);
 }
 
 export async function approvedInstallationIdsForUser(db: Db, userId: string) {
