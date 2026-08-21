@@ -2,10 +2,10 @@ PR #8 handoff dependency: this entire operational change remains blocked until i
 
 ## 1. Verify blocked prerequisite
 
-- [ ] 1.1 Verify intended PR #8 is merged and record its exact merge SHA from GitHub.
-- [ ] 1.2 Update current `main` and prove the exact merge SHA is an ancestor without local divergence.
-- [ ] 1.3 Verify the deployed revision equals or contains that exact SHA and capture task-specific health evidence.
-- [ ] 1.4 Confirm no Merge action is rendered before permission approval.
+- [x] 1.1 Verify intended PR #8 is merged and record its exact merge SHA from GitHub.
+- [x] 1.2 Update current `main` and prove the exact merge SHA is an ancestor without local divergence.
+- [x] 1.3 Verify the deployed revision equals or contains that exact SHA and capture task-specific health evidence.
+- [x] 1.4 Confirm no Merge action is rendered before permission approval.
 
 Gate: do not begin this group or any later group before PR #8 merge, exact-current-main ancestry, deployed revision, and health all pass. Each provider or production read requires its applicable authorization.
 
