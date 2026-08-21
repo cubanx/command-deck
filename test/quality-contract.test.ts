@@ -55,3 +55,16 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(worker).not.toContain('self.addEventListener("fetch"');
 	expect(worker).not.toMatch(/(?:const|let|var)\s+\w*cache\w*/i);
 });
+
+test("Railway deploys only when runtime inputs change", () => {
+	const railway = JSON.parse(text("railway.json")) as {
+		build: { watchPatterns?: string[] };
+	};
+	expect(railway.build.watchPatterns).toEqual([
+		"**",
+		"!/README.md",
+		"!/docs/**",
+		"!/openspec/**",
+		"!/.mex/**",
+	]);
+});
