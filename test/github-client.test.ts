@@ -719,6 +719,17 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0],
 		).toMatchObject({ lastSyncError: "GitHub request failed (500)" });
+		const failedUser = await db.users.findOne({ _id: "u" });
+		if (!failedUser) throw new Error("test user missing");
+		const failedInstallation = failedUser.installations[0];
+		if (!failedInstallation) throw new Error("test installation missing");
+		const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
+		expect(failedEvidence).toMatchObject({
+			outcome: "failure",
+			operation: "installation_identity",
+			status: 500,
+		});
+		expect(JSON.stringify(failedEvidence)).not.toContain("down");
 		expect((await dashboardForUser(db, "u")).stale).toBe(true);
 		await reconcileInstallations(
 			db,
@@ -733,5 +744,39 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.lastSyncError,
 		).toBeUndefined();
+		const successfulUser = await db.users.findOne({ _id: "u" });
+		if (!successfulUser) throw new Error("test user missing");
+		const successfulInstallation = successfulUser.installations[0];
+		if (!successfulInstallation) throw new Error("test installation missing");
+		const successfulEvidence =
+			successfulInstallation.reconciliationEvidence?.at(-1);
+		expect(successfulEvidence).toMatchObject({
+			outcome: "success",
+			operation: "reconciliation",
+		});
 		expect((await dashboardForUser(db, "u")).stale).toBe(false);
+	}));
+
+test("reconciliation evidence retains the newest 20 failures deterministically", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		for (let status = 480; status <= 500; status++)
+			await expect(
+				reconcileInstallations(
+					db,
+					async () => ({ token: "token", appJwt: "app-jwt" }),
+					async () => new Response(`raw diagnostic ${status}`, { status }),
+				),
+			).rejects.toThrow("reconciliation failed for installations 9");
+		const user = await db.users.findOne({ _id: "u" });
+		if (!user) throw new Error("test user missing");
+		const installation = user.installations[0];
+		if (!installation) throw new Error("test installation missing");
+		const evidence = installation.reconciliationEvidence;
+		expect(evidence).toHaveLength(20);
+		expect(evidence?.map((record) => record.status)).toEqual(
+			Array.from({ length: 20 }, (_, index) => index + 481),
+		);
+		expect(JSON.stringify(evidence)).not.toContain("raw diagnostic");
 	}));

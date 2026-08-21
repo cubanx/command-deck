@@ -473,9 +473,27 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			await started;
 			expect(await (await request()).json()).toEqual({ status: "running" });
 			releaseIdentity?.();
-			expect(await (await first).json()).toEqual({ status: "success" });
+			const successfulResponse = await first;
+			expect(await successfulResponse.json()).toEqual({ status: "success" });
 			expect(tokenIds).toEqual(["12"]);
-			expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+			const successfulUser = await db.users.findOne({ _id: "u" });
+			if (!successfulUser) throw new Error("test user missing");
+			const successfulInstallation = successfulUser.installations[0];
+			if (!successfulInstallation) throw new Error("test installation missing");
+			const successfulEvidence =
+				successfulInstallation.reconciliationEvidence?.at(-1);
+			expect(successfulEvidence).toMatchObject({
+				outcome: "success",
+				operation: "reconciliation",
+			});
+			const foreignUser = await db.users.findOne({ _id: "foreign" });
+			if (!foreignUser) throw new Error("foreign test user missing");
+			const foreignInstallation = foreignUser.installations[0];
+			if (!foreignInstallation)
+				throw new Error("foreign test installation missing");
+			expect(foreignInstallation.reconciliationEvidence).toBeUndefined();
+			const refresh = await reader.read();
+			expect(new TextDecoder().decode(refresh.value)).toContain(
 				"event: refresh",
 			);
 			await reader.cancel();
@@ -485,6 +503,22 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const body = await failed.text();
 			expect(JSON.parse(body)).toEqual({ status: "failed" });
 			expect(body).not.toContain("raw provider diagnostic");
+			const failedUser = await db.users.findOne({ _id: "u" });
+			if (!failedUser) throw new Error("test user missing");
+			const failedInstallation = failedUser.installations[0];
+			if (!failedInstallation) throw new Error("test installation missing");
+			const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
+			expect(failedEvidence).toMatchObject({
+				outcome: "failure",
+				operation: "installation_identity",
+				status: 500,
+			});
+			const failedForeignUser = await db.users.findOne({ _id: "foreign" });
+			if (!failedForeignUser) throw new Error("foreign test user missing");
+			const failedForeignInstallation = failedForeignUser.installations[0];
+			if (!failedForeignInstallation)
+				throw new Error("foreign test installation missing");
+			expect(failedForeignInstallation.reconciliationEvidence).toBeUndefined();
 		} finally {
 			globalThis.fetch = original;
 		}
