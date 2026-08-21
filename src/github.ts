@@ -698,6 +698,7 @@ export async function reconcileInstallations(
 				installationId,
 				result,
 				error instanceof Error ? "Error" : "unknown",
+				error,
 			);
 		}
 		results.push({ installationId, result });
@@ -728,12 +729,14 @@ export const logReconciliationFailure = (
 	installationId: string,
 	result: Extract<ReadResult, { kind: "error" }>,
 	classification: string,
+	error?: unknown,
 ) =>
 	console.error(
 		event,
 		installationId,
 		result.operation ?? "reconciliation",
 		classification,
+		...(error === undefined ? [] : [error]),
 	);
 
 export async function persistReconciliationFailure(

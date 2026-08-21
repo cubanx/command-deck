@@ -360,7 +360,7 @@ const readyResponse = async (context: AppContext) => {
 	} catch (error) {
 		console.error(
 			"MongoDB readiness failed",
-			error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+			error instanceof Error ? error.message : "unknown error",
 		);
 		return new Response("not ready", { status: 503 });
 	}
@@ -469,7 +469,8 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 	queueMicrotask(() => {
 		void (async () => {
 			let result: ReadResult,
-				classification = "ReadResult";
+				classification = "ReadResult",
+				diagnostic: unknown;
 			try {
 				const appJwt = githubAppJwt(
 					githubAppId,
@@ -486,6 +487,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 			} catch (error) {
 				result = normalizedReconciliationFailure();
 				classification = error instanceof Error ? "Error" : "unknown";
+				diagnostic = error;
 			}
 			if (result.kind === "error") {
 				try {
@@ -500,6 +502,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 						installationId,
 						result,
 						error instanceof Error ? "Error" : "unknown",
+						error,
 					);
 				}
 				logReconciliationFailure(
@@ -507,6 +510,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 					installationId,
 					result,
 					classification,
+					diagnostic,
 				);
 			}
 		})();
@@ -696,7 +700,7 @@ const mergeCallback = async (
 	} catch (error) {
 		console.error(
 			"merge eligibility read failed",
-			error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+			error instanceof Error ? error.message : "unknown error",
 		);
 		return new Response("merge eligibility is unavailable", { status: 502 });
 	}
@@ -824,6 +828,7 @@ const repairRoute = async (
 			installationId,
 			result,
 			error instanceof Error ? "Error" : "unknown",
+			error,
 		);
 		return Response.json(result);
 	}
@@ -967,7 +972,7 @@ const mergeConfirmRoute = async (
 	} catch (error) {
 		console.error(
 			"merge confirmation failed",
-			error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+			error instanceof Error ? error.message : "unknown error",
 		);
 		return Response.json({ status: "blocked" }, { status: 502 });
 	} finally {
@@ -1072,12 +1077,7 @@ export function createApp(
 			)
 				.then(() => "success" as const)
 				.catch((error) => {
-					console.error(
-						"reconciliation failed",
-						error instanceof Error
-							? error.message.slice(0, 200)
-							: "unknown error",
-					);
+					console.error("reconciliation failed", error);
 					return "failed" as const;
 				});
 			reconciling = work;
@@ -1101,9 +1101,7 @@ export function createApp(
 			.catch((error) =>
 				console.error(
 					"webhook drain failed",
-					error instanceof Error
-						? error.message.slice(0, 200)
-						: "unknown error",
+					error instanceof Error ? error.message : "unknown error",
 				),
 			);
 		return draining;
@@ -1134,7 +1132,7 @@ if (import.meta.main) {
 		.catch((error) => {
 			console.error(
 				"MongoDB startup failed",
-				error instanceof Error ? error.message.slice(0, 200) : "unknown error",
+				error instanceof Error ? error.message : "unknown error",
 			);
 			process.exitCode = 1;
 		});

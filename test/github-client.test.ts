@@ -709,16 +709,34 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		await expect(
-			reconcileInstallations(
-				db,
-				async () => ({ token: "token", appJwt: "app-jwt" }),
-				async () => new Response("down", { status: 500 }),
-			),
-		).rejects.toThrow("reconciliation failed for installations 9");
+		const originalError = console.error,
+			logs: unknown[][] = [];
+		console.error = (...args: unknown[]) => {
+			logs.push(args);
+		};
+		try {
+			await expect(
+				reconcileInstallations(
+					db,
+					async () => {
+						throw new Error("raw provider diagnostic");
+					},
+					async () => new Response("down", { status: 500 }),
+				),
+			).rejects.toThrow("reconciliation failed for installations 9");
+		} finally {
+			console.error = originalError;
+		}
+		expect(logs).toContainEqual([
+			"installation reconciliation failed",
+			"9",
+			"reconciliation",
+			"Error",
+			expect.objectContaining({ message: "raw provider diagnostic" }),
+		]);
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0],
-		).toMatchObject({ lastSyncError: "GitHub request failed (500)" });
+		).toMatchObject({ lastSyncError: "reconciliation failed" });
 		const failedUser = await db.users.findOne({ _id: "u" });
 		if (!failedUser) throw new Error("test user missing");
 		const failedInstallation = failedUser.installations[0];
@@ -726,10 +744,11 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
 		expect(failedEvidence).toMatchObject({
 			outcome: "failure",
-			operation: "installation_identity",
-			status: 500,
+			operation: "reconciliation",
 		});
-		expect(JSON.stringify(failedEvidence)).not.toContain("down");
+		expect(JSON.stringify(failedEvidence)).not.toContain(
+			"raw provider diagnostic",
+		);
 		expect((await dashboardForUser(db, "u")).stale).toBe(true);
 		await reconcileInstallations(
 			db,

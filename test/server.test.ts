@@ -509,13 +509,15 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const reconciliationLog = logs.find(
 				(log) => log[0] === "installation reconciliation failed",
 			);
-			expect(reconciliationLog).toEqual([
+			expect(reconciliationLog?.slice(0, 4)).toEqual([
 				"installation reconciliation failed",
 				"12",
 				"reconciliation",
 				"Error",
 			]);
-			expect(JSON.stringify(logs)).not.toContain("raw provider diagnostic");
+			expect(reconciliationLog?.[4]).toMatchObject({
+				message: "raw provider diagnostic",
+			});
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
 			const failedInstallation = failedUser.installations[0];
@@ -842,24 +844,24 @@ test("public shell and health survive failed initialization while readiness repo
 		);
 	}));
 
-test("failed initialization drain resolves with one sanitized diagnostic", () =>
+test("failed initialization drain retains the full webhook diagnostic", () =>
 	withDatabase(async (db) => {
-		await db.client.close();
 		const original = console.error,
+			originalCreateIndex = db.users.createIndex,
+			diagnostic = `webhook diagnostic ${"qapla".repeat(50)}`,
 			logs: unknown[][] = [];
+		db.users.createIndex = async () => {
+			throw new Error(diagnostic);
+		};
 		console.error = (...args: unknown[]) => {
 			logs.push(args);
 		};
 		try {
 			await createApp(db, testConfig).drain();
-			expect(logs).toEqual([
-				[
-					"webhook drain failed",
-					"Client must be connected before running operations",
-				],
-			]);
+			expect(logs).toEqual([["webhook drain failed", diagnostic]]);
 		} finally {
 			console.error = original;
+			db.users.createIndex = originalCreateIndex;
 		}
 	}));
 
@@ -1278,12 +1280,13 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			expect(JSON.stringify(failedInstallation)).not.toContain(
 				"github diagnostic",
 			);
-			expect(logs).toEqual([
+			expect(logs).toMatchObject([
 				[
 					"installation bootstrap persistence failed",
 					"12",
 					"installation_identity",
 					"Error",
+					expect.objectContaining({ message: "persistence diagnostic" }),
 				],
 				[
 					"installation bootstrap failed",
@@ -1292,7 +1295,6 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					"ReadResult",
 				],
 			]);
-			expect(JSON.stringify(logs)).not.toContain("diagnostic");
 			await new Promise((resolve) => setTimeout(resolve));
 			expect(unhandled).toEqual([]);
 			fail = false;
