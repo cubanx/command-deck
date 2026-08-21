@@ -1260,9 +1260,16 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				operation: "installation_identity",
 				status: 401,
 			});
-			expect(JSON.stringify(failedInstallation)).not.toContain("github diagnostic");
+			expect(JSON.stringify(failedInstallation)).not.toContain(
+				"github diagnostic",
+			);
 			expect(logs).toEqual([
-				["installation bootstrap failed", "12", "installation_identity", "ReadResult"],
+				[
+					"installation bootstrap failed",
+					"12",
+					"installation_identity",
+					"ReadResult",
+				],
 			]);
 			expect(JSON.stringify(logs)).not.toContain("github diagnostic");
 			fail = false;

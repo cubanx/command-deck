@@ -5,4 +5,4 @@
 
 ## 2. Validation
 
-- [ ] 2.1 Run `bun run typecheck`, `bun run check`, `openspec validate close-reconciliation-review-findings --strict`, and `git diff --check`; verify all commands succeed.
+- [x] 2.1 Run `bun run typecheck`, `bun run check`, `openspec validate close-reconciliation-review-findings --strict`, and `git diff --check`; verify all commands succeed.
