@@ -13,4 +13,5 @@ A Bun and TypeScript service that projects signed GitHub activity and committed 
 - Dev: `bun run dev`
 - Typecheck: `bun run typecheck`
 - Test: `bun test`
+- Pre-push validation: `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`
 - OpenSpec: `openspec validate <change> --strict`
