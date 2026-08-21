@@ -10,4 +10,4 @@
 
 ## 3. Validation
 
-- [ ] 3.1 Run `bun run typecheck`, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test -- test/github-client.test.ts test/server.test.ts`, `openspec validate retain-reconciliation-evidence --strict`, and `git diff --check`; verify all commands succeed.
+- [x] 3.1 Run `bun run typecheck`, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test -- test/github-client.test.ts test/server.test.ts`, `openspec validate retain-reconciliation-evidence --strict`, and `git diff --check`; verify all commands succeed.
