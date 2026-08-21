@@ -19,6 +19,12 @@ export type ReadResult =
 	| { kind: "changed"; body: unknown }
 	| { kind: "unchanged" }
 	| { kind: "error"; message: string; stale: true };
+type OpenSpecTask = {
+	repositoryId: string;
+	path: string;
+	sha: string;
+	content: string;
+};
 const base64url = (value: string | Buffer) =>
 	Buffer.from(value).toString("base64url");
 export function githubAppJwt(
@@ -261,6 +267,60 @@ export async function reconcileSerial(
 	}
 	return results;
 }
+async function fetchOpenSpecTasksForPullRequests(
+	db: Db,
+	installationId: string,
+	repositoryId: string,
+	pullRequests: any[],
+	request: FetchLike,
+	taskFetcher: TaskFetcher,
+): Promise<OpenSpecTask[] | ReadResult> {
+	const tasks: OpenSpecTask[] = [];
+	for (const pr of pullRequests) {
+		const sha =
+			typeof pr.head?.sha === "string" ? pr.head.sha : undefined;
+		if (!sha) continue;
+		const changes = await conditionalGet(
+			db,
+			`installation:${installationId}:repo:${repositoryId}:openspec:${sha}`,
+			`https://api.github.com/repositories/${repositoryId}/contents/openspec/changes?ref=${sha}`,
+			async (url, init) => {
+				const response = await request(url, init);
+				return response.status === 404 ? Response.json([]) : response;
+			},
+		);
+		if (changes.kind === "unchanged" || changes.kind === "error") return changes;
+		if (!Array.isArray(changes.body))
+			return {
+				kind: "error",
+				stale: true,
+				message: "GitHub OpenSpec listing payload was invalid",
+			};
+		for (const change of changes.body) {
+			const name = (change as any)?.name;
+			if (
+				(change as any)?.type !== "dir" ||
+				!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)
+			)
+				continue;
+			const path = `openspec/changes/${name}/tasks.md`;
+			const content = await taskFetcher({
+				installationId,
+				repositoryId,
+				path,
+				sha,
+			});
+			if (content === null)
+				return {
+					kind: "error",
+					stale: true,
+					message: "GitHub OpenSpec artifact fetch failed",
+				};
+			tasks.push({ repositoryId, path, sha, content });
+		}
+	}
+	return tasks;
+}
 export async function bootstrapInstallation(
 	db: Db,
 	installationId: string,
@@ -346,12 +406,7 @@ export async function bootstrapInstallation(
 		openSpecs: Record<string, unknown>[];
 		deployments: Record<string, unknown>[];
 	}>;
-	const openSpecTasks: Array<{
-		repositoryId: string;
-		path: string;
-		sha: string;
-		content: string;
-	}> = [];
+	const openSpecTasks: OpenSpecTask[] = [];
 	for (const repo of repositories) {
 		const prs = await pagedGet(
 			db,
@@ -371,57 +426,16 @@ export async function bootstrapInstallation(
 		const deploymentRows =
 			deployments.kind === "changed" ? deployments.body : [];
 		const pullRequests = Array.isArray(prs.body) ? prs.body : [];
-		for (const pr of pullRequests) {
-			const sha =
-				typeof (pr as any).head?.sha === "string"
-					? (pr as any).head.sha
-					: undefined;
-			if (!sha) continue;
-			const changes = await conditionalGet(
-				db,
-				`installation:${installationId}:repo:${repo.id}:openspec:${sha}`,
-				`https://api.github.com/repositories/${repo.id}/contents/openspec/changes?ref=${sha}`,
-				async (url, init) => {
-					const response = await request(url, init);
-					return response.status === 404 ? Response.json([]) : response;
-				},
-			);
-			if (changes.kind === "unchanged") return changes;
-			if (changes.kind === "error") return changes;
-			if (!Array.isArray(changes.body))
-				return {
-					kind: "error",
-					stale: true,
-					message: "GitHub OpenSpec listing payload was invalid",
-				};
-			for (const change of changes.body) {
-				const name = (change as any)?.name;
-				if (
-					(change as any)?.type !== "dir" ||
-					!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)
-				)
-					continue;
-				const path = `openspec/changes/${name}/tasks.md`;
-				const content = await taskFetcher({
-					installationId,
-					repositoryId: String(repo.id),
-					path,
-					sha,
-				});
-				if (content === null)
-					return {
-						kind: "error",
-						stale: true,
-						message: "GitHub OpenSpec artifact fetch failed",
-					};
-				openSpecTasks.push({
-					repositoryId: String(repo.id),
-					path,
-					sha,
-					content,
-				});
-			}
-		}
+		const tasks = await fetchOpenSpecTasksForPullRequests(
+			db,
+			installationId,
+			String(repo.id),
+			pullRequests,
+			request,
+			taskFetcher,
+		);
+		if (!Array.isArray(tasks)) return tasks;
+		openSpecTasks.push(...tasks);
 		snapshots.push({
 			repositoryId: String(repo.id),
 			full_name: repo.full_name,
