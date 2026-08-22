@@ -1297,6 +1297,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					"12",
 					"installation_identity",
 					"ReadResult",
+					"GitHub request failed (401)",
 				],
 			]);
 			await new Promise((resolve) => setTimeout(resolve));

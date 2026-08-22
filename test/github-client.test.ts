@@ -780,14 +780,30 @@ test("reconciliation evidence retains the newest 20 failures deterministically",
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		for (let status = 480; status <= 500; status++)
-			await expect(
-				reconcileInstallations(
-					db,
-					async () => ({ token: "token", appJwt: "app-jwt" }),
-					async () => new Response(`raw diagnostic ${status}`, { status }),
-				),
-			).rejects.toThrow("reconciliation failed for installations 9");
+		const originalError = console.error,
+			logs: unknown[][] = [];
+		console.error = (...args: unknown[]) => {
+			logs.push(args);
+		};
+		try {
+			for (let status = 480; status <= 500; status++)
+				await expect(
+					reconcileInstallations(
+						db,
+						async () => ({ token: "token", appJwt: "app-jwt" }),
+						async () => new Response(`raw diagnostic ${status}`, { status }),
+					),
+				).rejects.toThrow("reconciliation failed for installations 9");
+		} finally {
+			console.error = originalError;
+		}
+		expect(logs).toContainEqual([
+			"installation reconciliation failed",
+			"9",
+			"installation_identity",
+			"ReadResult",
+			"GitHub request failed (500)",
+		]);
 		const user = await db.users.findOne({ _id: "u" });
 		if (!user) throw new Error("test user missing");
 		const installation = user.installations[0];

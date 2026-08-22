@@ -702,8 +702,15 @@ export async function reconcileInstallations(
 			);
 		}
 		results.push({ installationId, result });
-		if (result.kind === "error")
+		if (result.kind === "error") {
+			logReconciliationFailure(
+				"installation reconciliation failed",
+				installationId,
+				result,
+				"ReadResult",
+			);
 			await persistReconciliationFailure(db, installationId, result);
+		}
 	}
 	const failures = results.filter((item) => item.result.kind === "error");
 	if (failures.length)
@@ -736,7 +743,7 @@ export const logReconciliationFailure = (
 		installationId,
 		result.operation ?? "reconciliation",
 		classification,
-		...(error === undefined ? [] : [error]),
+		error ?? result.message,
 	);
 
 export async function persistReconciliationFailure(
