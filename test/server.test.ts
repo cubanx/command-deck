@@ -1391,3 +1391,101 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 			globalThis.fetch = original;
 		}
 	}));
+
+test("webhook task fetch logs safe GitHub diagnostics", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [],
+			openSpecs: [],
+			deployments: [],
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		await db.inboxDeliveries.insertOne({
+			_id: "github:failed-push",
+			provider: "github",
+			deliveryId: "failed-push",
+			eventName: "push",
+			payload: JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				ref: "refs/heads/main",
+				after: "a".repeat(40),
+				commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
+			}),
+			status: "pending",
+			attempts: 0,
+			receivedAt: new Date(),
+		});
+		const { privateKey } = await crypto.subtle.generateKey(
+			{
+				name: "RSASSA-PKCS1-v1_5",
+				modulusLength: 2048,
+				publicExponent: new Uint8Array([1, 0, 1]),
+				hash: "SHA-256",
+			},
+			true,
+			["sign", "verify"],
+		);
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
+			await crypto.subtle.exportKey("pkcs8", privateKey),
+		)
+			.toString("base64")
+			.match(/.{1,64}/g)
+			?.join("\n")}\n-----END PRIVATE KEY-----`;
+		const originalFetch = globalThis.fetch,
+			originalError = console.error,
+			logs: unknown[][] = [];
+		fetchTarget.fetch = async (input) =>
+			String(input).includes("access_tokens")
+				? Response.json({ token: "installation" })
+				: Response.json(
+						{
+							message: "Resource not accessible by integration",
+							documentation_url: "https://docs.github.com/rest",
+							errors: [
+								{
+									resource: "Repository",
+									field: "contents",
+									code: "forbidden",
+									value: "must-not-log",
+								},
+							],
+							secret: "must-not-log",
+						},
+						{ status: 403 },
+					);
+		console.error = (...args: unknown[]) => logs.push(args);
+		try {
+			const app = createApp(db, {
+				...testConfig,
+				githubAppId: "1",
+				githubAppPrivateKey: pem,
+			});
+			await app.drain();
+		} finally {
+			globalThis.fetch = originalFetch;
+			console.error = originalError;
+		}
+		expect(logs).toContainEqual([
+			"GitHub request failed",
+			{
+				operation: "webhook OpenSpec task fetch",
+				status: 403,
+				target:
+					"https://api.github.com/repositories/2/contents/openspec/changes/defiant/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				diagnostic: {
+					message: "Resource not accessible by integration",
+					documentationUrl: "https://docs.github.com/rest",
+					errors: [
+						{ resource: "Repository", field: "contents", code: "forbidden" },
+					],
+				},
+			},
+		]);
+		expect(JSON.stringify(logs)).not.toContain("must-not-log");
+	}));

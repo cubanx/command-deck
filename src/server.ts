@@ -22,7 +22,9 @@ import {
 import {
 	approvedInstallationIdsForUser,
 	bootstrapInstallation,
+	type GitHubRequestFailure,
 	githubAppJwt,
+	githubErrorDiagnostic,
 	githubNextLink,
 	installationToken,
 	logReconciliationFailure,
@@ -181,6 +183,9 @@ const githubRead = async (url: string, token: string) => {
 		body: response.ok ? await response.json() : null,
 	};
 };
+
+const logGitHubRequestFailure = (failure: GitHubRequestFailure) =>
+	console.error("GitHub request failed", failure);
 
 const successfulEvidence = (
 	items: Array<Record<string, unknown>> | undefined,
@@ -483,6 +488,8 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 					token,
 					fetch,
 					appJwt,
+					undefined,
+					logGitHubRequestFailure,
 				);
 			} catch (error) {
 				result = normalizedReconciliationFailure();
@@ -1033,16 +1040,21 @@ export function createApp(
 			),
 			input.installationId,
 		);
-		const response = await fetch(
-			`https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`,
-			{
-				headers: {
-					authorization: `Bearer ${token}`,
-					accept: "application/vnd.github.raw",
-				},
+		const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
+		const response = await fetch(target, {
+			headers: {
+				authorization: `Bearer ${token}`,
+				accept: "application/vnd.github.raw",
 			},
-		);
-		return response.ok ? response.text() : null;
+		});
+		if (response.ok) return response.text();
+		logGitHubRequestFailure({
+			operation: "webhook OpenSpec task fetch",
+			status: response.status,
+			target,
+			diagnostic: await githubErrorDiagnostic(response),
+		});
+		return null;
 	};
 	const context = {
 		db,

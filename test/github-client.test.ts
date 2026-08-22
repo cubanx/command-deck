@@ -664,6 +664,80 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 		).toEqual([]);
 	}));
 
+test("bootstrap keeps OpenSpec task failures generic while reporting safe diagnostics", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const reports: unknown[] = [];
+		const result = await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/app/installations/"))
+					return Response.json({ account: { login: "cubanx" } });
+				if (value.includes("installation/repositories"))
+					return Response.json({
+						repositories: [{ id: 2, full_name: "ds9/ops" }],
+					});
+				if (value.includes("/pulls?"))
+					return Response.json([
+						{
+							number: 7,
+							title: "In the Pale Moonlight",
+							user: { login: "sisko" },
+							state: "open",
+							head: { sha: "a".repeat(40) },
+						},
+					]);
+				if (value.includes("/deployments")) return Response.json([]);
+				if (value.includes("contents/openspec/changes?"))
+					return Response.json([{ type: "dir", name: "hold-the-line" }]);
+				return Response.json(
+					{
+						message: "Resource not accessible by integration",
+						documentation_url: "https://docs.github.com/rest",
+						errors: [
+							{
+								resource: "Repository",
+								field: "contents",
+								code: "forbidden",
+								value: "must-not-log",
+							},
+						],
+						secret: "must-not-log",
+					},
+					{ status: 403 },
+				);
+			},
+			"app-jwt",
+			undefined,
+			(report) => {
+				reports.push(report);
+			},
+		);
+		expect(result).toMatchObject({
+			kind: "error",
+			message: "GitHub OpenSpec artifact fetch failed",
+		});
+		expect(reports).toEqual([
+			{
+				operation: "bootstrap OpenSpec task fetch",
+				status: 403,
+				target:
+					"https://api.github.com/repositories/2/contents/openspec/changes/hold-the-line/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				diagnostic: {
+					message: "Resource not accessible by integration",
+					documentationUrl: "https://docs.github.com/rest",
+					errors: [
+						{ resource: "Repository", field: "contents", code: "forbidden" },
+					],
+				},
+			},
+		]);
+	}));
+
 test("installation reconciliation obtains tokens and bootstraps serially in stable order", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");

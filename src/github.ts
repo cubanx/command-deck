@@ -15,6 +15,19 @@ export type TaskFetcher = (input: {
 	path: string;
 	sha: string;
 }) => Promise<string | null>;
+export type GitHubRequestFailure = {
+	operation: string;
+	status: number;
+	target: string;
+	diagnostic?: {
+		message?: string;
+		documentationUrl?: string;
+		errors?: Array<{ resource?: string; field?: string; code?: string }>;
+	};
+};
+export type GitHubRequestFailureReporter = (
+	failure: GitHubRequestFailure,
+) => void | Promise<void>;
 export type ReadResult =
 	| { kind: "changed"; body: unknown }
 	| { kind: "unchanged" }
@@ -35,6 +48,39 @@ type OpenSpecTask = {
 };
 const base64url = (value: string | Buffer) =>
 	Buffer.from(value).toString("base64url");
+const diagnosticString = (value: unknown) =>
+	typeof value === "string" ? value.slice(0, 200) : undefined;
+export async function githubErrorDiagnostic(response: Response) {
+	let body: unknown;
+	try {
+		body = await response.json();
+	} catch {
+		return undefined;
+	}
+	if (!body || typeof body !== "object") return undefined;
+	const value = body as Record<string, unknown>;
+	const errors = Array.isArray(value.errors)
+		? value.errors
+				.map((error) => {
+					if (!error || typeof error !== "object") return undefined;
+					const item = error as Record<string, unknown>;
+					const selected = {
+						resource: diagnosticString(item.resource),
+						field: diagnosticString(item.field),
+						code: diagnosticString(item.code),
+					};
+					return Object.values(selected).some(Boolean) ? selected : undefined;
+				})
+				.filter((error): error is NonNullable<typeof error> => Boolean(error))
+				.slice(0, 5)
+		: undefined;
+	const diagnostic = {
+		message: diagnosticString(value.message),
+		documentationUrl: diagnosticString(value.documentation_url),
+		errors: errors?.length ? errors : undefined,
+	};
+	return Object.values(diagnostic).some(Boolean) ? diagnostic : undefined;
+}
 export function githubAppJwt(
 	appId: string,
 	privateKey: string,
@@ -388,6 +434,7 @@ export async function bootstrapInstallation(
 	fetcher: FetchLike,
 	appJwt: string,
 	fetchTasks?: TaskFetcher,
+	reportTaskFetchFailure?: GitHubRequestFailureReporter,
 ): Promise<ReadResult> {
 	const request: FetchLike = (url, init) =>
 		fetcher(url, {
@@ -408,11 +455,18 @@ export async function bootstrapInstallation(
 	const taskFetcher =
 		fetchTasks ??
 		(async (input) => {
-			const response = await request(
-				`https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`,
-				{ headers: { accept: "application/vnd.github.raw" } },
-			);
-			return response.ok ? response.text() : null;
+			const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
+			const response = await request(target, {
+				headers: { accept: "application/vnd.github.raw" },
+			});
+			if (response.ok) return response.text();
+			await reportTaskFetchFailure?.({
+				operation: "bootstrap OpenSpec task fetch",
+				status: response.status,
+				target,
+				diagnostic: await githubErrorDiagnostic(response),
+			});
+			return null;
 		});
 	const bound = await db.users
 		.find(
