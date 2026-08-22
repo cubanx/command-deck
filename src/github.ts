@@ -397,6 +397,7 @@ async function fetchOpenSpecTasksForPullRequests(
 			const name = (change as any)?.name;
 			if (
 				(change as any)?.type !== "dir" ||
+				name === "archive" ||
 				!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)
 			)
 				continue;

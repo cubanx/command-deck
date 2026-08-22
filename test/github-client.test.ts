@@ -587,13 +587,17 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 				if (listingUnchanged) return new Response(null, { status: 304 });
 				else
 					return hasChange
-						? Response.json([{ type: "dir", name: "capture-wolf-359" }], {
+						? Response.json([
+								{ type: "dir", name: "archive" },
+								{ type: "dir", name: "capture-wolf-359" },
+							], {
 								headers: { etag: "changes-v1" },
 							})
 						: new Response(null, { status: 404 });
 			return Response.json([]);
 		};
 		const fetchTasks = async (input: { path: string; sha: string }) => {
+			expect(input.path).not.toBe("openspec/changes/archive/tasks.md");
 			expect(input).toMatchObject({
 				path: "openspec/changes/capture-wolf-359/tasks.md",
 			});
