@@ -432,12 +432,14 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 					tokenIds.push(url.match(/installations\/(\d+)/)?.[1] ?? "");
 					return Response.json({ token: "installation-token" });
 				}
-				if (url.includes("/app/installations/"))
+				if (url.includes("/app/installations/")) {
+					if (fail) return Response.json({ account: { login: "cubanx" } });
 					return new Promise((release) => {
 						releaseIdentity = () =>
 							release(Response.json({ account: { login: "cubanx" } }));
 						resolve();
 					});
+				}
 				if (url.includes("installation/repositories"))
 					return Response.json({
 						repositories: [{ id: 2, full_name: "cubanx/defiant" }],
@@ -453,8 +455,22 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 						},
 					]);
 				if (url.includes("/deployments")) return Response.json([]);
-				if (url.includes("contents/openspec/changes/repair-defiant/tasks.md"))
+				if (url.includes("contents/openspec/changes/repair-defiant/tasks.md")) {
+					if (fail)
+						return Response.json(
+							{
+								message: "OpenSpec artifact denied",
+								documentation_url: "https://docs.github.com/rest",
+								token: "fixture-token-value",
+								raw_body_fixture: "fixture-raw-body-value",
+							},
+							{
+								status: 500,
+								headers: { "x-fixture-secret": "fixture-header-value" },
+							},
+						);
 					return new Response("## 1. Repair the defiant");
+				}
 				if (url.includes("contents/openspec/changes"))
 					return Response.json([{ name: "repair-defiant", type: "dir" }]);
 				throw new Error(`unexpected ${url}`);
@@ -509,19 +525,19 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			expect(failed.status).toBe(502);
 			const body = await failed.text();
 			expect(JSON.parse(body)).toEqual({ status: "failed" });
-			expect(body).not.toContain("raw provider diagnostic");
+			expect(body).not.toContain("fixture-token-value");
 			const reconciliationLog = logs.find(
 				(log) => log[0] === "installation reconciliation failed",
 			);
 			expect(reconciliationLog?.slice(0, 4)).toEqual([
 				"installation reconciliation failed",
 				"12",
-				"reconciliation",
-				"Error",
+				"openspec",
+				"ReadResult",
 			]);
-			expect(reconciliationLog?.[4]).toMatchObject({
-				message: "raw provider diagnostic",
-			});
+			expect(reconciliationLog?.[4]).toBe(
+				"GitHub OpenSpec artifact fetch failed",
+			);
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
 			const failedInstallation = failedUser.installations[0];
@@ -529,17 +545,32 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
 			expect(failedEvidence).toMatchObject({
 				outcome: "failure",
-				operation: "reconciliation",
+				operation: "openspec",
 			});
-			expect(JSON.stringify(failedEvidence)).not.toContain(
-				"raw provider diagnostic",
-			);
+			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-token-value");
+			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-header-value");
 			const failedForeignUser = await db.users.findOne({ _id: "foreign" });
 			if (!failedForeignUser) throw new Error("foreign test user missing");
 			const failedForeignInstallation = failedForeignUser.installations[0];
 			if (!failedForeignInstallation)
 				throw new Error("foreign test installation missing");
 			expect(failedForeignInstallation.reconciliationEvidence).toBeUndefined();
+			expect(logs).toContainEqual([
+				"GitHub request failed",
+				JSON.stringify({
+					operation: "bootstrap OpenSpec task fetch",
+					status: 500,
+					target: `https://api.github.com/repositories/2/contents/openspec/changes/repair-defiant/tasks.md?ref=${"a".repeat(40)}`,
+					diagnostic: {
+						message: "OpenSpec artifact denied",
+						documentationUrl: "https://docs.github.com/rest",
+					},
+				}),
+			]);
+			const logged = JSON.stringify(logs);
+			expect(logged).not.toContain("fixture-token-value");
+			expect(logged).not.toContain("fixture-raw-body-value");
+			expect(logged).not.toContain("fixture-header-value");
 		} finally {
 			globalThis.fetch = original;
 			console.error = originalError;

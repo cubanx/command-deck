@@ -185,7 +185,7 @@ const githubRead = async (url: string, token: string) => {
 };
 
 const logGitHubRequestFailure = (failure: GitHubRequestFailure) =>
-	console.error("GitHub request failed", failure);
+	console.error("GitHub request failed", JSON.stringify(failure));
 
 const successfulEvidence = (
 	items: Array<Record<string, unknown>> | undefined,
@@ -1086,6 +1086,8 @@ export function createApp(
 				},
 				fetch,
 				installationIds,
+				undefined,
+				logGitHubRequestFailure,
 			)
 				.then(() => "success" as const)
 				.catch((error) => {

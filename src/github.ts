@@ -712,6 +712,7 @@ export async function reconcileInstallations(
 	fetcher: FetchLike,
 	installationIds?: string[],
 	fetchTasks?: TaskFetcher,
+	reportTaskFetchFailure?: GitHubRequestFailureReporter,
 ) {
 	const ids = installationIds
 		? [...new Set(installationIds)].sort()
@@ -744,6 +745,7 @@ export async function reconcileInstallations(
 				fetcher,
 				appJwt,
 				fetchTasks,
+				reportTaskFetchFailure,
 			);
 		} catch (error) {
 			result = normalizedReconciliationFailure();
