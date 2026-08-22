@@ -40,8 +40,8 @@ The production service MUST use one configured HTTPS origin for OAuth redirects 
 - **WHEN** a production OAuth request presents forwarded scheme or host values that do not match `PUBLIC_URL`
 - **THEN** the service rejects the request without issuing an OAuth state or session cookie
 
-### Requirement: Least-privilege personal GitHub App
-The operator contract MUST define a private personal GitHub App with only the permissions, events, URLs, and selected-repository installation required by the command center.
+### Requirement: Least-privilege GitHub App
+The operator contract MUST define a private GitHub App with only the permissions, events, URLs, and repository scope required by the command center. The `cubanx` and `Crisp-Inc` installations may use all repositories; every other installation account MUST use explicitly selected repositories.
 
 #### Scenario: GitHub App configuration review
 - **WHEN** the App is prepared for production
@@ -49,7 +49,7 @@ The operator contract MUST define a private personal GitHub App with only the pe
 
 #### Scenario: Repository API authentication
 - **WHEN** the service bootstraps, repairs, reconciles, or fetches explicit repository details
-- **THEN** it uses a short-lived installation token scoped to the installation and selected repositories rather than a PAT or OAuth user token
+- **THEN** it uses a short-lived installation token scoped to the installation and its authorized repository scope rather than a PAT or OAuth user token
 
 #### Scenario: Webhook receipt
 - **WHEN** GitHub sends a delivery
@@ -67,10 +67,10 @@ The service MUST validate every required production variable at startup and MUST
 - **THEN** it requires `NODE_ENV`, `PUBLIC_URL`, `MONGODB_URI_BASE`, `MONGODB_DATABASE`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`, while Railway supplies `PORT` and `RAILWAY_PUBLIC_DOMAIN`
 
 ### Requirement: GitHub-native deployment boundary
-Deployment visibility MUST come from the selected repositories through signed GitHub deliveries and installation-scoped API reads; the runtime MUST NOT require Railway API credentials, mappings, or webhook intake.
+Deployment visibility MUST come from each installation's authorized repository scope through signed GitHub deliveries and installation-scoped API reads; the runtime MUST NOT require Railway API credentials, mappings, or webhook intake.
 
 #### Scenario: Incremental deployment update
-- **WHEN** GitHub sends a valid signed `deployment` or `deployment_status` delivery for a selected repository
+- **WHEN** GitHub sends a valid signed `deployment` or `deployment_status` delivery for a repository in the installation's authorized scope
 - **THEN** the installation-scoped deployment projection is updated idempotently without querying Railway
 
 #### Scenario: Bootstrap or repair
@@ -106,4 +106,3 @@ Production execution MUST require explicit authorization, preserve both the Mong
 #### Scenario: Rollback
 - **WHEN** readiness or bounded verification fails
 - **THEN** the operator restores the previous application revision and configuration without deleting or modifying either store and records the outcome
-

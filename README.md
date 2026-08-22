@@ -94,7 +94,7 @@ Record redacted evidence only: timestamp, reviewed Git SHA, Railway deployment I
 
 ## GitHub App contract
 
-Configure a private personal `cubanx` App, install it only on selected repositories, and use:
+Configure a private GitHub App. `cubanx` and `Crisp-Inc` may use all repositories; every other installation account must use explicitly selected repositories. Use:
 
 - homepage: `${PUBLIC_URL}`
 - callback URL: `${PUBLIC_URL}/auth/github/callback`

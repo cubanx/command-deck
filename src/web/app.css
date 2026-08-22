@@ -67,7 +67,8 @@ header,
 	margin-left: 0;
 }
 .avatar-menu > summary {
-	display: block;
+	display: flex;
+	align-items: center;
 	list-style: none;
 	cursor: pointer;
 }
@@ -82,6 +83,9 @@ header,
 	border: 2px solid var(--border);
 	border-radius: 50%;
 	object-fit: cover;
+}
+.avatar-menu-caret {
+	font-size: 0.75rem;
 }
 .avatar-fallback {
 	background: #334155;

@@ -1320,7 +1320,7 @@ const avatarMenuMarkup = (user?: DashboardSnapshot["user"]) => {
 		: avatarUrl
 			? `<img class="user-avatar" src="${esc(avatarUrl)}" alt="">`
 			: `<span class="user-avatar avatar-fallback" aria-hidden="true">${esc(login.slice(0, 1).toUpperCase())}</span>`;
-	return `<details class="avatar-menu"><summary aria-label="User menu">${avatar}</summary><div class="avatar-menu-panel"><p><strong>${esc(login)}</strong></p>${appearanceMenuMarkup()}<a class="configuration-link" href="/configuration">⚙ Configuration</a></div></details>`;
+	return `<details class="avatar-menu"><summary aria-label="User menu">${avatar}<span class="avatar-menu-caret" aria-hidden="true">▾</span></summary><div class="avatar-menu-panel"><p><strong>${esc(login)}</strong></p>${appearanceMenuMarkup()}<a class="configuration-link" href="/configuration">⚙ Configuration</a></div></details>`;
 };
 const rerender = (focusSelector: string) => {
 	render(current);

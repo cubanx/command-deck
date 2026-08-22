@@ -297,6 +297,9 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(javascript).toContain('class="avatar-menu"');
 		expect(javascript).toContain('class="brand brand-home" href="/"');
 		expect(javascript).toContain('aria-label="User menu"');
+		expect(javascript).toContain(
+			'class="avatar-menu-caret" aria-hidden="true">▾</span>',
+		);
 		expect(javascript).toContain('class="appearance-menu"');
 		expect(javascript).toContain('class="appearance-check"');
 		expect(javascript).toContain("✓");
@@ -314,6 +317,7 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(javascript).toContain("Enable notifications");
 		expect(javascript).not.toContain('appearanceChoicesMarkup("appearance")');
 		expect(css).toContain("width: min(220px");
+		expect(css).toContain(".avatar-menu-caret");
 		expect(css).toContain(".appearance-menu label");
 		expect(css).toContain(".configuration-link");
 		expect(css).toContain("text-decoration: none");

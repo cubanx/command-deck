@@ -11,15 +11,15 @@ Gate: do not begin this group or any later group before PR #8 merge, exact-curre
 
 ## 2. Prove and approve minimum permission
 
-- [ ] 2.1 Inspect the merged implementation and capture redacted evidence for its exact GraphQL operation, expected-head input, merge method, and current permission failure.
-- [ ] 2.2 Prove that Pull requests write is sufficient and Contents write is unnecessary; stop for a new decision if evidence is ambiguous or broader.
-- [ ] 2.3 Obtain fresh task-scoped authorization and update only the GitHub App Pull requests permission.
-- [ ] 2.4 Verify the App permission diff and rollback path without changing installation accounts or repository selection.
+- [x] 2.1 Inspect the merged implementation and capture redacted evidence for its exact GraphQL operation, expected-head input, merge method, and current permission failure.
+- [x] 2.2 Prove that Pull requests write is sufficient and Contents write is unnecessary; stop for a new decision if evidence is ambiguous or broader.
+- [x] 2.3 Obtain fresh task-scoped authorization and update only the GitHub App Pull requests permission.
+- [x] 2.4 Verify the App permission diff and rollback path without changing installation accounts or repository selection.
 
 ## 3. Approve intended installations
 
-- [ ] 3.1 Enumerate and verify only the intended currently allowlisted installation accounts and repositories.
-- [ ] 3.2 Obtain separate approval for updated permissions on each intended installation account.
+- [x] 3.1 Enumerate and verify only the intended currently allowlisted installation accounts and repositories.
+- [x] 3.2 Obtain separate approval for updated permissions on each intended installation account.
 - [ ] 3.3 Verify eligible pull requests on approved installations show Merge while unapproved or ineligible cards render no Merge action, with strict user isolation.
 
 ## 4. Deploy and verify configuration
