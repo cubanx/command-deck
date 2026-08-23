@@ -479,8 +479,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 	queueMicrotask(() => {
 		void (async () => {
 			let result: ReadResult,
-				classification = "ReadResult",
-				diagnostic: unknown;
+				classification = "ReadResult";
 			try {
 				const appJwt = githubAppJwt(
 					githubAppId,
@@ -499,7 +498,6 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 			} catch (error) {
 				result = normalizedReconciliationFailure();
 				classification = error instanceof Error ? "Error" : "unknown";
-				diagnostic = error;
 			}
 			if (result.kind === "error") {
 				try {
@@ -514,7 +512,6 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 						installationId,
 						result,
 						error instanceof Error ? "Error" : "unknown",
-						error,
 					);
 				}
 				logReconciliationFailure(
@@ -522,7 +519,6 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 					installationId,
 					result,
 					classification,
-					diagnostic,
 				);
 			}
 		})();
@@ -842,7 +838,6 @@ const repairRoute = async (
 			installationId,
 			result,
 			error instanceof Error ? "Error" : "unknown",
-			error,
 		);
 		return Response.json(result);
 	}

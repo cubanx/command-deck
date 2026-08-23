@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { UpdateFilter } from "mongodb";
-import type { Db, UserAggregate } from "#/db";
+import type { Db, PullRequest, UserAggregate } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 
@@ -302,31 +302,33 @@ export async function dashboardForUser(
 			pullRequestsPermission: installation.permissions?.pull_requests,
 		})),
 	);
-	const openSpecs: any[] = repositories.flatMap((repository) =>
-		repository.openSpecs.map((spec) => ({
-			...spec,
-			installation_id: repository.installationId,
-			repository_id: repository.repositoryId,
-			full_name: repository.full_name,
-			source_url: openSpecUrl(
-				repository.full_name,
-				spec.source_commit,
-				spec.change_name,
-			),
-		})),
-	);
-	const projectedPullRequests: any[] = repositories.flatMap((repository) =>
-		repository.pullRequests
-			.filter((pr) => sameLogin(pr.author_login, user.github.login))
-			.map((pr) => ({
-				...pr,
+	const openSpecs: Record<string, unknown>[] = repositories.flatMap(
+		(repository) =>
+			repository.openSpecs.map((spec) => ({
+				...spec,
 				installation_id: repository.installationId,
-				installation_pull_requests: repository.pullRequestsPermission,
 				repository_id: repository.repositoryId,
 				full_name: repository.full_name,
+				source_url: openSpecUrl(
+					repository.full_name,
+					spec.source_commit,
+					spec.change_name,
+				),
 			})),
 	);
-	const byIdentity = new Map<string, any>();
+	const projectedPullRequests: PullRequest[] = repositories.flatMap(
+		(repository) =>
+			repository.pullRequests
+				.filter((pr) => sameLogin(pr.author_login, user.github.login))
+				.map((pr) => ({
+					...pr,
+					installation_id: repository.installationId,
+					installation_pull_requests: repository.pullRequestsPermission,
+					repository_id: repository.repositoryId,
+					full_name: repository.full_name,
+				})),
+	);
+	const byIdentity = new Map<string, PullRequest>();
 	for (const pr of projectedPullRequests.filter((pr) => pr.state === "open")) {
 		const key = `${pr.repository_id}:${pr.number}`;
 		const previous = byIdentity.get(key);
@@ -337,8 +339,8 @@ export async function dashboardForUser(
 			byIdentity.set(key, pr);
 	}
 	const openPullRequests = [...byIdentity.values()];
-	const pullRequests = openPullRequests
-		.map((pr) => {
+	const pullRequests: PullRequest[] = openPullRequests
+		.map((pr): PullRequest => {
 			const candidates = openSpecs.filter(
 				(item) =>
 					item.installation_id === pr.installation_id &&
@@ -391,15 +393,18 @@ export async function dashboardForUser(
 				String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")),
 		);
 	const cutoff = now.getTime() - 48 * 60 * 60_000;
-	const deployments: any[] = repositories
+	const deployments: Record<string, unknown>[] = repositories
 		.flatMap((repository) =>
 			repository.deployments
 				.filter((item) => Date.parse(String(item.updated_at)) >= cutoff)
-				.map((item) => ({ ...item, full_name: repository.full_name })),
+				.map(
+					(item): Record<string, unknown> => ({
+						...item,
+						full_name: repository.full_name,
+					}),
+				),
 		)
-		.sort((a: any, b: any) =>
-			String(b.updated_at).localeCompare(String(a.updated_at)),
-		);
+		.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 	const notifications = await db.notifications
 		.find({ userId })
 		.sort({ createdAt: -1 })

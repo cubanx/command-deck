@@ -51,9 +51,7 @@ test("Varlock schema loads the approved local Environment through its official p
 		"GITHUB_APP_PRIVATE_KEY",
 		"GITHUB_WEBHOOK_SECRET",
 	])
-		expect(schema).toMatch(
-			new RegExp(`@sensitive[^\\n]*\\n${name}=`, "m"),
-		);
+		expect(schema).toMatch(new RegExp(`@sensitive[^\\n]*\\n${name}=`, "m"));
 	const refs = [
 		"op://Automation/zoevvjnwlb52itscyya6rjuaqi/Section_tcdsae2ktrn7v4ow7qy3z24yw4/client-id",
 		"op://Automation/zoevvjnwlb52itscyya6rjuaqi/password",
@@ -67,7 +65,10 @@ test("Varlock schema loads the approved local Environment through its official p
 		["GITHUB_APP_PRIVATE_KEY", refs[3]],
 	])
 		expect(schema).toMatch(
-			new RegExp(`^${name}=op\\(${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\)$`, "m"),
+			new RegExp(
+				`^${name}=op\\(${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\)$`,
+				"m",
+			),
 		);
 	expect(schema.match(/op:\/\/[^)\s]+/g)).toEqual(refs);
 	expect(schema).not.toContain("allowAppAuth");

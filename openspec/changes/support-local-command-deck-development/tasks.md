@@ -21,9 +21,9 @@
 ## 5. Configuration UI and quality repair
 
 - [x] 5.1 Increase the existing native configuration avatar-menu caret to `1rem` test-first; verify the focused UI/source assertion passes without replacing `details`/`summary` behavior.
-- [ ] 5.2 Replace identified Biome explicit-`any` baseline sites with precise existing types and no broad suppressions; verify `bun run check` reports no Biome errors.
-- [ ] 5.3 Align the two stale logging tests with the current visible sanitized diagnostic contract; verify their focused tests pass and still reject raw provider values.
-- [ ] 5.4 Add tests first for Closest-to-merge pull-request number ascending; verify equal-state cards order lowest number first with repository identity as a deterministic fallback.
+- [x] 5.2 Replace identified Biome explicit-`any` baseline sites with precise existing types and no broad suppressions; verify `bun run check` reports no Biome errors.
+- [x] 5.3 Align the two stale logging tests with the current visible sanitized diagnostic contract; verify their focused tests pass and still reject raw provider values.
+- [x] 5.4 Add tests first for Closest-to-merge pull-request number ascending; verify equal-state cards order lowest number first with repository identity as a deterministic fallback.
 
 ## 6. Final verification
 

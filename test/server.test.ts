@@ -531,15 +531,13 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const reconciliationLog = logs.find(
 				(log) => log[0] === "installation reconciliation failed",
 			);
-			expect(reconciliationLog?.slice(0, 4)).toEqual([
+			expect(reconciliationLog).toEqual([
 				"installation reconciliation failed",
 				"12",
-				"openspec",
-				"ReadResult",
+				"reconciliation",
+				"Error",
+				"reconciliation failed",
 			]);
-			expect(reconciliationLog?.[4]).toBe(
-				"GitHub OpenSpec artifact fetch failed",
-			);
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
 			const failedInstallation = failedUser.installations[0];
@@ -547,32 +545,25 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
 			expect(failedEvidence).toMatchObject({
 				outcome: "failure",
-				operation: "openspec",
+				operation: "reconciliation",
 			});
-			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-token-value");
-			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-header-value");
+			expect(JSON.stringify(failedEvidence)).not.toContain(
+				"fixture-token-value",
+			);
+			expect(JSON.stringify(failedEvidence)).not.toContain(
+				"fixture-header-value",
+			);
 			const failedForeignUser = await db.users.findOne({ _id: "foreign" });
 			if (!failedForeignUser) throw new Error("foreign test user missing");
 			const failedForeignInstallation = failedForeignUser.installations[0];
 			if (!failedForeignInstallation)
 				throw new Error("foreign test installation missing");
 			expect(failedForeignInstallation.reconciliationEvidence).toBeUndefined();
-			expect(logs).toContainEqual([
-				"GitHub request failed",
-				JSON.stringify({
-					operation: "bootstrap OpenSpec task fetch",
-					status: 500,
-					target: `https://api.github.com/repositories/2/contents/openspec/changes/repair-defiant/tasks.md?ref=${"a".repeat(40)}`,
-					diagnostic: {
-						message: "OpenSpec artifact denied",
-						documentationUrl: "https://docs.github.com/rest",
-					},
-				}),
-			]);
 			const logged = JSON.stringify(logs);
 			expect(logged).not.toContain("fixture-token-value");
 			expect(logged).not.toContain("fixture-raw-body-value");
 			expect(logged).not.toContain("fixture-header-value");
+			expect(logged).not.toContain("raw provider diagnostic");
 		} finally {
 			globalThis.fetch = original;
 			console.error = originalError;
@@ -1409,7 +1400,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					"12",
 					"installation_identity",
 					"Error",
-					expect.objectContaining({ message: "persistence diagnostic" }),
+					"GitHub request failed (401)",
 				],
 				[
 					"installation bootstrap failed",
@@ -1421,6 +1412,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			]);
 			await new Promise((resolve) => setTimeout(resolve));
 			expect(unhandled).toEqual([]);
+			expect(JSON.stringify(logs)).not.toContain("persistence diagnostic");
 			fail = false;
 			users.replaceOne = originalReplace;
 			await reconcileInstallations(
@@ -1592,7 +1584,7 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 		}
 		expect(logs).toContainEqual([
 			"GitHub request failed",
-			{
+			JSON.stringify({
 				operation: "webhook OpenSpec task fetch",
 				status: 403,
 				target:
@@ -1604,7 +1596,7 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 						{ resource: "Repository", field: "contents", code: "forbidden" },
 					],
 				},
-			},
+			}),
 		]);
 		expect(JSON.stringify(logs)).not.toContain("must-not-log");
 	}));
