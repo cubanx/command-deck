@@ -68,3 +68,9 @@ test("Railway deploys only when runtime inputs change", () => {
 		"!/.mex/**",
 	]);
 });
+
+test("server allows serial GitHub reconciliation to outlive Bun's default idle timeout", () => {
+	expect(text("src/server.ts")).toMatch(
+		/Bun\.serve\(\{[\s\S]*?idleTimeout:\s*255,[\s\S]*?fetch:\s*app\.fetch,/,
+	);
+});

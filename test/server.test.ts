@@ -1,11 +1,12 @@
 import { createHmac } from "node:crypto";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import {
 	bindInstallation,
 	createOAuthState,
 	createSession,
 	upsertIdentity,
 } from "#/access";
+import { loadConfig } from "#/config";
 import { mutateUser } from "#/db";
 import { reconcileInstallations } from "#/github";
 import { advanceMergeIntent, mergeIntentFor } from "#/merge";
@@ -577,6 +578,55 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 		}
 	}));
 
+test("a timed-out reconciliation releases its lock", () =>
+	withDatabase(async (db) => {
+		const { privateKey } = await crypto.subtle.generateKey(
+			{
+				name: "RSASSA-PKCS1-v1_5",
+				modulusLength: 2048,
+				publicExponent: new Uint8Array([1, 0, 1]),
+				hash: "SHA-256",
+			},
+			true,
+			["sign", "verify"],
+		);
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
+			await crypto.subtle.exportKey("pkcs8", privateKey),
+		)
+			.toString("base64")
+			.match(/.{1,64}/g)
+			?.join("\n")}\n-----END PRIVATE KEY-----`;
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const app = createApp(db, {
+			...testConfig,
+			githubAppId: "1",
+			githubAppPrivateKey: pem,
+		});
+		const original = globalThis.fetch;
+		fetchTarget.fetch = async (url, init) => {
+			init?.signal?.throwIfAborted();
+			return String(url).includes("access_tokens")
+				? Response.json({ token: "installation-token" })
+				: String(url).includes("/app/installations/")
+					? Response.json({ account: { login: "cubanx" } })
+					: Response.json({ repositories: [] });
+		};
+		const timeout = vi
+			.spyOn(AbortSignal, "timeout")
+			.mockReturnValue(
+				AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+			);
+		try {
+			expect(await app.reconcile()).toBe("failed");
+			timeout.mockRestore();
+			expect(await app.reconcile()).toBe("success");
+		} finally {
+			timeout.mockRestore();
+			globalThis.fetch = original;
+		}
+	}));
+
 test("merge start and confirmation bind the session, origin, exact node ID, and refresh failures", () =>
 	withDatabase(async (db) => {
 		await seedMergePullRequest(db);
@@ -864,6 +914,43 @@ test("OAuth callback preserves zero bindings and production origin/readiness gat
 		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(
 			503,
 		);
+	}));
+
+test("local OAuth sends its loopback callback and permits its HTTP session cookie", () =>
+	withDatabase(async (db) => {
+		const app = createApp(
+			db,
+			loadConfig({
+				PUBLIC_URL: "http://127.0.0.1:3000",
+				GITHUB_CLIENT_ID: "client",
+				GITHUB_CLIENT_SECRET: "secret",
+			}),
+		);
+		const begin = await app.fetch(
+			new Request("http://127.0.0.1:3000/auth/github"),
+		);
+		expect(begin.headers.get("location")).toContain(
+			"redirect_uri=http%3A%2F%2F127.0.0.1%3A3000%2Fauth%2Fgithub%2Fcallback",
+		);
+		const state = new URL(begin.headers.get("location") ?? "").searchParams.get(
+			"state",
+		);
+		const original = globalThis.fetch;
+		fetchTarget.fetch = async (input) =>
+			String(input).includes("access_token")
+				? Response.json({ access_token: "token" })
+				: Response.json({ id: 9, login: "kira" });
+		try {
+			const callback = await app.fetch(
+				new Request(
+					`http://127.0.0.1:3000/auth/github/callback?code=code&state=${state}`,
+				),
+			);
+			expect(callback.headers.get("location")).toBe("http://127.0.0.1:3000");
+			expect(callback.headers.get("set-cookie")).not.toContain(" Secure;");
+		} finally {
+			globalThis.fetch = original;
+		}
 	}));
 
 test("public shell and health survive failed initialization while readiness reports 503", () =>

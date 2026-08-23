@@ -124,6 +124,31 @@ const productionUrls = (
 	};
 };
 
+const localUrls = (env: Record<string, string | undefined>) => {
+	const value = env.PUBLIC_URL?.trim();
+	if (!value) return {};
+	let origin: URL;
+	try {
+		origin = new URL(value);
+	} catch {
+		throw new Error("PUBLIC_URL must be a loopback HTTP origin");
+	}
+	if (
+		origin.protocol !== "http:" ||
+		!["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname) ||
+		origin.username ||
+		origin.password ||
+		origin.pathname !== "/" ||
+		origin.search ||
+		origin.hash
+	)
+		throw new Error("PUBLIC_URL must be a loopback HTTP origin");
+	return {
+		publicUrl: origin.origin,
+		oauthCallbackUrl: new URL("/auth/github/callback", origin).toString(),
+	};
+};
+
 export function loadConfig(
 	env: Record<string, string | undefined> = process.env,
 ): Config {
@@ -153,6 +178,7 @@ export function loadConfig(
 		throw new Error("MONGODB_DATABASE is invalid");
 	if (production && mongoDatabase !== "command-center-ai-production")
 		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
+	const urls = production ? productionUrls(env, production) : localUrls(env);
 	return {
 		port,
 		hostname: localDemo ? "127.0.0.1" : undefined,
@@ -160,8 +186,8 @@ export function loadConfig(
 		mongoDatabase,
 		localDemo,
 		production,
-		...productionUrls(env, production),
-		secureCookies: true,
+		...urls,
+		secureCookies: !urls.publicUrl?.startsWith("http:"),
 		githubClientId: env.GITHUB_CLIENT_ID,
 		githubClientSecret: env.GITHUB_CLIENT_SECRET,
 		githubAppId: env.GITHUB_APP_ID,

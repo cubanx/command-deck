@@ -28,7 +28,7 @@ On browsers with the File System Access API, grant read-only access to one organ
 
 Appearance supports System, Dark, and Light and persists locally. System follows the current browser color scheme. Merge actions are absent while the GitHub App installation has read-only Pull requests permission and appear beside a title only when the projected PR is mergeable and the existing cheap UI gates pass; `operate-command-deck-merge-permission` owns the separate post-merge permission rollout and proof.
 
-For real provider integration, copy `.env.example` to `.env`, supply a development GitHub App, leave `DCC_LOCAL_DEMO=0`, and use `bun run start`. Local webhooks additionally require a public forwarding URL.
+For real local provider integration, copy `.env.example` to `.env`, set `PUBLIC_URL=http://127.0.0.1:3000`, supply a development GitHub App, leave `DCC_LOCAL_DEMO=0`, and use `bun run start`. Register `http://127.0.0.1:3000/auth/github/callback` as that App's callback URL. Local webhooks additionally require a public forwarding URL.
 
 Local validation:
 
@@ -61,7 +61,7 @@ Quality CI reads the same command list but runs its independent commands in para
 | `PORT` | HTTP port; defaults to `3000`. |
 | `MONGODB_URI_BASE` / `MONGODB_DATABASE` | MongoDB connection URI base and database name. |
 | `NODE_ENV` | Set to `production` only for the hosted service; it enables fail-closed production validation. |
-| `PUBLIC_URL` | Production HTTPS origin with no path, query, fragment, or credentials; must equal `https://${RAILWAY_PUBLIC_DOMAIN}`. |
+| `PUBLIC_URL` | Local OAuth: loopback HTTP origin with no path, query, fragment, or credentials (for example `http://127.0.0.1:3000`). Production: HTTPS origin that must equal `https://${RAILWAY_PUBLIC_DOMAIN}`. |
 | `RAILWAY_PUBLIC_DOMAIN` | Railway-provided production cross-check for `PUBLIC_URL`. |
 | `DCC_LOCAL_DEMO` | Credential-free fixture access. `bun run dev` sets it to `1`; hosted or production environments reject it. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub App OAuth identity flow. The resulting user token is used only during the callback and is never persisted. |

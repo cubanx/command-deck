@@ -9,6 +9,26 @@ type FetchLike = (
 	input: RequestInfo | URL,
 	init?: RequestInit,
 ) => Promise<Response>;
+export const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
+export const githubFetch = async (
+	fetcher: FetchLike,
+	input: RequestInfo | URL,
+	init?: RequestInit,
+) => {
+	const timeout = AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS);
+	try {
+		return await fetcher(input, {
+			...init,
+			signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+		});
+	} catch (error) {
+		if (timeout.aborted)
+			throw new Error(
+				`GitHub request timed out after ${GITHUB_REQUEST_TIMEOUT_MS}ms: ${init?.method ?? "GET"} ${String(input)}`,
+			);
+		throw error;
+	}
+};
 export type TaskFetcher = (input: {
 	installationId: string;
 	repositoryId: string;
@@ -100,7 +120,8 @@ export async function installationToken(
 	installationId: string,
 	fetcher: FetchLike = fetch,
 ) {
-	const response = await fetcher(
+	const response = await githubFetch(
+		fetcher,
 		`https://api.github.com/app/installations/${installationId}/access_tokens`,
 		{
 			method: "POST",
@@ -176,7 +197,7 @@ async function pagedGet(
 			cached = await db.providerCache.findOne({ _id: pageKey });
 		let response: Response | undefined;
 		for (let attempt = 0; attempt < 3; attempt++) {
-			response = await fetcher(next, {
+			response = await githubFetch(fetcher, next, {
 				headers: cached?.etag
 					? {
 							accept: "application/vnd.github+json",
@@ -267,7 +288,7 @@ export async function conditionalGet(
 	const cached = await db.providerCache.findOne({ _id: key });
 	let response: Response | undefined;
 	for (let attempt = 0; attempt < 3; attempt++) {
-		response = await fetcher(url, {
+		response = await githubFetch(fetcher, url, {
 			headers: cached?.etag
 				? {
 						"if-none-match": cached.etag,
@@ -457,7 +478,7 @@ export async function bootstrapInstallation(
 		fetchTasks ??
 		(async (input) => {
 			const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
-			const response = await request(target, {
+			const response = await githubFetch(request, target, {
 				headers: { accept: "application/vnd.github.raw" },
 			});
 			if (response.ok) return response.text();

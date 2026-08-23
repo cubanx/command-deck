@@ -1,9 +1,11 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
 import {
 	bootstrapDeployments,
 	bootstrapInstallation,
 	conditionalGet,
+	GITHUB_REQUEST_TIMEOUT_MS,
+	githubFetch,
 	githubNextLink,
 	reconcileInstallations,
 	reconcileSerial,
@@ -67,6 +69,30 @@ test("provider retries honor reset headers and reject ordinary forbidden respons
 	expect(
 		retryDelay(new Response(null, { status: 403 }), 0, now),
 	).toBeUndefined();
+});
+
+test("GitHub requests fail with a safe timeout diagnostic", async () => {
+	const timeout = vi
+		.spyOn(AbortSignal, "timeout")
+		.mockReturnValue(
+			AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+		);
+	try {
+		await expect(
+			githubFetch(
+				async (_, init) => {
+					init?.signal?.throwIfAborted();
+					return new Response();
+				},
+				"https://api.github.com/fixtures/defiant",
+				{ method: "POST" },
+			),
+		).rejects.toThrow(
+			`GitHub request timed out after ${GITHUB_REQUEST_TIMEOUT_MS}ms: POST https://api.github.com/fixtures/defiant`,
+		);
+	} finally {
+		timeout.mockRestore();
+	}
 });
 
 test("GitHub pagination rejects unsafe and looping links before credentialed fetches", () => {
