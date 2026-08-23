@@ -27,4 +27,4 @@
 
 ## 6. Final verification
 
-- [ ] 6.1 Validate the completed change and repository; verify `openspec validate support-local-command-deck-development --strict` and `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all` pass.
+- [x] 6.1 Validate the completed change and repository; verify `openspec validate support-local-command-deck-development --strict` and `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all` pass.

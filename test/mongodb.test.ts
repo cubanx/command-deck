@@ -32,14 +32,14 @@ test("MongoDB test guard rejects production and ambiguous databases", () => {
 	).toThrow("isolated non-production");
 });
 
-test.skipIf(!process.env.MONGODB_URI_BASE || !process.env.MONGODB_DATABASE)(
+test.skipIf(!process.env.MONGODB_URI_BASE)(
 	"MongoDB connects and initializes indexes idempotently against the guarded integration database",
 	async () => {
 		const uriBase = process.env.MONGODB_URI_BASE;
-		const database = process.env.MONGODB_DATABASE;
-		if (!uriBase || !database)
+		const database = `command-center-ai-test-${crypto.randomUUID()}`;
+		if (!uriBase)
 			throw new Error(
-				"MONGODB_URI_BASE and MONGODB_DATABASE are required for MongoDB integration tests",
+				"MONGODB_URI_BASE is required for MongoDB integration tests",
 			);
 		testDatabaseGuard(database);
 		const db = await openDatabase({ uriBase, database });
