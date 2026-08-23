@@ -85,7 +85,7 @@ header,
 	object-fit: cover;
 }
 .avatar-menu-caret {
-	font-size: 0.75rem;
+	font-size: 1rem;
 }
 .avatar-fallback {
 	background: #334155;

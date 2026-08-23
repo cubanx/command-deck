@@ -28,7 +28,7 @@ On browsers with the File System Access API, grant read-only access to one organ
 
 Appearance supports System, Dark, and Light and persists locally. System follows the current browser color scheme. Merge actions are absent while the GitHub App installation has read-only Pull requests permission and appear beside a title only when the projected PR is mergeable and the existing cheap UI gates pass; `operate-command-deck-merge-permission` owns the separate post-merge permission rollout and proof.
 
-For real local provider integration, copy `.env.example` to `.env`, set `PUBLIC_URL=http://127.0.0.1:3000`, supply a development GitHub App, leave `DCC_LOCAL_DEMO=0`, and use `bun run start`. Register `http://127.0.0.1:3000/auth/github/callback` as that App's callback URL. Local webhooks additionally require a public forwarding URL.
+For real local provider integration, use the ambient Local Automation `OP_SERVICE_ACCOUNT_TOKEN`; do not create or copy a `.env` file. Set the approved local environment's `PUBLIC_URL` to `http://127.0.0.1:3000`, leave `DCC_LOCAL_DEMO=0`, and run `bunx varlock run -- bun run start`. Register `http://127.0.0.1:3000/auth/github/callback` as that App's callback URL. Local webhooks additionally require a public forwarding URL.
 
 Local validation:
 
@@ -53,6 +53,8 @@ Only authored source and configuration are in scope. Narrow exclusions cover gen
 Use `bun run format` before review. `bun run validate:all` runs the ordered commands in `validation-commands.json` sequentially: `bun run check`, `bun run typecheck`, and `bun run check:crap`. `quality` remains an alias for that canonical command. `bun run test:coverage` writes V8 coverage to `coverage/unit/coverage-final.json`; `bun run check:crap` runs that suite and enforces `--max 30 --limit 20`.
 
 Quality CI reads the same command list but runs its independent commands in parallel. Only CrapTS receives an isolated MongoDB service because it runs the coverage suite; `Validate All` is the stable aggregate. Docker build and tooling freshness remain separate checks. The workflow file does not make itself a provider-side required check; changing GitHub rulesets or branch protection remains a separately authorized repository operation.
+
+Local `bun run validate:all` first rejects credential-bearing MongoDB URIs in tracked files, then runs `varlock load --agent`, scans with the `.env.scan` overlay, and injects approved values with `varlock run` for the shared validation runner. The runtime schema keeps MongoDB URIs sensitive; the scan overlay excludes only their exact-value scan because the URI credential guard checks them separately. It uses the ambient Local Automation service-account token and never writes a `.env` file. Quality CI stays credential-free and runs only the shared validation commands without Varlock or 1Password access.
 
 ## Configuration
 

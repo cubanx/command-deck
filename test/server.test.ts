@@ -319,6 +319,7 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(javascript).not.toContain('appearanceChoicesMarkup("appearance")');
 		expect(css).toContain("width: min(220px");
 		expect(css).toContain(".avatar-menu-caret");
+		expect(css).toContain(".avatar-menu-caret {\n\tfont-size: 1rem;");
 		expect(css).toContain(".appearance-menu label");
 		expect(css).toContain(".configuration-link");
 		expect(css).toContain("text-decoration: none");
