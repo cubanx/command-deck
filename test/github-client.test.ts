@@ -1,9 +1,11 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
 import {
 	bootstrapDeployments,
 	bootstrapInstallation,
 	conditionalGet,
+	GITHUB_REQUEST_TIMEOUT_MS,
+	githubFetch,
 	githubNextLink,
 	reconcileInstallations,
 	reconcileSerial,
@@ -67,6 +69,30 @@ test("provider retries honor reset headers and reject ordinary forbidden respons
 	expect(
 		retryDelay(new Response(null, { status: 403 }), 0, now),
 	).toBeUndefined();
+});
+
+test("GitHub requests fail with a safe timeout diagnostic", async () => {
+	const timeout = vi
+		.spyOn(AbortSignal, "timeout")
+		.mockReturnValue(
+			AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+		);
+	try {
+		await expect(
+			githubFetch(
+				async (_, init) => {
+					init?.signal?.throwIfAborted();
+					return new Response();
+				},
+				"https://api.github.com/fixtures/defiant",
+				{ method: "POST" },
+			),
+		).rejects.toThrow(
+			`GitHub request timed out after ${GITHUB_REQUEST_TIMEOUT_MS}ms: POST https://api.github.com/fixtures/defiant`,
+		);
+	} finally {
+		timeout.mockRestore();
+	}
 });
 
 test("GitHub pagination rejects unsafe and looping links before credentialed fetches", () => {
@@ -396,11 +422,13 @@ test("bootstrap rejects unsafe deployment links", () =>
 						: Response.json([{ id: 7 }, { id: 8 }]),
 		);
 		expect(result).toMatchObject({ kind: "changed" });
-		expect((result as any).body[0]).toMatchObject({
+		if (result.kind !== "changed") throw new Error("expected changed result");
+		const body = result.body as Record<string, unknown>[];
+		expect(body[0]).toMatchObject({
 			target_url: undefined,
 			log_url: undefined,
 		});
-		expect((result as any).body[1]).toMatchObject({
+		expect(body[1]).toMatchObject({
 			target_url: "https://railway.app/deployment/8",
 			log_url: "https://railway.app/logs/8",
 		});
@@ -420,7 +448,8 @@ test("bootstrap caps deployment status reads and rows at twenty", () =>
 					: Response.json(Array.from({ length: 21 }, (_, id) => ({ id }))),
 		);
 		expect(statuses).toBe(20);
-		expect((result as any).body).toHaveLength(20);
+		if (result.kind !== "changed") throw new Error("expected changed result");
+		expect(result.body).toHaveLength(20);
 	}));
 
 test("deployment status cache preserves authoritative state on 304", () =>
@@ -587,12 +616,15 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 				if (listingUnchanged) return new Response(null, { status: 304 });
 				else
 					return hasChange
-						? Response.json([
-								{ type: "dir", name: "archive" },
-								{ type: "dir", name: "capture-wolf-359" },
-							], {
-								headers: { etag: "changes-v1" },
-							})
+						? Response.json(
+								[
+									{ type: "dir", name: "archive" },
+									{ type: "dir", name: "capture-wolf-359" },
+								],
+								{
+									headers: { etag: "changes-v1" },
+								},
+							)
 						: new Response(null, { status: 404 });
 			return Response.json([]);
 		};
@@ -810,8 +842,9 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 			"9",
 			"reconciliation",
 			"Error",
-			expect.objectContaining({ message: "raw provider diagnostic" }),
+			"reconciliation failed",
 		]);
+		expect(JSON.stringify(logs)).not.toContain("raw provider diagnostic");
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0],
 		).toMatchObject({ lastSyncError: "reconciliation failed" });

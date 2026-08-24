@@ -2,9 +2,11 @@
 
 ## Purpose
 TBD - created by archiving change build-developer-command-center-mvp. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: GitHub-authenticated developer sessions
-The system SHALL authenticate developers through a state-bound GitHub OAuth callback, SHALL persist only a hash of each opaque session token, and SHALL deliver the token in a secure HTTP-only same-site cookie.
+The system SHALL authenticate developers through a state-bound GitHub OAuth callback, SHALL persist only a hash of each opaque session token, and SHALL deliver the token in a HTTP-only same-site cookie. The cookie MUST include `Secure` except for an explicit non-production loopback HTTP development origin.
 
 #### Scenario: Successful sign-in
 - **WHEN** GitHub returns a valid authorization code and matching state
@@ -13,6 +15,14 @@ The system SHALL authenticate developers through a state-bound GitHub OAuth call
 #### Scenario: Invalid callback state
 - **WHEN** a callback omits or changes the state value
 - **THEN** the system rejects the callback without creating a user or session
+
+#### Scenario: Local non-demo sign-in uses a loopback callback
+- **WHEN** non-production development configures an explicit loopback HTTP public origin and GitHub returns a valid authorization code and matching state
+- **THEN** the authorization request and callback use that origin, and the session cookie is HTTP-only and same-site without `Secure`
+
+#### Scenario: Hosted and unsafe origins reject non-secure sessions
+- **WHEN** production configures its public origin or non-production configures a malformed or non-loopback HTTP public origin
+- **THEN** startup rejects the configuration and the system does not issue a non-secure session cookie
 
 ### Requirement: Installation-bound access
 The system SHALL bind GitHub App installation identifiers to authenticated developers only when GitHub identifies the installation account as `cubanx`, `Crisp-Inc`, or `hudson-law`, and SHALL scope repository-derived data through every approved installation bound to the signed-in developer. This exact account-login allowlist MUST be checked independently of organization membership. The system MUST deduplicate repeated projections only by a stable GitHub pull-request identity after applying account, user, installation, repository, and author authorization.
@@ -62,4 +72,3 @@ The system SHALL make the standard development command serve deterministic fixtu
 #### Scenario: Local demo is requested in production
 - **WHEN** configuration enables the local demo while declaring a production environment
 - **THEN** startup fails before serving requests
-

@@ -533,9 +533,6 @@ const codePointCompare = (left: unknown, right: unknown) => {
 const repositoryTie = (left: DerivedPullRequest, right: DerivedPullRequest) =>
 	codePointCompare(left.pr.full_name, right.pr.full_name) ||
 	codePointCompare(left.pr.repository_id, right.pr.repository_id);
-const numberCompare = (left: DerivedPullRequest, right: DerivedPullRequest) =>
-	Number(right.pr.number) - Number(left.pr.number) ||
-	repositoryTie(left, right);
 const closestCompare = (
 	left: DerivedPullRequest,
 	right: DerivedPullRequest,
@@ -543,7 +540,8 @@ const closestCompare = (
 ) =>
 	nullableCompare(left.blockers.length, right.blockers.length, direction) ||
 	nullableCompare(left.progress, right.progress, "desc") ||
-	numberCompare(left, right);
+	Number(left.pr.number) - Number(right.pr.number) ||
+	repositoryTie(left, right);
 const sortCompare = (
 	left: DerivedPullRequest,
 	right: DerivedPullRequest,

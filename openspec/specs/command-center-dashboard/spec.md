@@ -6,7 +6,7 @@ TBD - created by archiving change build-developer-command-center-mvp. Update Pur
 ## Requirements
 
 ### Requirement: Personal operational summary
-The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a conditional guarded Merge control beside the linked title, and branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The default pull-request order SHALL be Closest to merge using the visible deterministic unresolved-gate count, followed by OpenSpec progress and pull-request number descending.
+The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a conditional guarded Merge control beside the linked title, and branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The default pull-request order SHALL be Closest to merge using the visible deterministic unresolved-gate count, followed by OpenSpec progress and pull-request number ascending.
 
 #### Scenario: Developer opens the command center
 - **WHEN** a signed-in developer has projected state across one or more bound GitHub installations
@@ -193,7 +193,7 @@ The dashboard SHALL offer Closest to merge, Codex activity, Recently updated, PR
 
 #### Scenario: Closest-to-merge ordering is calculated
 - **WHEN** pull requests have draft, requested-changes review, failed Actions, failed Checks, blocked mergeability, or linked incomplete OpenSpec state
-- **THEN** each unresolved category contributes exactly one named blocker, cards show the blocker count and exact blockers, and the default order is blocker count ascending, valid OpenSpec progress descending, then pull-request number descending
+- **THEN** each unresolved category contributes exactly one named blocker, cards show the blocker count and exact blockers, and the default order is blocker count ascending, valid OpenSpec progress descending, then pull-request number ascending
 
 #### Scenario: Sort preference is restored
 - **WHEN** a developer reloads after selecting a supported sort mode and direction
@@ -213,7 +213,7 @@ The dashboard SHALL offer Closest to merge, Codex activity, Recently updated, PR
 
 #### Scenario: Codex activity data becomes available
 - **WHEN** the separate Codex-activity contract supplies valid correlated ordering data
-- **THEN** matched pull requests follow that order, unmatched pull requests follow matched pull requests, and ties or unmatched entries use Closest to merge then pull-request number descending
+- **THEN** matched pull requests follow that order, unmatched pull requests follow matched pull requests, and ties or unmatched entries use Closest to merge then pull-request number ascending
 
 #### Scenario: Developer clears filters
 - **WHEN** the developer activates Clear

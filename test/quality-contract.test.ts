@@ -56,6 +56,17 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(worker).not.toMatch(/(?:const|let|var)\s+\w*cache\w*/i);
 });
 
+test("local validation loads, scans, and injects Varlock while CI remains credential-free", () => {
+	const packageJson = JSON.parse(text("package.json")) as {
+		scripts: Record<string, string>;
+	};
+	const workflow = text(".github/workflows/ci-quality.yml");
+	expect(packageJson.scripts["validate:all"]).toBe(
+		"bun scripts/scan-credential-uris.ts && bunx varlock load --agent && bunx varlock scan --path .env.scan && bunx varlock run -- bun scripts/validate-all.ts",
+	);
+	expect(workflow).not.toMatch(/varlock|OP_SERVICE_ACCOUNT_TOKEN|1password/i);
+});
+
 test("Railway deploys only when runtime inputs change", () => {
 	const railway = JSON.parse(text("railway.json")) as {
 		build: { watchPatterns?: string[] };
@@ -67,4 +78,10 @@ test("Railway deploys only when runtime inputs change", () => {
 		"!/openspec/**",
 		"!/.mex/**",
 	]);
+});
+
+test("server allows serial GitHub reconciliation to outlive Bun's default idle timeout", () => {
+	expect(text("src/server.ts")).toMatch(
+		/Bun\.serve\(\{[\s\S]*?idleTimeout:\s*255,[\s\S]*?fetch:\s*app\.fetch,/,
+	);
 });

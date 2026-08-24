@@ -97,7 +97,7 @@ test("status buckets remain exclusive while closest-to-merge uses independent bl
 	expect(bucketFor(items[0].pr)).toBe("draft");
 	expect(bucketFor(items[1].pr)).toBe("ready");
 	expect(bucketFor(items[2].pr)).toBe("draft");
-	expect(numbers(derivePullRequests(items, {}))).toEqual([11, 9, 12, 10]);
+	expect(numbers(derivePullRequests(items, {}))).toEqual([9, 11, 12, 10]);
 });
 
 test("lifecycle precedence reflects current projected evidence, including regressions", () => {
@@ -336,7 +336,7 @@ test("closest-to-merge keeps incomplete OpenSpec blockers visible before progres
 		],
 		{},
 	);
-	expect(numbers(ordered)).toEqual([4, 1, 3, 2]);
+	expect(numbers(ordered)).toEqual([1, 4, 3, 2]);
 });
 
 test("search ranks exact, prefix, substring, then typo matches and keeps numeric queries exact", () => {
@@ -722,21 +722,21 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 				sort: { mode: "updated", direction: "desc" },
 			}),
 		),
-	).toEqual([4, 3, 2, 1]);
+	).toEqual([4, 3, 1, 2]);
 	expect(
 		numbers(
 			derivePullRequests(sortable, {
 				sort: { mode: "updated", direction: "asc" },
 			}),
 		),
-	).toEqual([3, 4, 2, 1]);
+	).toEqual([3, 4, 1, 2]);
 	expect(
 		numbers(
 			derivePullRequests(sortable, {
 				sort: { mode: "closest", direction: "desc" },
 			}),
 		),
-	).toEqual([3, 4, 2, 1]);
+	).toEqual([3, 4, 1, 2]);
 	expect(
 		numbers(
 			derivePullRequests(sortable, {
@@ -757,14 +757,14 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 				sort: { mode: "progress", direction: "desc" },
 			}),
 		),
-	).toEqual([3, 4, 2, 1]);
+	).toEqual([3, 4, 1, 2]);
 	expect(
 		numbers(
 			derivePullRequests(sortable, {
 				sort: { mode: "progress", direction: "asc" },
 			}),
 		),
-	).toEqual([4, 3, 2, 1]);
+	).toEqual([4, 3, 1, 2]);
 	expect(
 		numbers(
 			derivePullRequests(sortable, {
@@ -791,6 +791,15 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 		mode: "closest",
 		direction: "asc",
 	});
+	expect(
+		derivePullRequests(
+			[
+				{ pr: { number: 7, full_name: "ds9/zeta" }, spec: null },
+				{ pr: { number: 7, full_name: "ds9/alpha" }, spec: null },
+			],
+			{},
+		).map(({ pr }) => pr.full_name),
+	).toEqual(["ds9/alpha", "ds9/zeta"]);
 	expect(
 		derivePullRequests(
 			[

@@ -75,7 +75,7 @@ test("sessions are hashed, expire, and dashboard identity never crosses users", 
 			token,
 			new Date("2029-01-01"),
 		);
-		expect(dashboard.pullRequests.map((pr: any) => pr.number)).toEqual([1]);
+		expect(dashboard.pullRequests.map((pr) => pr.number)).toEqual([1]);
 		expect(dashboard.user).toEqual({
 			login: "sisko",
 			avatar_url: "https://avatars.githubusercontent.com/u/100?v=4",
@@ -167,7 +167,7 @@ test("dashboard shows every open authored PR across allowed installations, atten
 			full_name: "cubanx/local-only",
 		});
 		expect(
-			dashboard.pullRequests.map((pr: any) => [
+			dashboard.pullRequests.map((pr) => [
 				pr.number,
 				pr.title,
 				pr.needs_attention,
@@ -230,7 +230,7 @@ test("dashboard deduplicates renamed stable repositories and matches authors cas
 		await db.users.replaceOne({ _id: "u" }, user!);
 		expect(
 			(await dashboardForUser(db, "u")).pullRequests
-				.map((pr: any) => pr.title)
+				.map((pr) => pr.title)
 				.sort(),
 		).toEqual(["new", "other"]);
 	}));
@@ -263,7 +263,7 @@ test("local demo projections are deterministic and isolated", () =>
 			},
 		});
 		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 118),
+			dashboard.pullRequests.find((pr) => pr.number === 118),
 		).toMatchObject({
 			title: "Tune the wormhole transit monitor",
 			draft: 0,
@@ -274,7 +274,7 @@ test("local demo projections are deterministic and isolated", () =>
 			needs_attention: false,
 		});
 		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 117),
+			dashboard.pullRequests.find((pr) => pr.number === 117),
 		).toMatchObject({
 			title: "Add Bajoran calendar import",
 			mergeable: "clean",
@@ -284,7 +284,7 @@ test("local demo projections are deterministic and isolated", () =>
 			needs_attention: false,
 		});
 		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 116),
+			dashboard.pullRequests.find((pr) => pr.number === 116),
 		).toMatchObject({
 			title: "Retire obsolete docking alerts",
 			draft: 0,
@@ -295,7 +295,7 @@ test("local demo projections are deterministic and isolated", () =>
 			needs_attention: true,
 		});
 		expect(
-			dashboard.pullRequests.find((pr: any) => pr.number === 115),
+			dashboard.pullRequests.find((pr) => pr.number === 115),
 		).toMatchObject({
 			title: "Harden the promenade inventory sync",
 			mergeable: "clean",
@@ -388,11 +388,9 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 		});
 		await db.users.replaceOne({ _id: "u" }, user!);
 		const dashboard = await dashboardForUser(db, "u", now);
-		expect(dashboard.pullRequests.map((pr: any) => pr.number)).toEqual([
-			1, 2, 3, 4,
-		]);
+		expect(dashboard.pullRequests.map((pr) => pr.number)).toEqual([1, 2, 3, 4]);
 		const pullRequests = new Map(
-			dashboard.pullRequests.map((pr: any) => [pr.number, pr]),
+			dashboard.pullRequests.map((pr) => [pr.number, pr]),
 		);
 		expect(pullRequests.get(1)).toMatchObject({
 			url: "https://github.com/ds9/ops/pull/1",
@@ -403,9 +401,11 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 		});
 		expect(pullRequests.get(3)?.open_spec).toBeNull();
 		expect(pullRequests.get(4)?.open_spec).toBeNull();
-		expect(
-			dashboard.deployments.map((deployment: any) => deployment.id),
-		).toEqual(["pending", "failure", "success"]);
+		expect(dashboard.deployments.map((deployment) => deployment.id)).toEqual([
+			"pending",
+			"failure",
+			"success",
+		]);
 	}));
 
 test("operational collection identities and binding seeds are idempotent", () =>
@@ -569,10 +569,17 @@ test("aggregate CAS retries conflicts and preserves multiple bindings", () =>
 			...args: Parameters<typeof db.users.replaceOne>
 		) => ReturnType<typeof db.users.replaceOne>;
 		let conflicts = 0;
-		(db.users as any).replaceOne = async (
+		db.users.replaceOne = async (
 			...args: Parameters<typeof db.users.replaceOne>
 		) => {
-			if (conflicts++ === 0) return { modifiedCount: 0 };
+			if (conflicts++ === 0)
+				return {
+					acknowledged: true,
+					matchedCount: 0,
+					modifiedCount: 0,
+					upsertedCount: 0,
+					upsertedId: null,
+				};
 			return original(...args);
 		};
 		await mutateUser(db, "u", (user) => {
@@ -582,11 +589,17 @@ test("aggregate CAS retries conflicts and preserves multiple bindings", () =>
 			2,
 		);
 		expect(conflicts).toBe(2);
-		(db.users as any).replaceOne = async () => ({ modifiedCount: 0 });
+		db.users.replaceOne = async () => ({
+			acknowledged: true,
+			matchedCount: 0,
+			modifiedCount: 0,
+			upsertedCount: 0,
+			upsertedId: null,
+		});
 		await expect(mutateUser(db, "u", () => {})).rejects.toThrow(
 			"changed concurrently",
 		);
-		(db.users as any).replaceOne = original;
+		db.users.replaceOne = original;
 	}));
 
 test("notifications are user-scoped, newest first, and bounded", () =>
