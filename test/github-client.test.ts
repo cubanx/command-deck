@@ -40,7 +40,13 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		user?.installations[0]?.repositories.push({
 			repositoryId: "2",
 			full_name: "ds9/ops",
-			pullRequests: [{ number: 7, updated_at: "2026-08-24T12:00:00Z" }],
+			pullRequests: [
+				{
+					number: 7,
+					author_login: "sisko",
+					updated_at: "2026-08-24T12:00:00Z",
+				},
+			],
 			openSpecs: [],
 			deployments: [],
 			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
@@ -95,9 +101,17 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 				}
 				if (value.includes("actions/runs"))
 					return Response.json({ workflow_runs: [] });
-				if (value.includes("openspec/changes")) return Response.json([]);
+				if (value.includes("openspec/changes"))
+					return Response.json([
+						{ type: "dir", name: "alpha" },
+						{ type: "dir", name: "zeta" },
+					]);
 				throw new Error(`unexpected targeted request ${value}`);
 			},
+			fetchTasks: async ({ path }) =>
+				path.includes("alpha")
+					? "- [x] Align the deflector"
+					: "- [x] Tune the warp core",
 		});
 		expect(result.kind).toBe("changed");
 		expect(
@@ -110,6 +124,9 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 			changes_requested: false,
 			repository_policy_loaded: true,
 		});
+		expect(
+			(await dashboardForUser(db, "u")).pullRequests[0]?.open_specs,
+		).toMatchObject([{ change_name: "alpha" }, { change_name: "zeta" }]);
 	}));
 
 test("targeted repair fails closed when the preserved repository policy is stale", () =>

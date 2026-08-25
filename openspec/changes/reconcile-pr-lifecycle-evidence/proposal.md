@@ -15,6 +15,7 @@ The command center can remain stale after pull request, review-thread, check, or
 - Persist bounded, aggregate reconciliation-run telemetry in MongoDB for read-only operational analysis without adding dashboard telemetry UI.
 - Sort PRs globally by GitHub opened time, oldest first, independent of repository.
 - Show the newest completed successful or failed deployment from the last 48 hours using a correlated PR number/title when available and a linked short SHA otherwise, without repository or redundant SHA text.
+- Project every correlated OpenSpec for each pull request, retaining a deterministic first singular item only for legacy consumers; require every correlated OpenSpec to be pre-merge ready for lifecycle readiness and guarded merge eligibility.
 
 ## Capabilities
 
@@ -31,7 +32,7 @@ None.
 
 ## Impact
 
-- Changes the dashboard snapshot and MongoDB projection shapes for PR lifecycle evidence, opened timestamps, deployment correlation, cached repository policy, and reconciliation-run summaries.
+- Changes the dashboard snapshot and MongoDB projection shapes for plural PR OpenSpec evidence with a legacy singular compatibility item, PR lifecycle evidence, opened timestamps, deployment correlation, cached repository policy, and reconciliation-run summaries.
 - Extends durable webhook intake, retry, and GitHub App handling for review comments, resolved review threads, commit statuses, and other lifecycle-relevant events without silently dropping verified deliveries.
 - Adds GitHub GraphQL reads for review-thread resolution and PR/check aggregation while reusing REST for Actions, OpenSpec files, and installation repair.
 - Removes the automatic broad installation-reconciliation timer; installation bootstrap, one startup repair, and explicit manual repair remain.

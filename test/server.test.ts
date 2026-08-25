@@ -36,6 +36,7 @@ const seedMergePullRequest = async (db: Parameters<typeof mutateUser>[0]) => {
 						author_login: "kira",
 						state: "open",
 						draft: false,
+						labels: ["openspec-not-required"],
 						head_sha: "a".repeat(40),
 						mergeable: "clean",
 					},
@@ -1023,6 +1024,12 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 			const repository = user.installations[0]?.repositories[0];
 			if (!repository) throw new Error("merge repository missing");
 			repository.openSpecs = [
+				{
+					change_name: "ready-to-merge",
+					completed: 2,
+					total: 2,
+					source_commit: "a".repeat(40),
+				},
 				{
 					change_name: "hold-the-line",
 					completed: 1,

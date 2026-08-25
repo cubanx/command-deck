@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Personal operational summary
-The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, opened time, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a conditional guarded Merge control beside the linked title, and branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The default pull-request order SHALL be GitHub opened time ascending across all repositories, with unavailable opened times last and a deterministic stable identity fallback.
+The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, opened time, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a conditional guarded Merge control beside the linked title, and every branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The OpenSpec collection SHALL be deterministically sorted and deduplicated; the first item MAY remain available only through the existing singular compatibility field. The default pull-request order SHALL be GitHub opened time ascending across all repositories, with unavailable opened times last and a deterministic stable identity fallback.
 
 #### Scenario: Developer opens the command center
 - **WHEN** a signed-in developer has projected state across one or more bound GitHub installations
@@ -32,9 +32,13 @@ The system SHALL present every authorized open pull request authored by the sign
 - **THEN** the PR card shows each failed workflow name linked to its run while preserving the separate Checks aggregate
 
 #### Scenario: Pull request has a linked unfinished OpenSpec group
-- **WHEN** an OpenSpec is correlated to the pull request by repository identity and exact commit or unique branch
-- **THEN** the PR card shows a collapsed native disclosure whose summary contains the change name, total progress, current unfinished pre-merge group, readiness state, and existing Open tasks link
-- **AND** expanding the disclosure shows that current group's disabled checked and unchecked source-state checklist
+- **WHEN** one or more OpenSpecs are correlated to the pull request by repository identity and exact head or unique branch fallback
+- **THEN** the PR card shows a collapsed native disclosure for every correlated OpenSpec whose summary contains the change name, total progress, current unfinished pre-merge group, readiness state, and existing Open tasks link
+- **AND** expanding each disclosure shows that current group's disabled checked and unchecked source-state checklist
+
+#### Scenario: Pull request has multiple correlated OpenSpecs
+- **WHEN** more than one deterministically ordered and deduplicated OpenSpec is correlated to a pull request
+- **THEN** the dashboard renders every correlated OpenSpec without treating the collection as ambiguous, while legacy consumers receive the first item through the existing singular field only
 
 #### Scenario: OpenSpec disclosure appears in any color scheme
 - **WHEN** the dashboard renders collapsed or expanded OpenSpec evidence in System, Dark, or Light appearance
@@ -114,7 +118,7 @@ The dashboard SHALL filter PR cards by the mutually exclusive Draft, OpenSpec re
 - **THEN** the dashboard shows PR cards with projected attention conditions regardless of their lifecycle stage
 
 ### Requirement: Exclusive pull-request status buckets
-Every projected pull request SHALL belong to exactly one clickable lifecycle bucket with this precedence: remove closed or merged PRs; Draft for every GitHub draft; OpenSpec ready for a remaining PR with an applicable missing or incomplete OpenSpec gate; Ready for review for a remaining PR with no requested or completed review activity; Reviewing for a remaining PR that has review activity but does not meet every Mergeable gate; and Mergeable for a remaining PR with at least one completed human or bot review, no unresolved review threads, no current changes-requested review, every target-repository required check successful at the exact current head, loaded repository policy, and authoritative conflict-free mergeability. Non-required checks and Actions SHALL remain visible without blocking Mergeable.
+Every projected pull request SHALL belong to exactly one clickable lifecycle bucket with this precedence: remove closed or merged PRs; Draft for every GitHub draft; OpenSpec ready for a remaining PR with an applicable missing or incomplete OpenSpec gate; Ready for review for a remaining PR with no requested or completed review activity; Reviewing for a remaining PR that has review activity but does not meet every Mergeable gate; and Mergeable for a remaining PR with every correlated OpenSpec pre-merge ready, at least one completed human or bot review, no unresolved review threads, no current changes-requested review, every target-repository required check successful at the exact current head, loaded repository policy, and authoritative conflict-free mergeability. Non-required checks and Actions SHALL remain visible without blocking Mergeable. The guarded Merge control SHALL require the same every-correlated-OpenSpec readiness at action time while retaining its existing exact-head revalidation.
 
 #### Scenario: Draft pull request is authoritatively mergeable
 - **WHEN** a GitHub draft has complete OpenSpec, review, check, policy, and mergeability evidence
@@ -123,6 +127,10 @@ Every projected pull request SHALL belong to exactly one clickable lifecycle buc
 #### Scenario: OpenSpec gate is incomplete
 - **WHEN** a non-draft pull request has an applicable missing or incomplete OpenSpec
 - **THEN** it belongs only to the OpenSpec ready bucket even when later review or check evidence exists
+
+#### Scenario: One of multiple OpenSpecs is incomplete
+- **WHEN** a non-draft pull request has multiple correlated OpenSpecs and any one has unfinished unmarked tasks
+- **THEN** it remains in OpenSpec ready, renders every correlated OpenSpec, and neither lifecycle nor guarded Merge eligibility treats the collection as ready
 
 #### Scenario: Pull request is ready for review
 - **WHEN** a non-draft pull request has satisfied or exempt OpenSpec evidence and no requested or completed human or bot review activity

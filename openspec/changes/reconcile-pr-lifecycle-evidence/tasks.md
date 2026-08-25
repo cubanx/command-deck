@@ -11,6 +11,8 @@
 - [x] 2.2 Implement one shared lifecycle reducer and blocker projection used by buckets, filters, details, and mergeability display, and verify the lifecycle tests pass without changing guarded merge-action authorization.
 - [x] 2.3 Add failing UI tests for five accessible lifecycle stages and filters, informational non-required checks, and exact blocker copy, then update the dashboard rendering and verify those tests pass in light and dark fixtures.
 - [x] 2.4 Add failing ordering tests for global GitHub opened-time ascending order, unknown values last, stable identity ties, removal of PR-number sort, and browser-local preference fallback, then implement the ordering and verify the focused UI tests pass.
+- [x] 2.5 Add failing access, lifecycle, local projection, UI, provider, and guarded-merge server regression tests for every exact-head correlated OpenSpec, all unique-branch fallback matches only when no exact-head match exists, deterministic dedupe and ordering, legacy singular-first compatibility, every-spec readiness, and rendering every correlated OpenSpec.
+- [x] 2.6 Implement plural OpenSpec correlation and projection, lifecycle and guarded-merge readiness over every correlated OpenSpec with legacy singular fallback, and multi-OpenSpec rendering; verify the focused tests pass.
 
 ## 3. Targeted provider evidence and policy
 

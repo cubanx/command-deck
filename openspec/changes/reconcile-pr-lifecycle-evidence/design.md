@@ -26,15 +26,15 @@ The watched repositories use GitHub rulesets rather than classic branch protecti
 
 ### 1. One canonical lifecycle reducer
 
-Create one pure lifecycle reducer over projected evidence and reuse it for bucketing, filters, blockers, sorting, and detail text. Its precedence is closed removal, Draft, OpenSpec ready, Ready for review, Reviewing, then Mergeable. Draft always wins. An incomplete applicable OpenSpec wins over later review evidence. A new commit is not itself a regression signal, although the checks, review, OpenSpec, or mergeability evidence produced by that commit can move the PR backward.
+Create one pure lifecycle reducer over projected evidence and reuse it for bucketing, filters, blockers, sorting, and detail text. Its precedence is closed removal, Draft, OpenSpec ready, Ready for review, Reviewing, then Mergeable. Draft always wins. Any incomplete applicable OpenSpec wins over later review evidence. A new commit is not itself a regression signal, although the checks, review, OpenSpec, or mergeability evidence produced by that commit can move the PR backward.
 
-Mergeable remains descriptive. The guarded merge action continues to perform its existing stricter action-time authorization and exact-head revalidation.
+Mergeable remains descriptive. The guarded merge action continues to perform its existing stricter action-time authorization and exact-head revalidation, including every correlated OpenSpec's readiness.
 
 **Alternative considered:** extend the existing draft/mergeability buckets with more warning pills. Rejected because it leaves mutually contradictory status and blocker logic in several UI paths.
 
 ### 2. OpenSpec readiness is a second projection, not a second progress count
 
-Extend the existing Markdown task parser to retain both total progress and pre-merge readiness. A heading group is post-merge only when its heading contains exact `[post-merge]`; no keyword inference or task-prose inspection is allowed. Total progress continues to count every checkbox. Readiness ignores unchecked tasks only in marked groups. Repository guidance must prevent mixed groups because the service trusts the heading. An existing incomplete OpenSpec always blocks even if the PR has `openspec-not-required`; the label applies only when no OpenSpec correlates.
+Extend the existing Markdown task parser to retain both total progress and pre-merge readiness. A heading group is post-merge only when its heading contains exact `[post-merge]`; no keyword inference or task-prose inspection is allowed. Total progress continues to count every checkbox. Readiness ignores unchecked tasks only in marked groups. Repository guidance must prevent mixed groups because the service trusts the heading. A pull request projects a deterministically sorted, deduplicated collection of every correlated OpenSpec: exact-head matches take precedence and include every exact-head match; only when that collection is empty may every unique-branch match be included. Multiple correlations are evidence, not ambiguity. The first collection item remains available through the existing singular field for compatibility, but every collection item participates in lifecycle and guarded-merge readiness. An existing incomplete OpenSpec always blocks even if the PR has `openspec-not-required`; the label applies only when the collection is empty.
 
 **Alternative considered:** infer post-merge work from task text or maintain a separate exception registry. Rejected as ambiguous and unnecessary.
 
@@ -44,9 +44,9 @@ Add one canonical targeted repair operation keyed by installation, repository, a
 
 1. One GraphQL query for PR state, draft, creation time, labels, exact head, mergeability, reviews, review threads, and current-head status-check rollup.
 2. One REST Actions query scoped to the exact head SHA to preserve the separate Actions evidence already shown by the dashboard.
-3. One REST OpenSpec changes-directory read and one raw task-file read per discovered correlated change.
+3. One REST OpenSpec changes-directory read and one raw task-file read per discovered correlated change, collecting every exact-head match or, only when none exists, every unique-branch match.
 
-The normal single-OpenSpec cost is four HTTP requests. GraphQL review-thread, review, or check connections and REST Actions paginate when required. The service reads every thread page before asserting zero unresolved threads. Required check matching uses cached context plus integration identity when supplied by a ruleset; visible non-required checks remain informational.
+The normal single-OpenSpec cost is four HTTP requests. Additional correlated OpenSpecs add only their raw task-file reads. Correlations are sorted and deduplicated deterministically before projection; the first remains the legacy singular item. GraphQL review-thread, review, or check connections and REST Actions paginate when required. The service reads every thread page before asserting zero unresolved threads. Required check matching uses cached context plus integration identity when supplied by a ruleset; visible non-required checks remain informational.
 
 **Alternative considered:** reuse the current seven-call merge inspection for every repair. Rejected because it rereads repository policy per PR, still lacks resolved-thread aggregation, and is materially more expensive.
 
@@ -132,7 +132,7 @@ After any successful persisted change to user-visible Command Deck data, emit on
 ## Migration Plan
 
 1. Add optional projection fields and the TTL-backed reconciliation-run collection/indexes before changing UI classification.
-2. Project opened time, OpenSpec readiness, deployment correlation, and repository policy while retaining compatibility with old rows.
+2. Project opened time, plural OpenSpec readiness with the deterministic legacy singular item, deployment correlation, and repository policy while retaining compatibility with old rows.
 3. Persist verified deliveries before identity resolution and add retryable pending-verification state without clearing unresolved payloads.
 4. Add targeted repair, coalescing, telemetry, one startup installation repair, manual controls, and the weekday scheduler; then remove the broad timer.
 5. Switch the dashboard reducer, filters, ordering, and deployment headline after server snapshots supply the new evidence.

@@ -68,11 +68,15 @@ An authenticated developer SHALL be able to request targeted reconciliation for 
 ## ADDED Requirements
 
 ### Requirement: Authoritative targeted PR lifecycle repair
-The system SHALL repair one authorized PR from current provider evidence for open/draft state, opened time, exact head SHA, conflict-free mergeability, completed reviews, current changes-requested state, every review thread's resolution state, current-head checks and Actions, labels, and correlated committed OpenSpec tasks. It SHALL fail closed on incomplete pagination or indeterminate required evidence and SHALL remove the target when provider evidence shows it is closed.
+The system SHALL repair one authorized PR from current provider evidence for open/draft state, opened time, exact head SHA, conflict-free mergeability, completed reviews, current changes-requested state, every review thread's resolution state, current-head checks and Actions, labels, and every correlated committed OpenSpec task projection. The OpenSpec collection SHALL include every exact-head match or, only when none exists, every unique-branch match, deterministically sorted and deduplicated; its first item SHALL remain available only through the existing singular compatibility field. It SHALL fail closed on incomplete pagination or indeterminate required evidence and SHALL remove the target when provider evidence shows it is closed.
 
 #### Scenario: Targeted repair succeeds
 - **WHEN** every required provider page for an authorized open PR is retrieved successfully
 - **THEN** the system atomically replaces that PR's lifecycle evidence and refreshes affected user snapshots
+
+#### Scenario: Targeted repair finds multiple correlated OpenSpecs
+- **WHEN** provider evidence identifies multiple exact-head OpenSpec matches or, with no exact-head match, multiple unique-branch matches
+- **THEN** targeted repair projects every deterministically sorted and deduplicated correlated OpenSpec without treating multiple matches as ambiguous
 
 #### Scenario: Review threads exceed one page
 - **WHEN** review-thread results are paginated

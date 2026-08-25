@@ -748,6 +748,8 @@ const mergeCallback = async (
 	try {
 		authoritative = {
 			...(await provider.inspect(intent)),
+			labels: projected.labels,
+			open_specs: projected.open_specs,
 			open_spec: projected.open_spec,
 		};
 	} catch (error) {
@@ -1115,6 +1117,8 @@ const mergeConfirmRoute = async (
 				if (!projected) return {};
 				return {
 					...(await provider.inspect(intent)),
+					labels: projected.labels,
+					open_specs: projected.open_specs,
 					open_spec: projected.open_spec,
 				};
 			},

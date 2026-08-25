@@ -14,6 +14,7 @@ import {
 	lifecycleFor,
 	loadFailureFor,
 	localSpecFor,
+	localSpecsFor,
 	mergeControlFor,
 	mergeMarkup,
 	pageFor,
@@ -994,6 +995,50 @@ test("local OpenSpec evidence is scoped to repository identity before branch mat
 			},
 		]),
 	).toMatchObject({ repository_id: "one" });
+});
+
+test("local OpenSpec evidence keeps all exact matches and suppresses branch fallback", () => {
+	const pr = {
+		installation_id: "i",
+		repository_id: "one",
+		head_sha: "a".repeat(40),
+		head_ref: "feature/shared",
+	};
+	expect(
+		localSpecsFor(
+			pr,
+			[pr],
+			[
+				{
+					installation_id: "i",
+					repository_id: "one",
+					change_name: "zeta",
+					source_commit: pr.head_sha,
+				},
+				{
+					installation_id: "i",
+					repository_id: "one",
+					change_name: "alpha",
+					source_commit: pr.head_sha,
+				},
+				{
+					installation_id: "i",
+					repository_id: "one",
+					change_name: "branch",
+					source_ref: pr.head_ref,
+				},
+			],
+		),
+	).toMatchObject([{ change_name: "alpha" }, { change_name: "zeta" }]);
+	expect(
+		blockersFor({
+			...lifecycleReady,
+			open_specs: [
+				{ completed: 1, total: 1 },
+				{ completed: 1, total: 2 },
+			],
+		}),
+	).toEqual(["OpenSpec incomplete"]);
 });
 
 test("sort modes use deterministic direction, null-last fallbacks, and safe preferences", () => {

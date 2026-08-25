@@ -88,6 +88,22 @@ const openSpecUrl = (fullName: unknown, sha: unknown, change: unknown) => {
 	if (fullName == null || sha == null || change == null) return null;
 	return `https://github.com/${String(fullName)}/blob/${String(sha)}/openspec/changes/${encodeURIComponent(String(change))}/tasks.md`;
 };
+const orderedOpenSpecs = (specs: Record<string, unknown>[]) => {
+	const unique = new Map<string, Record<string, unknown>>();
+	for (const spec of specs)
+		unique.set(
+			[spec.change_name, spec.source_commit, spec.source_ref]
+				.map(String)
+				.join("\u0000"),
+			spec,
+		);
+	return [...unique.values()].sort(
+		(a, b) =>
+			["change_name", "source_commit", "source_ref"]
+				.map((key) => String(a[key] ?? "").localeCompare(String(b[key] ?? "")))
+				.find(Boolean) ?? 0,
+	);
+};
 
 export const safeAvatarUrl = (value: unknown) => {
 	if (typeof value !== "string") return undefined;
@@ -354,14 +370,6 @@ export async function dashboardForUser(
 				: candidates.filter(
 						(item) => pr.head_ref && item.source_ref === pr.head_ref,
 					);
-			const uniqueCommit =
-				openPullRequests.filter(
-					(item) =>
-						item.installation_id === pr.installation_id &&
-						item.repository_id === pr.repository_id &&
-						pr.head_sha &&
-						item.head_sha === pr.head_sha,
-				).length === 1;
 			const uniqueBranch =
 				openPullRequests.filter(
 					(item) =>
@@ -370,20 +378,21 @@ export async function dashboardForUser(
 						pr.head_ref &&
 						item.head_ref === pr.head_ref,
 				).length === 1;
-			const openSpec =
-				matches.length === 1 && uniqueCommit
-					? matches[0]
-					: branches.length === 1 && uniqueBranch
-						? branches[0]
-						: null;
+			const correlatedOpenSpecs = orderedOpenSpecs(
+				matches.length ? matches : uniqueBranch ? branches : [],
+			);
+			const openSpec = correlatedOpenSpecs[0] ?? null;
 			return {
 				...pr,
 				url: pullRequestUrl(pr.full_name, pr.number),
+				open_specs: correlatedOpenSpecs,
 				open_spec: openSpec,
 				needs_attention:
 					needsAttention(pr) ||
 					Boolean(
-						openSpec && Number(openSpec.completed) < Number(openSpec.total),
+						correlatedOpenSpecs.some(
+							(item) => Number(item.completed) < Number(item.total),
+						),
 					),
 			};
 		})

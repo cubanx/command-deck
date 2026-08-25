@@ -394,18 +394,76 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 		);
 		expect(pullRequests.get(1)).toMatchObject({
 			url: "https://github.com/ds9/ops/pull/1",
-			open_spec: null,
+			open_spec: { change_name: "sha-match" },
 		});
 		expect(pullRequests.get(2)?.open_spec).toMatchObject({
 			change_name: "branch-match",
 		});
 		expect(pullRequests.get(3)?.open_spec).toBeNull();
-		expect(pullRequests.get(4)?.open_spec).toBeNull();
+		expect(pullRequests.get(4)?.open_spec).toMatchObject({
+			change_name: "sha-match",
+		});
+		expect(pullRequests.get(1)?.open_specs).toMatchObject([
+			{ change_name: "sha-match" },
+		]);
 		expect(dashboard.deployments.map((deployment) => deployment.id)).toEqual([
 			"pending",
 			"failure",
 			"success",
 		]);
+	}));
+
+test("dashboard keeps every exact-head OpenSpec in deterministic order and falls back to a unique branch", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "1", "cubanx");
+		const sha = "a".repeat(40);
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]?.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{
+						number: 1,
+						author_login: "sisko",
+						state: "open",
+						head_sha: sha,
+						head_ref: "feature/shared",
+					},
+					{
+						number: 2,
+						author_login: "sisko",
+						state: "open",
+						head_ref: "feature/unique",
+					},
+				],
+				openSpecs: [
+					{ change_name: "zeta", completed: 1, total: 1, source_commit: sha },
+					{ change_name: "alpha", completed: 1, total: 1, source_commit: sha },
+					{ change_name: "alpha", completed: 1, total: 1, source_commit: sha },
+					{
+						change_name: "branch",
+						completed: 1,
+						total: 1,
+						source_ref: "feature/unique",
+					},
+				],
+				deployments: [],
+			});
+		});
+		const pulls = await dashboardForUser(db, "u");
+		const exact = pulls.pullRequests.find((pr) => pr.number === 1)!;
+		expect(
+			(exact.open_specs as Array<Record<string, unknown>>).map(
+				(spec) => spec.change_name,
+			),
+		).toEqual(["alpha", "zeta"]);
+		expect((exact.open_spec as Record<string, unknown>)?.change_name).toBe(
+			"alpha",
+		);
+		expect(
+			pulls.pullRequests.find((pr) => pr.number === 2)?.open_specs,
+		).toMatchObject([{ change_name: "branch" }]);
 	}));
 
 test("operational collection identities and binding seeds are idempotent", () =>
