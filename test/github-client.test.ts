@@ -6,10 +6,455 @@ import {
 	conditionalGet,
 	githubNextLink,
 	reconcileInstallations,
+	reconcilePullRequest,
 	reconcileSerial,
 	retryDelay,
 } from "#/github";
+import { countedFetch } from "#/reconciliation-coordinator";
 import { withDatabase } from "./mongo-support";
+
+test("counted fetch includes token, retry, and pagination attempts", async () => {
+	const calls: string[] = [];
+	const counted = countedFetch(async (input) => {
+		calls.push(String(input));
+		return Response.json({});
+	});
+	await counted.fetcher(
+		"https://api.github.com/app/installations/9/access_tokens",
+		{ method: "POST" },
+	);
+	await counted.fetcher("https://api.github.com/repositories/2/pulls?page=1");
+	await counted.fetcher("https://api.github.com/repositories/2/pulls?page=1");
+	await counted.fetcher("https://api.github.com/repositories/2/pulls?page=2");
+	expect(counted.count()).toBe(calls.length);
+	expect(counted.count()).toBe(4);
+});
+
+test("targeted repair replaces complete lifecycle evidence without broad reads", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [{ number: 7, updated_at: "2026-08-24T12:00:00Z" }],
+			openSpecs: [],
+			deployments: [],
+			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		const result = await reconcilePullRequest(db, {
+			installationId: "9",
+			repositoryId: "2",
+			number: 7,
+			token: "token",
+			fetcher: async (url, init) => {
+				const value = String(url);
+				if (value.endsWith("/graphql")) {
+					expect(init?.method).toBe("POST");
+					return Response.json({
+						data: {
+							repository: {
+								pullRequest: {
+									state: "OPEN",
+									merged: false,
+									isDraft: false,
+									createdAt: "2026-08-20T12:00:00Z",
+									updatedAt: "2026-08-24T12:00:00Z",
+									title: "Defiant readiness",
+									url: "https://github.com/ds9/ops/pull/7",
+									headRefOid: "a".repeat(40),
+									mergeable: "MERGEABLE",
+									reviewDecision: null,
+									labels: {
+										nodes: [{ name: "openspec-not-required" }],
+										pageInfo: { hasNextPage: false },
+									},
+									reviewRequests: {
+										totalCount: 0,
+										pageInfo: { hasNextPage: false },
+									},
+									reviews: {
+										nodes: [{ state: "COMMENTED" }],
+										pageInfo: { hasNextPage: false },
+									},
+									reviewThreads: {
+										nodes: [{ isResolved: true }],
+										pageInfo: { hasNextPage: false },
+									},
+									statusCheckRollup: {
+										contexts: { nodes: [], pageInfo: { hasNextPage: false } },
+									},
+								},
+							},
+						},
+					});
+				}
+				if (value.includes("actions/runs"))
+					return Response.json({ workflow_runs: [] });
+				if (value.includes("openspec/changes")) return Response.json([]);
+				throw new Error(`unexpected targeted request ${value}`);
+			},
+		});
+		expect(result.kind).toBe("changed");
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0],
+		).toMatchObject({
+			number: 7,
+			opened_at: "2026-08-20T12:00:00Z",
+			unresolved_review_threads: 0,
+			changes_requested: false,
+			repository_policy_loaded: true,
+		});
+	}));
+
+test("targeted repair fails closed when the preserved repository policy is stale", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [{ number: 7, updated_at: "2026-08-24T12:00:00Z" }],
+			openSpecs: [],
+			deployments: [],
+			policy: {
+				refreshed_at: "2026-08-24T12:00:00Z",
+				required_checks: [],
+				stale: true,
+			},
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+
+		await reconcilePullRequest(db, {
+			installationId: "9",
+			repositoryId: "2",
+			number: 7,
+			token: "token",
+			fetcher: async (url) => {
+				const value = String(url);
+				if (value.endsWith("/graphql"))
+					return Response.json({
+						data: {
+							repository: {
+								pullRequest: {
+									state: "OPEN",
+									merged: false,
+									isDraft: false,
+									createdAt: "2026-08-20T12:00:00Z",
+									updatedAt: "2026-08-24T12:00:00Z",
+									headRefOid: "a".repeat(40),
+									mergeable: "MERGEABLE",
+									reviewDecision: null,
+									labels: { nodes: [], pageInfo: { hasNextPage: false } },
+									reviewRequests: { totalCount: 0 },
+									reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+									reviewThreads: {
+										nodes: [],
+										pageInfo: { hasNextPage: false },
+									},
+									statusCheckRollup: {
+										contexts: { nodes: [], pageInfo: { hasNextPage: false } },
+									},
+								},
+							},
+						},
+					});
+				if (value.includes("actions/runs"))
+					return Response.json({ workflow_runs: [] });
+				if (value.includes("openspec/changes")) return Response.json([]);
+				throw new Error(`unexpected targeted request ${value}`);
+			},
+		});
+
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0],
+		).toMatchObject({ repository_policy_loaded: false });
+	}));
+
+test("targeted repair paginates lifecycle and exact-head Actions evidence", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [],
+			openSpecs: [],
+			deployments: [],
+			policy: {
+				refreshed_at: "2026-08-24T12:00:00Z",
+				required_checks: [{ context: "Validate All", integration_id: "42" }],
+			},
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		const calls: string[] = [];
+		const result = await reconcilePullRequest(db, {
+			installationId: "9",
+			repositoryId: "2",
+			number: 7,
+			token: "token",
+			fetcher: async (url, init) => {
+				const value = String(url);
+				calls.push(value);
+				if (value.endsWith("/graphql")) {
+					const body = JSON.parse(String(init?.body));
+					if (body.variables.after === "threads-1")
+						return Response.json({
+							data: {
+								repository: {
+									pullRequest: {
+										reviewThreads: {
+											nodes: [{ isResolved: false }],
+											pageInfo: { hasNextPage: false },
+										},
+									},
+								},
+							},
+						});
+					return Response.json({
+						data: {
+							repository: {
+								pullRequest: {
+									state: "OPEN",
+									merged: false,
+									isDraft: false,
+									createdAt: "2026-08-20T12:00:00Z",
+									updatedAt: "2026-08-24T12:00:00Z",
+									headRefOid: "a".repeat(40),
+									mergeable: "MERGEABLE",
+									reviewDecision: null,
+									labels: { nodes: [], pageInfo: { hasNextPage: false } },
+									reviewRequests: { totalCount: 0 },
+									reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+									reviewThreads: {
+										nodes: [],
+										pageInfo: { hasNextPage: true, endCursor: "threads-1" },
+									},
+									statusCheckRollup: {
+										contexts: {
+											nodes: [
+												{
+													name: "Validate All",
+													conclusion: "NEUTRAL",
+													checkSuite: { app: { databaseId: 42 } },
+												},
+											],
+											pageInfo: { hasNextPage: false },
+										},
+									},
+								},
+							},
+						},
+					});
+				}
+				if (value.includes("actions/runs?page=2"))
+					return Response.json({ workflow_runs: [] });
+				if (value.includes("actions/runs")) {
+					expect(value).toContain(`head_sha=${"a".repeat(40)}`);
+					return Response.json(
+						{ workflow_runs: [] },
+						{
+							headers: {
+								link: '<https://api.github.com/repositories/2/actions/runs?page=2>; rel="next"',
+							},
+						},
+					);
+				}
+				if (value.includes("openspec/changes")) return Response.json([]);
+				throw new Error(`unexpected targeted request ${value}`);
+			},
+		});
+		expect(result.kind).toBe("changed");
+		expect(calls.some((value) => value.includes("actions/runs?page=2"))).toBe(
+			true,
+		);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0],
+		).toMatchObject({
+			unresolved_review_threads: 1,
+			required_checks: [{ conclusion: "neutral", head_sha: "a".repeat(40) }],
+		});
+	}));
+
+test("installation bootstrap projects ruleset and classic required checks", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const result = await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/app/installations/"))
+					return Response.json({ account: { login: "cubanx" } });
+				if (value.includes("installation/repositories"))
+					return Response.json({
+						repositories: [{ id: 2, full_name: "ds9/ops" }],
+					});
+				if (value.endsWith("/repos/ds9/ops"))
+					return Response.json({ default_branch: "main" });
+				if (value.includes("/rules/branches/main"))
+					return Response.json([
+						{
+							rules: [
+								{
+									type: "required_status_checks",
+									parameters: {
+										required_status_checks: [
+											{ context: "Validate All", integration_id: 42 },
+										],
+									},
+								},
+							],
+						},
+					]);
+				if (value.includes("/branches/main/protection"))
+					return Response.json({
+						required_status_checks: {
+							contexts: ["Docker Build"],
+							checks: [{ context: "Docker Build", app_id: 7 }],
+						},
+					});
+				if (value.includes("/pulls?")) return Response.json([]);
+				if (value.includes("/deployments")) return Response.json([]);
+				if (value.includes("openspec/changes")) return Response.json([]);
+				throw new Error(`unexpected bootstrap request ${value}`);
+			},
+			"app-jwt",
+		);
+		expect(result.kind).toBe("changed");
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.policy,
+		).toMatchObject({
+			required_checks: expect.arrayContaining([
+				{ context: "Validate All", integration_id: "42" },
+				{ context: "Docker Build", integration_id: "7" },
+			]),
+		});
+	}));
+
+test("failed policy refresh preserves the prior policy as stale", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [],
+			openSpecs: [],
+			deployments: [],
+			policy: {
+				refreshed_at: "2026-08-24T12:00:00Z",
+				required_checks: [{ context: "Validate All" }],
+			},
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		const result = await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/app/installations/"))
+					return Response.json({ account: { login: "cubanx" } });
+				if (value.includes("installation/repositories"))
+					return Response.json({
+						repositories: [{ id: 2, full_name: "ds9/ops" }],
+					});
+				if (value.endsWith("/repos/ds9/ops"))
+					return new Response("down", { status: 503 });
+				if (value.includes("/pulls?")) return Response.json([]);
+				if (
+					value.includes("/deployments") ||
+					value.includes("openspec/changes")
+				)
+					return Response.json([]);
+				throw new Error(`unexpected bootstrap request ${value}`);
+			},
+			"app-jwt",
+		);
+		expect(result.kind).toBe("changed");
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.policy,
+		).toMatchObject({
+			stale: true,
+			required_checks: [{ context: "Validate All" }],
+		});
+	}));
+
+test("targeted repair removes a closed PR and preserves prior evidence on partial data", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			openSpecs: [],
+			deployments: [],
+			pullRequests: [
+				{ number: 7, title: "Prior", updated_at: "2026-08-24T12:00:00Z" },
+			],
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		const base = {
+			installationId: "9",
+			repositoryId: "2",
+			number: 7,
+			token: "token",
+		};
+		expect(
+			(
+				await reconcilePullRequest(db, {
+					...base,
+					fetcher: async () =>
+						Response.json({
+							data: {
+								repository: { pullRequest: { state: "CLOSED", merged: false } },
+							},
+						}),
+				})
+			).kind,
+		).toBe("changed");
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests,
+		).toEqual([]);
+
+		const restored = await db.users.findOne({ _id: "u" });
+		restored?.installations[0]?.repositories[0]?.pullRequests.push({
+			number: 7,
+			title: "Prior",
+			updated_at: "2026-08-24T12:00:00Z",
+		});
+		await db.users.replaceOne({ _id: "u" }, restored!);
+		expect(
+			(
+				await reconcilePullRequest(db, {
+					...base,
+					fetcher: async () =>
+						Response.json({
+							data: { repository: { pullRequest: { state: "OPEN" } } },
+						}),
+				})
+			).kind,
+		).toBe("error");
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0],
+		).toMatchObject({ title: "Prior", lifecycle_stale: true });
+	}));
 
 test("conditional reads retain ETags and surface 304", () =>
 	withDatabase(async (db) => {
@@ -458,6 +903,79 @@ test("deployment status cache preserves authoritative state on 304", () =>
 		});
 	}));
 
+test("complete bootstrap re-correlates deployments from retained merge evidence", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [],
+			openSpecs: [],
+			deployments: [],
+			recentMergedPullRequests: [
+				{
+					number: 7,
+					title: "Repair the Defiant",
+					url: "https://github.com/ds9/ops/pull/7",
+					head_sha: "a".repeat(40),
+					merge_sha: "b".repeat(40),
+					merged_at: new Date().toISOString(),
+				},
+			],
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/app/installations/"))
+					return Response.json({ account: { login: "cubanx" } });
+				if (value.includes("installation/repositories"))
+					return Response.json({
+						repositories: [{ id: 2, full_name: "ds9/ops" }],
+					});
+				if (value.includes("/pulls?"))
+					return Response.json([
+						{
+							number: 8,
+							title: "Open a replimat",
+							html_url: "https://github.com/ds9/ops/pull/8",
+							head: { sha: "a".repeat(40) },
+							user: { login: "sisko" },
+							state: "open",
+						},
+					]);
+				if (value.includes("/deployments?"))
+					return Response.json([
+						{ id: 1, sha: "b".repeat(40) },
+						{ id: 2, sha: "a".repeat(40) },
+					]);
+				if (value.includes("/1/statuses") || value.includes("/2/statuses"))
+					return Response.json([]);
+				return Response.json([]);
+			},
+			"app-jwt",
+		);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.deployments[0],
+		).toMatchObject({
+			pull_request_number: 7,
+			pull_request_title: "Repair the Defiant",
+		});
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.deployments[1],
+		).toMatchObject({
+			pull_request_number: 8,
+			pull_request_title: "Open a replimat",
+		});
+	}));
+
 test("complete bootstrap preserves webhook fields and clears OpenSpecs without current tasks", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
@@ -587,12 +1105,15 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 				if (listingUnchanged) return new Response(null, { status: 304 });
 				else
 					return hasChange
-						? Response.json([
-								{ type: "dir", name: "archive" },
-								{ type: "dir", name: "capture-wolf-359" },
-							], {
-								headers: { etag: "changes-v1" },
-							})
+						? Response.json(
+								[
+									{ type: "dir", name: "archive" },
+									{ type: "dir", name: "capture-wolf-359" },
+								],
+								{
+									headers: { etag: "changes-v1" },
+								},
+							)
 						: new Response(null, { status: 404 });
 			return Response.json([]);
 		};

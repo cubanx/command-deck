@@ -11,7 +11,6 @@ export type Config = {
 	githubAppPrivateKey?: string;
 	githubWebhookSecret?: string;
 	reviewBot?: ReviewBotConfig;
-	reconcileIntervalMs?: number;
 	production: boolean;
 	publicUrl?: string;
 	oauthCallbackUrl?: string;
@@ -133,12 +132,6 @@ export function loadConfig(
 		(value) => value >= 1 && value <= 65535,
 		"PORT must be a valid TCP port",
 	);
-	const reconcileIntervalMs = integer(
-		env.RECONCILE_INTERVAL_MS,
-		21_600_000,
-		(value) => value >= 60_000,
-		"RECONCILE_INTERVAL_MS must be at least 60000",
-	);
 	const localDemo = localDemoConfig(env);
 	const production =
 		env.NODE_ENV === "production" || Boolean(env.RAILWAY_ENVIRONMENT_NAME);
@@ -169,6 +162,5 @@ export function loadConfig(
 		githubAppPrivateKey: env.GITHUB_APP_PRIVATE_KEY,
 		githubWebhookSecret: env.GITHUB_WEBHOOK_SECRET,
 		reviewBot: reviewBotConfig(env),
-		reconcileIntervalMs,
 	};
 }

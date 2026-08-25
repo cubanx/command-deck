@@ -186,6 +186,105 @@ test("GitHub webhook route rejects invalid HMAC and durably deduplicates valid d
 		).toBe(1);
 	}));
 
+test("GitHub webhook route rejects correctly signed malformed JSON without an inbox row", () =>
+	withDatabase(async (db) => {
+		const app = createApp(db, { ...testConfig, githubWebhookSecret: "secret" });
+		const body = "{";
+		const signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;
+		expect(
+			(
+				await app.fetch(
+					new Request("http://local/webhooks/github", {
+						method: "POST",
+						headers: {
+							"x-github-delivery": "bad-json",
+							"x-github-event": "ping",
+							"x-hub-signature-256": signature,
+						},
+						body,
+					}),
+				)
+			).status,
+		).toBe(400);
+		expect(await db.inboxDeliveries.countDocuments({})).toBe(0);
+	}));
+
+test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]!.repositories = [
+				{
+					repositoryId: "2",
+					full_name: "ds9/ops",
+					openSpecs: [],
+					deployments: [],
+					pullRequests: [
+						{
+							number: 7,
+							title: "Hold the wormhole",
+							author_login: "sisko",
+							state: "open",
+							draft: false,
+							head_sha: "a".repeat(40),
+							mergeable: "unknown",
+						},
+					],
+				},
+			];
+		});
+		const calls: number[] = [];
+		const app = createApp(
+			db,
+			{ ...testConfig, githubWebhookSecret: "secret" },
+			undefined,
+			{
+				reconcilePullRequest: async (_db, target) => {
+					calls.push(target.number);
+					return { kind: "unchanged" };
+				},
+			},
+		);
+		const session = await createSession(db, "u");
+		const stream = await app.fetch(
+			new Request("http://local/events", {
+				headers: { cookie: `dcc_session=${session.token}` },
+			}),
+		);
+		const reader = stream.body?.getReader();
+		if (!reader) throw new Error("event stream body missing");
+		await reader.read();
+		const body = JSON.stringify({
+			installation: { id: 9, account: { login: "cubanx" } },
+			repository: { id: 2 },
+			pull_request: { number: 7 },
+			review: { state: "approved" },
+		});
+		const signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;
+		expect(
+			await app.fetch(
+				new Request("http://local/webhooks/github", {
+					method: "POST",
+					headers: {
+						"x-github-delivery": "targeted-refresh",
+						"x-github-event": "pull_request_review",
+						"x-hub-signature-256": signature,
+					},
+					body,
+				}),
+			),
+		).toMatchObject({ status: 202 });
+		await app.drain();
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(calls).toEqual([7]);
+		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+			"event: refresh",
+		);
+		await reader.cancel();
+		app.stop?.();
+	}));
+
 test("dashboard shell uses compact OpenSpec disclosure and an accessible PR section name", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
@@ -224,7 +323,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain('id="pr-direction"');
 		expect(javascript).toContain("Lifecycle stage");
 		expect(javascript).toContain("Needs attention");
-		expect(javascript).toContain("Newest first");
+		expect(javascript).toContain("Opened");
 		expect(javascript).toContain("Closest to merge");
 		expect(javascript).not.toContain("Codex activity (unavailable)");
 		expect(javascript).not.toContain("codex-activity-status");
@@ -326,7 +425,9 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(css).toContain("align-items: flex-start");
 		expect(css).toContain("flex-wrap: nowrap");
 		expect(javascript).toContain("value[0].toUpperCase()");
-		expect(javascript).toContain("Reconcile now");
+		expect(javascript).toContain("Reconcile PR");
+		expect(javascript).toContain("Reconcile all PRs");
+		expect(javascript).toContain("Reconcile installation");
 		expect(javascript).toContain("localStorage");
 		expect(javascript).toContain("matchMedia");
 		expect(javascript).toContain("indexedDB");
@@ -387,6 +488,116 @@ test("reconcile route requires an authenticated user with an approved bound inst
 		).toBe(404);
 	}));
 
+test("manual PR reconciliation is scoped to known open PRs and all-known repair stays targeted", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "kira");
+		await upsertIdentity(db, "foreign", "garak");
+		await bindInstallation(db, "u", "12", "cubanx");
+		await bindInstallation(db, "foreign", "13", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]!.repositories = [
+				{
+					repositoryId: "42",
+					full_name: "cubanx/defiant",
+					openSpecs: [],
+					deployments: [],
+					pullRequests: [
+						{
+							number: 7,
+							title: "Repair the Defiant",
+							author_login: "kira",
+							state: "open",
+							draft: false,
+							mergeable: "unknown",
+						},
+					],
+				},
+			];
+		});
+		const calls: Array<{
+			installationId: string;
+			repositoryId: string;
+			number: number;
+		}> = [];
+		let fail = false;
+		const app = createApp(db, testConfig, undefined, {
+			reconcilePullRequest: async (_db, target) => {
+				calls.push(target);
+				return fail
+					? { kind: "error", message: "repair failed", stale: true }
+					: { kind: "unchanged" };
+			},
+		});
+		const session = await createSession(db, "u");
+		const post = (path: string, body?: unknown) =>
+			app.fetch(
+				new Request(`http://local${path}`, {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${session.token}`,
+						...(body === undefined
+							? {}
+							: { "content-type": "application/json" }),
+					},
+					body: body === undefined ? undefined : JSON.stringify(body),
+				}),
+			);
+		expect(
+			(
+				await post("/api/reconcile/pull-request", {
+					installationId: "12",
+					repositoryId: "42",
+					number: 7,
+				})
+			).status,
+		).toBe(200);
+		expect(await (await post("/api/reconcile/pull-requests")).json()).toEqual({
+			status: "success",
+			count: 1,
+			successfulCount: 1,
+			failedCount: 0,
+			estimatedProviderRequests: 4,
+		});
+		expect(
+			calls.map(({ installationId, repositoryId, number }) => ({
+				installationId,
+				repositoryId,
+				number,
+			})),
+		).toEqual([
+			{ installationId: "12", repositoryId: "42", number: 7 },
+			{ installationId: "12", repositoryId: "42", number: 7 },
+		]);
+		fail = true;
+		const partial = await post("/api/reconcile/pull-requests");
+		expect(partial.status).toBe(502);
+		expect(await partial.json()).toEqual({
+			status: "partial_failure",
+			count: 1,
+			successfulCount: 0,
+			failedCount: 1,
+			estimatedProviderRequests: 4,
+		});
+		expect(
+			(
+				await post("/api/reconcile/pull-request", {
+					installationId: "13",
+					repositoryId: "42",
+					number: 7,
+				})
+			).status,
+		).toBe(404);
+		expect(
+			(
+				await post("/api/reconcile/pull-request", {
+					installationId: "12",
+					repositoryId: "42",
+					number: 99,
+				})
+			).status,
+		).toBe(404);
+	}));
+
 test("manual reconciliation scopes work to the signed-in user, refreshes, and sanitizes failures", () =>
 	withDatabase(async (db) => {
 		const { privateKey } = await crypto.subtle.generateKey(
@@ -428,7 +639,6 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			fetchTarget.fetch = async (input) => {
 				const url = String(input);
 				if (url.includes("access_tokens")) {
-					if (fail) throw new Error("raw provider diagnostic");
 					tokenIds.push(url.match(/installations\/(\d+)/)?.[1] ?? "");
 					return Response.json({ token: "installation-token" });
 				}
@@ -440,6 +650,11 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 						resolve();
 					});
 				}
+				if (url.endsWith("/repos/cubanx/defiant"))
+					return Response.json({ default_branch: "main" });
+				if (url.includes("/rules/branches/")) return Response.json([]);
+				if (url.includes("/branches/main/protection"))
+					return Response.json({}, { status: 404 });
 				if (url.includes("installation/repositories"))
 					return Response.json({
 						repositories: [{ id: 2, full_name: "cubanx/defiant" }],
@@ -547,8 +762,12 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 				outcome: "failure",
 				operation: "openspec",
 			});
-			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-token-value");
-			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-header-value");
+			expect(JSON.stringify(failedEvidence)).not.toContain(
+				"fixture-token-value",
+			);
+			expect(JSON.stringify(failedEvidence)).not.toContain(
+				"fixture-header-value",
+			);
 			const failedForeignUser = await db.users.findOne({ _id: "foreign" });
 			if (!failedForeignUser) throw new Error("foreign test user missing");
 			const failedForeignInstallation = failedForeignUser.installations[0];
@@ -1154,6 +1373,11 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 						resolve(Response.json({ account: { login: "Crisp-Inc" } })),
 					);
 				});
+			if (url.endsWith("/repos/Crisp-Inc/defiant"))
+				return Response.json({ default_branch: "main" });
+			if (url.includes("/rules/branches/main")) return Response.json([]);
+			if (url.includes("/branches/main/protection"))
+				return new Response(null, { status: 404 });
 			if (url.includes("installation/repositories"))
 				return Response.json({
 					repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }],
@@ -1280,6 +1504,11 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				}
 				return Response.json({ account: { login: "Crisp-Inc" } });
 			}
+			if (url.endsWith("/repos/Crisp-Inc/defiant"))
+				return Response.json({ default_branch: "main" });
+			if (url.includes("/rules/branches/main")) return Response.json([]);
+			if (url.includes("/branches/main/protection"))
+				return new Response(null, { status: 404 });
 			if (url.includes("installation/repositories"))
 				return Response.json({
 					repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }],
@@ -1502,21 +1731,21 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 			globalThis.fetch = originalFetch;
 			console.error = originalError;
 		}
-		expect(logs).toContainEqual([
-			"GitHub request failed",
-			{
-				operation: "webhook OpenSpec task fetch",
-				status: 403,
-				target:
-					"https://api.github.com/repositories/2/contents/openspec/changes/defiant/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				diagnostic: {
-					message: "Resource not accessible by integration",
-					documentationUrl: "https://docs.github.com/rest",
-					errors: [
-						{ resource: "Repository", field: "contents", code: "forbidden" },
-					],
-				},
+		const diagnostic = logs.find(
+			(log) => log[0] === "GitHub request failed",
+		)?.[1];
+		expect(JSON.parse(String(diagnostic))).toEqual({
+			operation: "webhook OpenSpec task fetch",
+			status: 403,
+			target:
+				"https://api.github.com/repositories/2/contents/openspec/changes/defiant/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			diagnostic: {
+				message: "Resource not accessible by integration",
+				documentationUrl: "https://docs.github.com/rest",
+				errors: [
+					{ resource: "Repository", field: "contents", code: "forbidden" },
+				],
 			},
-		]);
+		});
 		expect(JSON.stringify(logs)).not.toContain("must-not-log");
 	}));

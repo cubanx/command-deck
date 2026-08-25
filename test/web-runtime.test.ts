@@ -48,9 +48,11 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		querySelectorAll: (selector: string) =>
 			selector === "[data-repository]"
 				? [repositoryCheckbox]
-				: selector === "[data-status-detail]"
-					? [statusTrigger, deploymentTrigger]
-					: [],
+				: selector === "[data-reconcile-all]"
+					? [element("#reconcile-all")]
+					: selector === "[data-status-detail]"
+						? [statusTrigger, deploymentTrigger]
+						: [],
 		getElementById: (id: string) => element(`#${id}`),
 		createElement: () => new FakeElement(),
 		addEventListener: (name: string, listener: (event: Event) => unknown) =>
@@ -110,7 +112,11 @@ test("the compiled browser runtime renders and reconciles with native controls",
 				full_name: "ds9/defiant",
 				ref: "main",
 				sha: "a".repeat(40),
-				state: "success",
+				state: "error",
+				updated_at: "2030-01-02T02:00:00Z",
+				pull_request_number: 9,
+				pull_request_title: "Prepare the Defiant",
+				pull_request_url: "https://github.com/ds9/defiant/pull/9",
 				target_url: "https://defiant.example/deployments/9",
 				log_url: "https://defiant.example/logs/9",
 			},
@@ -125,7 +131,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	const fetchCalls: string[] = [];
 	const fetch = async (input: string) => {
 		fetchCalls.push(input);
-		return input === "/api/reconcile"
+		return input === "/api/reconcile/pull-requests"
 			? new Response(JSON.stringify({ status: "success" }))
 			: new Response(JSON.stringify(snapshot));
 	};
@@ -146,6 +152,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 			configurable: true,
 			value: Notification,
 		},
+		confirm: { configurable: true, value: () => true },
 		fetch: { configurable: true, value: fetch },
 		EventSource: {
 			configurable: true,
@@ -166,7 +173,9 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(element("#app").innerHTML).toContain("Open tasks");
 	expect(element("#app").innerHTML).toContain('class="deployment-summary"');
 	expect(element("#app").innerHTML).toContain("Latest deployment");
-	expect(element("#app").innerHTML).toContain(
+	expect(element("#app").innerHTML).toContain("#9 · Prepare the Defiant");
+	expect(element("#app").innerHTML).toContain(">Failed<");
+	expect(element("#app").innerHTML).not.toContain(
 		`ds9/defiant · main · ${"a".repeat(40)}`,
 	);
 	expect(element("#app").innerHTML).not.toContain(" ·  · ");
@@ -174,6 +183,48 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		"GitHub deployments · last 48 hours",
 	);
 	expect(element("#app").innerHTML).not.toContain("deployment-9");
+	const summary = app.deploymentSummaryMarkup([
+		{
+			full_name: "ds9/defiant",
+			sha: "b".repeat(40),
+			state: "pending",
+			updated_at: "2030-01-02T03:00:00Z",
+		},
+		{
+			full_name: "ds9/defiant",
+			sha: "c".repeat(40),
+			state: "error",
+			updated_at: "2030-01-02T02:00:00Z",
+		},
+		{
+			full_name: "ds9/defiant",
+			sha: "e".repeat(40),
+			state: "success",
+			updated_at: "2030-01-02T01:00:00Z",
+		},
+	]);
+	expect(summary).toContain(
+		`href="https://github.com/ds9/defiant/commit/${"c".repeat(40)}"`,
+	);
+	expect(summary).toContain("c".repeat(7));
+	expect(summary).toContain(">Failed<");
+	expect(summary).not.toContain(">ds9/defiant<");
+	expect(
+		app.deploymentSummaryMarkup([
+			{
+				full_name: "ds9/defiant",
+				sha: "d".repeat(40),
+				state: "failure",
+				updated_at: "2030-01-02T04:00:00Z",
+			},
+		]),
+	).toContain(">Failed<");
+	expect(
+		app.deploymentSummaryMarkup([
+			{ state: "inactive", updated_at: "2030-01-02T03:00:00Z" },
+			{ state: "success", updated_at: "not a date" },
+		]),
+	).toContain("No completed deployment in the last 48 hours");
 	expect(element("#app").innerHTML).toContain("lifecycle-rail");
 	expect(element("#app").innerHTML).toContain("lifecycle-pills");
 	expect(element("#app").innerHTML).not.toContain(
@@ -240,10 +291,10 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(element("#app").innerHTML).not.toContain(
 		'aria-label="Deployment detail"',
 	);
-	const reconcile = element("#reconcile").listeners.get("click");
+	const reconcile = element("#reconcile-all").listeners.get("click");
 	expect(reconcile).toBeTypeOf("function");
 	await reconcile?.(new Event("click"));
-	expect(fetchCalls).toContain("/api/reconcile");
+	expect(fetchCalls).toContain("/api/reconcile/pull-requests");
 	const request = <Result>(result: Result) => {
 		const value: {
 			result: Result;

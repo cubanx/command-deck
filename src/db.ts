@@ -6,14 +6,30 @@ import {
 } from "mongodb";
 
 export const MAX_USER_BSON_BYTES = 12 * 1024 * 1024;
+export const RECENT_MERGED_PULL_REQUEST_CAP = 100;
+export const RECENT_MERGED_PULL_REQUEST_RETENTION_MS = 48 * 60 * 60 * 1_000;
 const MAX_CAS_RETRIES = 3;
-export type PullRequest = Record<string, unknown>;
+export type PullRequest = Record<string, unknown> & { opened_at?: string };
+export type RepositoryPolicy = Record<string, unknown> & {
+	refreshed_at: string;
+	required_checks: unknown[];
+};
+export type MergedPullRequestEvidence = {
+	number: number;
+	title: string;
+	url: string;
+	head_sha: string;
+	merge_sha: string;
+	merged_at: string;
+};
 export type Repository = {
 	repositoryId: string;
 	full_name: string;
 	pullRequests: PullRequest[];
 	openSpecs: Record<string, unknown>[];
 	deployments: Record<string, unknown>[];
+	policy?: RepositoryPolicy;
+	recentMergedPullRequests?: MergedPullRequestEvidence[];
 };
 export type Installation = {
 	installationId: string;
@@ -68,6 +84,15 @@ export type InboxDelivery = {
 	attempts: number;
 	nextAttemptAt?: Date;
 	error?: string;
+	verificationFirstAttemptAt?: Date;
+	verificationLastAttemptAt?: Date;
+	verificationReason?:
+		| "missing_binding"
+		| "ambiguous_binding"
+		| "conflicting_account"
+		| "verification_unavailable";
+	resolvedAt?: Date;
+	resolvedBy?: "projection" | "recorded_noop" | "reconciliation";
 	receivedAt: Date;
 	processedAt?: Date;
 };
@@ -87,6 +112,22 @@ export type Notification = {
 	link?: string;
 	createdAt: Date;
 };
+export type ReconciliationRun = {
+	installationId: string;
+	trigger: "scheduled" | "webhook" | "startup" | "manual";
+	startedAt: Date;
+	completedAt: Date;
+	durationMs: number;
+	prCount: number;
+	providerRequestCount: number;
+	changedPrCount: number;
+	unchangedPrCount: number;
+	changedFieldCategories: string[];
+	failureCount: number;
+	unresolvedDeliveryCount: number;
+	repairedDeliveryCount: number;
+	outcome: "success" | "partial_failure" | "failure";
+};
 export type Db = {
 	mongo: MongoDb;
 	users: Collection<UserAggregate>;
@@ -96,6 +137,7 @@ export type Db = {
 	inboxDeliveries: Collection<InboxDelivery>;
 	providerCache: Collection<ProviderCache>;
 	notifications: Collection<Notification>;
+	reconciliationRuns: Collection<ReconciliationRun>;
 	client: MongoClient;
 };
 
@@ -150,6 +192,9 @@ export async function openDatabase(config = mongoConfig()): Promise<Db> {
 			inboxDeliveries: mongo.collection<InboxDelivery>("inbox_deliveries"),
 			providerCache: mongo.collection<ProviderCache>("provider_cache"),
 			notifications: mongo.collection<Notification>("notifications"),
+			reconciliationRuns: mongo.collection<ReconciliationRun>(
+				"reconciliation_runs",
+			),
 		};
 	})();
 	cached = { key, promise };
@@ -170,6 +215,11 @@ export async function initializeDatabase(db: Db) {
 			{ unique: true },
 		),
 		db.notifications.createIndex({ userId: 1, createdAt: -1 }),
+		db.reconciliationRuns.createIndex(
+			{ completedAt: 1 },
+			{ expireAfterSeconds: 1_209_600 },
+		),
+		db.reconciliationRuns.createIndex({ installationId: 1, completedAt: -1 }),
 	]);
 }
 export async function databaseReady(db: Db) {
@@ -217,4 +267,61 @@ export function appendReconciliationEvidence(
 		...(installation.reconciliationEvidence ?? []),
 		evidence,
 	].slice(-20);
+}
+
+export function retainRecentMergedPullRequests(
+	evidence: MergedPullRequestEvidence[],
+	now = Date.now(),
+) {
+	return evidence
+		.filter(
+			(item) =>
+				Date.parse(item.merged_at) >=
+				now - RECENT_MERGED_PULL_REQUEST_RETENTION_MS,
+		)
+		.sort(
+			(left, right) => Date.parse(right.merged_at) - Date.parse(left.merged_at),
+		)
+		.slice(0, RECENT_MERGED_PULL_REQUEST_CAP);
+}
+
+export function correlateDeploymentPullRequest(
+	deployment: Record<string, unknown>,
+	pullRequests: PullRequest[],
+	recentMergedPullRequests: MergedPullRequestEvidence[] = [],
+	now = Date.now(),
+) {
+	const {
+		pull_request_number: _number,
+		pull_request_title: _title,
+		pull_request_url: _url,
+		...uncorrelated
+	} = deployment;
+	const sha = uncorrelated.sha;
+	if (typeof sha !== "string" || !/^[0-9a-f]{40}$/i.test(sha))
+		return uncorrelated;
+	const match = [
+		...pullRequests,
+		...retainRecentMergedPullRequests(recentMergedPullRequests, now),
+	].find(
+		(item) =>
+			(item.head_sha === sha ||
+				("merge_sha" in item && item.merge_sha === sha)) &&
+			typeof item.number === "number" &&
+			Number.isSafeInteger(item.number) &&
+			item.number > 0 &&
+			typeof item.title === "string" &&
+			item.title.trim().length > 0 &&
+			typeof item.url === "string" &&
+			URL.canParse(item.url) &&
+			["http:", "https:"].includes(new URL(item.url).protocol),
+	);
+	return match
+		? {
+				...uncorrelated,
+				pull_request_number: match.number,
+				pull_request_title: match.title,
+				pull_request_url: match.url,
+			}
+		: uncorrelated;
 }

@@ -100,7 +100,7 @@ Configure a private GitHub App. `cubanx` and `Crisp-Inc` may use all repositorie
 - callback URL: `${PUBLIC_URL}/auth/github/callback`
 - webhook URL: `${PUBLIC_URL}/webhooks/github`, enabled with SSL verification
 - repository permissions: metadata read (implicit), pull requests read, checks read, actions read, contents read, deployments read; issues read only when review-bot tracking is configured
-- events: installation, pull request, pull request review, check run, check suite, workflow run, push, deployment, and deployment status; issue comment only when review-bot tracking is configured
+- events: installation, pull request, pull request review, pull request review comment, pull request review thread, check run, check suite, workflow run, commit status, push, deployment, and deployment status; issue comment only when review-bot tracking is configured
 
 The install callback does not trust its `installation_id`. It confirms the installation through `/user/installations` with the ephemeral user token before binding it to the signed-in developer. Repository automation then uses installation access tokens, not user access tokens.
 

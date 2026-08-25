@@ -2,8 +2,11 @@ import type { Db } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 
+export { type OpenSpecGate, openSpecGate } from "#/openspec-gate";
+
 export const changedTaskPaths = (paths: string[]) =>
 	paths.filter((path) => /^openspec\/changes\/[^/]+\/tasks\.md$/.test(path));
+
 export function parseTasks(content: string) {
 	const groups: Array<{
 		title: string;
@@ -29,12 +32,16 @@ export function parseTasks(content: string) {
 		});
 	}
 	const tasks = groups.flatMap((group) => group.tasks);
+	const activeGroup = groups.find(
+		(group) =>
+			!group.title.includes("[post-merge]") &&
+			group.tasks.some((task) => !task.completed),
+	);
 	return {
 		completed: tasks.filter((task) => task.completed).length,
 		total: tasks.length,
-		activeGroup:
-			groups.find((group) => group.tasks.some((task) => !task.completed)) ??
-			null,
+		preMergeReady: !activeGroup,
+		activeGroup: activeGroup ?? null,
 	};
 }
 export async function projectOpenSpec(
@@ -119,6 +126,7 @@ export async function projectOpenSpec(
 					change_name: changeName,
 					completed: progress.completed,
 					total: progress.total,
+					pre_merge_ready: progress.preMergeReady,
 					source_commit: input.sha,
 					...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
 					active_group: progress.activeGroup

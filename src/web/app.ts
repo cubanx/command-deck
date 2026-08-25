@@ -1,4 +1,6 @@
-type SortMode = "closest" | "updated" | "number" | "progress" | "repository";
+import { openSpecGate } from "#/openspec-gate";
+
+type SortMode = "opened" | "closest" | "updated" | "progress" | "repository";
 type SortDirection = "asc" | "desc";
 type SortPreference = { mode: SortMode; direction: SortDirection };
 type CheckoutResolution = "resolved" | "unresolved";
@@ -14,6 +16,7 @@ type OpenSpecEvidence = {
 	change_name?: string;
 	completed?: number | string;
 	total?: number | string;
+	pre_merge_ready?: boolean;
 	active_group?: OpenSpecGroup | string | null;
 	source_type?: string;
 	source_url?: string | null;
@@ -35,6 +38,16 @@ type PullRequest = {
 	state?: string;
 	draft?: boolean | number;
 	mergeable?: boolean | string;
+	opened_at?: string;
+	labels?: string[];
+	open_specs?: OpenSpecEvidence[];
+	review_activity?: boolean;
+	review_requested?: boolean;
+	completed_review_count?: number;
+	unresolved_review_threads?: number;
+	changes_requested?: boolean;
+	repository_policy_loaded?: boolean;
+	required_checks?: ReadonlyArray<{ head_sha?: string; conclusion?: string }>;
 	workflow_state?: string;
 	checks_state?: string;
 	review_state?: string;
@@ -55,6 +68,10 @@ type DeploymentProjection = {
 	ref?: string;
 	sha?: string;
 	state?: string;
+	updated_at?: string;
+	pull_request_number?: number;
+	pull_request_title?: string;
+	pull_request_url?: string;
 	target_url?: string | null;
 	log_url?: string | null;
 };
@@ -165,6 +182,8 @@ const isOpenSpecEvidence = (value: unknown): value is OpenSpecEvidence =>
 			typeof value[key] === "string" ||
 			typeof value[key] === "number",
 	) &&
+	(value.pre_merge_ready === undefined ||
+		typeof value.pre_merge_ready === "boolean") &&
 	(value.active_group === undefined ||
 		value.active_group === null ||
 		typeof value.active_group === "string" ||
@@ -219,7 +238,12 @@ const isDeployment = (value: unknown): value is DeploymentProjection =>
 		"ref",
 		"sha",
 		"state",
+		"updated_at",
+		"pull_request_title",
+		"pull_request_url",
 	]) &&
+	(value.pull_request_number === undefined ||
+		typeof value.pull_request_number === "number") &&
 	hasOnlyOptionalNullableStrings(value, ["target_url", "log_url"]);
 const isRepository = (value: unknown): value is Repository =>
 	isRecord(value) &&
@@ -395,11 +419,11 @@ const normalized = (value: unknown) =>
 	String(value ?? "")
 		.trim()
 		.toLowerCase();
-const defaultSort: SortPreference = { mode: "closest", direction: "asc" };
+const defaultSort: SortPreference = { mode: "opened", direction: "asc" };
 const sortModes = new Set<string>([
+	"opened",
 	"closest",
 	"updated",
-	"number",
 	"progress",
 	"repository",
 ]);
@@ -463,8 +487,6 @@ export const fuzzyScore = (query: unknown, value: unknown) => {
 };
 export const isProjectedMergeable = (pr: PullRequest) =>
 	pr.mergeable === true || ["true", "clean"].includes(normalized(pr.mergeable));
-export const bucketFor = (pr: PullRequest) =>
-	pr.draft ? "draft" : isProjectedMergeable(pr) ? "mergeable" : "ready";
 const failedState = (value: unknown) =>
 	[
 		"action_required",
@@ -476,33 +498,85 @@ const failedState = (value: unknown) =>
 		"timed_out",
 		"timed-out",
 	].includes(normalized(value));
-export const blockersFor = (
+const specsFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) =>
+	pr.open_specs ?? (spec ? [spec] : []);
+const reviewActivityFor = (pr: PullRequest) =>
+	pr.review_activity === true ||
+	pr.review_requested === true ||
+	Number(pr.completed_review_count) > 0 ||
+	["approved", "commented", "changes_requested", "complete"].includes(
+		normalized(pr.review_state),
+	) ||
+	["approved", "commented", "changes_requested", "complete"].includes(
+		normalized(pr.bot_review_state),
+	);
+const completedReviewFor = (pr: PullRequest) =>
+	Number(pr.completed_review_count) > 0 ||
+	["approved", "commented", "complete"].includes(normalized(pr.review_state)) ||
+	["approved", "commented", "complete"].includes(
+		normalized(pr.bot_review_state),
+	);
+const requiredChecksReady = (pr: PullRequest) =>
+	Array.isArray(pr.required_checks) &&
+	pr.required_checks.every(
+		(check) =>
+			check.head_sha === pr.head_sha &&
+			["success", "neutral", "skipped"].includes(normalized(check.conclusion)),
+	);
+export type Lifecycle = {
+	stage: "closed" | "draft" | "openspec" | "ready" | "reviewing" | "mergeable";
+	blockers: string[];
+};
+export const lifecycleFor = (
 	pr: PullRequest,
 	spec?: OpenSpecEvidence | null,
-) => {
-	const blockers = [];
-	if (pr.draft) blockers.push("Draft");
-	if (normalized(pr.review_state) === "changes_requested")
-		blockers.push("Changes requested");
-	if (failedState(pr.workflow_state)) blockers.push("Actions failed");
-	if (failedState(pr.checks_state)) blockers.push("Checks failed");
-	if (
-		pr.mergeable === false ||
-		["blocked", "conflicting", "dirty", "false", "unmergeable"].includes(
-			normalized(pr.mergeable),
-		)
-	)
-		blockers.push("Mergeability blocked");
-	if (
-		spec &&
-		Number.isFinite(Number(spec.completed)) &&
-		Number.isFinite(Number(spec.total)) &&
-		Number(spec.total) > 0 &&
-		Number(spec.completed) < Number(spec.total)
-	)
-		blockers.push("OpenSpec incomplete");
-	return blockers;
+): Lifecycle => {
+	if (["closed", "merged"].includes(normalized(pr.state)))
+		return { stage: "closed", blockers: [] };
+	if (pr.draft) return { stage: "draft", blockers: ["Draft"] };
+	const gate = openSpecGate(specsFor(pr, spec), pr.labels ?? []);
+	if (!gate.ready)
+		return {
+			stage: "openspec",
+			blockers: [
+				gate.applicable && specsFor(pr, spec).length
+					? "OpenSpec incomplete"
+					: "No OpenSpec found",
+			],
+		};
+	if (!reviewActivityFor(pr)) return { stage: "ready", blockers: [] };
+	const blockers = [
+		...(completedReviewFor(pr) ? [] : ["Review pending"]),
+		...(pr.unresolved_review_threads === 0
+			? []
+			: pr.unresolved_review_threads && pr.unresolved_review_threads > 0
+				? ["Unresolved review threads"]
+				: ["Review threads unavailable"]),
+		...(pr.changes_requested === false
+			? []
+			: pr.changes_requested === true
+				? ["Changes requested"]
+				: ["Review state unavailable"]),
+		...(pr.repository_policy_loaded === true
+			? []
+			: ["Repository policy unavailable"]),
+		...(requiredChecksReady(pr) ? [] : ["Required checks incomplete"]),
+		...(isProjectedMergeable(pr)
+			? []
+			: [
+					["blocked", "conflicting", "dirty", "false", "unmergeable"].includes(
+						normalized(pr.mergeable),
+					)
+						? "Mergeability blocked"
+						: "Mergeability unknown",
+				]),
+	];
+	return { stage: blockers.length ? "reviewing" : "mergeable", blockers };
 };
+export const bucketFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) =>
+	lifecycleFor(pr, spec).stage;
+export const blockersFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) =>
+	lifecycleFor(pr, spec).blockers;
 const progressFor = (spec?: OpenSpecEvidence | null) =>
 	spec &&
 	Number.isFinite(Number(spec.completed)) &&
@@ -533,9 +607,9 @@ const codePointCompare = (left: unknown, right: unknown) => {
 const repositoryTie = (left: DerivedPullRequest, right: DerivedPullRequest) =>
 	codePointCompare(left.pr.full_name, right.pr.full_name) ||
 	codePointCompare(left.pr.repository_id, right.pr.repository_id);
-const numberCompare = (left: DerivedPullRequest, right: DerivedPullRequest) =>
-	Number(right.pr.number) - Number(left.pr.number) ||
-	repositoryTie(left, right);
+const identityTie = (left: DerivedPullRequest, right: DerivedPullRequest) =>
+	repositoryTie(left, right) ||
+	Number(left.pr.number) - Number(right.pr.number);
 const closestCompare = (
 	left: DerivedPullRequest,
 	right: DerivedPullRequest,
@@ -543,13 +617,21 @@ const closestCompare = (
 ) =>
 	nullableCompare(left.blockers.length, right.blockers.length, direction) ||
 	nullableCompare(left.progress, right.progress, "desc") ||
-	numberCompare(left, right);
+	identityTie(left, right);
 const sortCompare = (
 	left: DerivedPullRequest,
 	right: DerivedPullRequest,
 	sort: SortPreference,
 ) => {
 	const fallback = () => closestCompare(left, right);
+	if (sort.mode === "opened")
+		return (
+			nullableCompare(
+				providerTime(left.pr.opened_at),
+				providerTime(right.pr.opened_at),
+				sort.direction,
+			) || identityTie(left, right)
+		);
 	if (sort.mode === "closest")
 		return closestCompare(left, right, sort.direction);
 	if (sort.mode === "updated")
@@ -559,16 +641,6 @@ const sortCompare = (
 				providerTime(right.pr.updated_at),
 				sort.direction,
 			) || fallback()
-		);
-	if (sort.mode === "number")
-		return (
-			nullableCompare(
-				Number(left.pr.number),
-				Number(right.pr.number),
-				sort.direction,
-			) ||
-			repositoryTie(left, right) ||
-			fallback()
 		);
 	if (sort.mode === "progress")
 		return (
@@ -607,15 +679,19 @@ export const derivePullRequests = (
 			? filters.sort
 			: defaultSort;
 	return items
-		.map((item) => ({
-			...item,
-			bucket: bucketFor(item.pr),
-			score: searchScore(item, query),
-			blockers: blockersFor(item.pr, item.spec),
-			progress: progressFor(item.spec),
-		}))
+		.map((item) => {
+			const lifecycle = lifecycleFor(item.pr, item.spec);
+			return {
+				...item,
+				bucket: lifecycle.stage,
+				score: searchScore(item, query),
+				blockers: lifecycle.blockers,
+				progress: progressFor(item.spec),
+			};
+		})
 		.filter(
 			(item) =>
+				item.bucket !== "closed" &&
 				Number.isFinite(item.score) &&
 				(!statuses.size || statuses.has(item.bucket)) &&
 				(!failedActions || failedState(item.pr.workflow_state)) &&
@@ -659,12 +735,16 @@ export const parseTasks = (content: string) => {
 		});
 	}
 	const tasks = groups.flatMap((group) => group.tasks);
+	const activeGroup = groups.find(
+		(group) =>
+			!group.title.includes("[post-merge]") &&
+			group.tasks.some((task) => !task.completed),
+	);
 	return {
 		completed: tasks.filter((task) => task.completed).length,
 		total: tasks.length,
-		active_group:
-			groups.find((group) => group.tasks.some((task) => !task.completed)) ??
-			null,
+		pre_merge_ready: !activeGroup,
+		active_group: activeGroup ?? null,
 	};
 };
 const checkoutDatabase = () =>
@@ -1090,11 +1170,15 @@ export const statusDetailStateFor = (
 	return { key, pinned: event === "activate" };
 };
 const stageLabel = (bucket: string) =>
-	({ draft: "Draft", ready: "Ready for review", mergeable: "Mergeable" })[
-		bucket
-	] ?? "Ready for review";
+	({
+		draft: "Draft",
+		openspec: "OpenSpec ready",
+		ready: "Ready for review",
+		reviewing: "Reviewing",
+		mergeable: "Mergeable",
+	})[bucket] ?? "Ready for review";
 const lifecycleMarkup = (item: DerivedPullRequest) => {
-	const stages = ["draft", "ready", "mergeable"];
+	const stages = ["draft", "openspec", "ready", "reviewing", "mergeable"];
 	const current = stages.indexOf(item.bucket);
 	const pills = stages
 		.map(
@@ -1129,6 +1213,50 @@ const deploymentLabel = (deployment: DeploymentProjection) =>
 	[deployment.full_name, deployment.environment, deployment.ref, deployment.sha]
 		.filter((value): value is string => Boolean(value?.trim()))
 		.join(" · ");
+const isGitHubFullName = (value: string | undefined) =>
+	Boolean(
+		value?.match(
+			/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?\/[a-z\d](?:[a-z\d._-]*[a-z\d])?$/i,
+		),
+	);
+const isGitHubSha = (value: string | undefined) =>
+	Boolean(value?.match(/^[a-f\d]{40}$/i));
+const completedDeployment = (deployments: DeploymentProjection[]) =>
+	deployments
+		.filter((deployment) => {
+			const timestamp = Date.parse(deployment.updated_at ?? "");
+			return (
+				["success", "failure", "error"].includes(
+					deployment.state?.toLowerCase() ?? "",
+				) && Number.isFinite(timestamp)
+			);
+		})
+		.sort(
+			(left, right) =>
+				Date.parse(right.updated_at!) - Date.parse(left.updated_at!),
+		)[0];
+const deploymentHeadlineMarkup = (
+	deployment: DeploymentProjection | undefined,
+) => {
+	if (!deployment) return "No completed deployment in the last 48 hours";
+	if (
+		isGitHubFullName(deployment.full_name) &&
+		Number.isInteger(deployment.pull_request_number) &&
+		deployment.pull_request_number! > 0 &&
+		typeof deployment.pull_request_title === "string"
+	) {
+		const expectedUrl = `https://github.com/${deployment.full_name}/pull/${deployment.pull_request_number}`;
+		if (deployment.pull_request_url === expectedUrl)
+			return `<a href="${esc(expectedUrl)}" target="_blank" rel="noopener noreferrer">#${deployment.pull_request_number} · ${esc(deployment.pull_request_title)}</a>`;
+	}
+	if (isGitHubSha(deployment.sha)) {
+		const shortSha = deployment.sha!.slice(0, 7);
+		return isGitHubFullName(deployment.full_name)
+			? `<a href="https://github.com/${esc(deployment.full_name)}/commit/${deployment.sha}" target="_blank" rel="noopener noreferrer">${shortSha}</a>`
+			: shortSha;
+	}
+	return "No completed deployment in the last 48 hours";
+};
 const deploymentRowsMarkup = (deployments: DeploymentProjection[]) =>
 	deployments.length
 		? `<div class="stack">${deployments
@@ -1156,11 +1284,11 @@ const deploymentRowsMarkup = (deployments: DeploymentProjection[]) =>
 		: '<p class="muted">No recent deployment evidence.</p>';
 const deploymentDetailMarkup = (deployments: DeploymentProjection[]) =>
 	`<aside id="status-detail" class="status-detail" role="dialog" aria-label="Deployment detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close deployment detail">×</button><h2>GitHub deployments · last 48 hours</h2>${deploymentRowsMarkup(deployments.slice(0, 5))}${deployments.length > 5 ? `<details class="more-deployments"><summary>More deployments</summary>${deploymentRowsMarkup(deployments.slice(5))}</details>` : ""}</aside>`;
-const deploymentSummaryMarkup = (deployments: DeploymentProjection[]) => {
-	const deployment = deployments[0];
-	return deployment
-		? `<button type="button" class="deployment-summary" data-status-detail="deployments" aria-expanded="${statusDetailKey === "deployments"}" aria-controls="status-detail"><span class="deployment-summary-label">Latest deployment</span><span class="deployment-summary-detail">${esc(deploymentLabel(deployment) || "Unknown deployment")}</span><span class="status">${esc(deployment.state ?? "unknown")}</span></button>`
-		: "";
+export const deploymentSummaryMarkup = (
+	deployments: DeploymentProjection[],
+) => {
+	const deployment = completedDeployment(deployments);
+	return `<button type="button" class="deployment-summary" data-status-detail="deployments" aria-expanded="${statusDetailKey === "deployments"}" aria-controls="status-detail"><span class="deployment-summary-label">Latest deployment</span><span class="deployment-summary-detail">${deploymentHeadlineMarkup(deployment)}</span>${deployment ? `<span class="status">${deployment.state?.toLowerCase() === "success" ? "Success" : "Failed"}</span>` : ""}</button>`;
 };
 type MergeControl =
 	| { state: "enabled" }
@@ -1207,7 +1335,9 @@ const controlsMarkup = (
 	const repositories = repositoryOptions(all);
 	const statusLabel = {
 		mergeable: "Mergeable",
+		reviewing: "Reviewing",
 		ready: "Ready for review",
+		openspec: "OpenSpec ready",
 		draft: "Draft",
 	};
 	const statusFilters = Object.entries(statusLabel)
@@ -1227,11 +1357,7 @@ const controlsMarkup = (
 	const repositoryGroup = `<fieldset class="repository-filter"><legend>Repositories</legend><div class="repository-options">${repositoryChoices}</div></fieldset>`;
 	const searchGroup = `<div class="control-group search-results"><label for="pr-search">Search pull requests</label><input id="pr-search" type="search" value="${esc(view.query)}" autocomplete="off"><span id="pr-count" aria-live="polite">${esc(visible.length)} of ${esc(all.length)} pull requests</span><button id="clear-pr-filters" type="button">Clear</button></div>`;
 	const filterGroup = `<div class="control-group filters"><fieldset><legend>Lifecycle stage</legend>${statusFilters}</fieldset><fieldset><legend>Attention</legend><label class="filter-pill"><input id="attention" type="checkbox" data-attention-filter ${view.attention ? "checked" : ""}>Needs attention</label></fieldset><fieldset><legend>Failed state</legend><label class="filter-pill"><input id="failed-actions" type="checkbox" data-aggregate-filter="failedActions" ${view.failedActions ? "checked" : ""}>Failed Actions</label><label class="filter-pill"><input id="failed-checks" type="checkbox" data-aggregate-filter="failedChecks" ${view.failedChecks ? "checked" : ""}>Failed Checks</label></fieldset></div>`;
-	const directionLabel =
-		view.sort.mode === "number"
-			? "PR number direction: Newest first or Oldest first"
-			: "Sort direction";
-	const sortingGroup = `<div class="control-group sorting"><label for="pr-sort">Sort pull requests</label><select id="pr-sort"><option value="closest" ${view.sort.mode === "closest" ? "selected" : ""}>Closest to merge</option><option value="updated" ${view.sort.mode === "updated" ? "selected" : ""}>Recently updated</option><option value="number" ${view.sort.mode === "number" ? "selected" : ""}>PR number</option><option value="progress" ${view.sort.mode === "progress" ? "selected" : ""}>OpenSpec progress</option><option value="repository" ${view.sort.mode === "repository" ? "selected" : ""}>Repository</option></select><label for="pr-direction">${directionLabel}</label><select id="pr-direction"><option value="asc" ${view.sort.direction === "asc" ? "selected" : ""}>Ascending</option><option value="desc" ${view.sort.direction === "desc" ? "selected" : ""}>Descending</option></select></div>`;
+	const sortingGroup = `<div class="control-group sorting"><label for="pr-sort">Sort pull requests</label><select id="pr-sort"><option value="opened" ${view.sort.mode === "opened" ? "selected" : ""}>Opened</option><option value="closest" ${view.sort.mode === "closest" ? "selected" : ""}>Closest to merge</option><option value="updated" ${view.sort.mode === "updated" ? "selected" : ""}>Recently updated</option><option value="progress" ${view.sort.mode === "progress" ? "selected" : ""}>OpenSpec progress</option><option value="repository" ${view.sort.mode === "repository" ? "selected" : ""}>Repository</option></select><label for="pr-direction">Sort direction</label><select id="pr-direction"><option value="asc" ${view.sort.direction === "asc" ? "selected" : ""}>Ascending</option><option value="desc" ${view.sort.direction === "desc" ? "selected" : ""}>Descending</option></select></div>`;
 	return `<div class="pr-controls">${repositoryGroup}${filterGroup}${sortingGroup}${searchGroup}</div>`;
 };
 const checkoutActionMarkup = (repository: Repository, state: CheckoutState) => {
@@ -1305,11 +1431,19 @@ const appearanceMenuMarkup = () => {
 const configurationMarkup = () =>
 	'<section class="card configuration" aria-labelledby="configuration-title"><h2 id="configuration-title">Configuration</h2><p><a href="/">Back to dashboard</a></p>' +
 	checkoutMarkup() +
-	'<div class="actions"><button id="notify" type="button">Enable notifications</button><button id="reconcile" type="button" ' +
-	(reconciliationState === "running" ? "disabled" : "") +
-	">" +
-	(reconciliationState === "running" ? "Reconciling…" : "Reconcile now") +
-	'</button></div><p id="reconcile-status" class="muted" aria-live="polite">' +
+	'<div class="actions"><button id="notify" type="button">Enable notifications</button>' +
+	([
+		...new Set(
+			repositoryCatalog.map((repository) => repository.installation_id),
+		),
+	]
+		.map(
+			(installationId) =>
+				`<button id="reconcile-installation-${esc(installationId)}" type="button" data-reconcile-installation="${esc(installationId)}" ${reconciliationState === "running" ? "disabled" : ""}>${reconciliationState === "running" ? "Reconciling…" : "Reconcile installation"}</button>`,
+		)
+		.join("") ||
+		`<button id="reconcile-installation" type="button" data-reconcile-installation ${reconciliationState === "running" ? "disabled" : ""}>${reconciliationState === "running" ? "Reconciling…" : "Reconcile installation"}</button>`) +
+	'</div><p id="reconcile-status" class="muted" aria-live="polite">' +
 	esc(reconcileMessage) +
 	"</p></section>";
 const avatarMenuMarkup = (user?: DashboardSnapshot["user"]) => {
@@ -1320,7 +1454,7 @@ const avatarMenuMarkup = (user?: DashboardSnapshot["user"]) => {
 		: avatarUrl
 			? `<img class="user-avatar" src="${esc(avatarUrl)}" alt="">`
 			: `<span class="user-avatar avatar-fallback" aria-hidden="true">${esc(login.slice(0, 1).toUpperCase())}</span>`;
-	return `<details class="avatar-menu"><summary aria-label="User menu">${avatar}<span class="avatar-menu-caret" aria-hidden="true">▾</span></summary><div class="avatar-menu-panel"><p><strong>${esc(login)}</strong></p>${appearanceMenuMarkup()}<a class="configuration-link" href="/configuration">⚙ Configuration</a></div></details>`;
+	return `<details class="avatar-menu"><summary aria-label="User menu">${avatar}<span class="avatar-menu-caret" aria-hidden="true">▾</span></summary><div class="avatar-menu-panel"><p><strong>${esc(login)}</strong></p>${appearanceMenuMarkup()}<button id="reconcile-all-menu" type="button" data-reconcile-all ${reconciliationState === "running" ? "disabled" : ""}>Reconcile all PRs</button><a class="configuration-link" href="/configuration">⚙ Configuration</a></div></details>`;
 };
 const rerender = (focusSelector: string) => {
 	render(current);
@@ -1522,6 +1656,7 @@ const render = (x: DashboardSnapshot | null) => {
 		"</header>";
 	const dashboardMarkup =
 		'<section class="card" aria-label="Pull requests">' +
+		`<div class="actions"><button id="reconcile-all" type="button" data-reconcile-all ${reconciliationState === "running" ? "disabled" : ""}>${reconciliationState === "running" ? "Reconciling…" : "Reconcile all PRs"}</button></div>` +
 		controlsMarkup(allPullRequests, prs) +
 		rows(prs, "No open authored pull requests.", (item) => {
 			const pr = item.pr;
@@ -1538,6 +1673,7 @@ const render = (x: DashboardSnapshot | null) => {
 				esc(pr.title) +
 				"</a></h3>" +
 				mergeMarkup(pr) +
+				`<button id="reconcile-pr-${esc(statusKeyFor(pr).replaceAll(":", "-"))}" type="button" data-reconcile-pr='${esc(JSON.stringify({ installationId: pr.installation_id, repositoryId: pr.repository_id, number: pr.number }))}' ${reconciliationState === "running" ? "disabled" : ""}>Reconcile PR</button>` +
 				'</div><div class="pr-statuses">' +
 				lifecycleFrameMarkup(item) +
 				warningRowMarkup(item) +
@@ -1590,7 +1726,39 @@ const render = (x: DashboardSnapshot | null) => {
 				render(current);
 			});
 		});
-	document.querySelector("#reconcile")?.addEventListener("click", reconcileNow);
+	document
+		.querySelectorAll<HTMLButtonElement>("[data-reconcile-pr]")
+		.forEach((button) => {
+			button.addEventListener("click", () =>
+				reconcileNow(
+					"/api/reconcile/pull-request",
+					button.dataset.reconcilePr
+						? JSON.parse(button.dataset.reconcilePr)
+						: {},
+					"PR reconciliation complete.",
+					`#${button.id}`,
+				),
+			);
+		});
+	document
+		.querySelectorAll<HTMLButtonElement>("[data-reconcile-all]")
+		.forEach((button) => {
+			button.addEventListener("click", () => reconcileAllNow(`#${button.id}`));
+		});
+	document
+		.querySelectorAll<HTMLButtonElement>("[data-reconcile-installation]")
+		.forEach((button) => {
+			button.addEventListener("click", () =>
+				reconcileNow(
+					"/api/reconcile",
+					button.dataset.reconcileInstallation
+						? { installationId: button.dataset.reconcileInstallation }
+						: undefined,
+					"Installation reconciliation complete.",
+					`#${button.id}`,
+				),
+			);
+		});
 	const avatarMenu = document.querySelector<HTMLDetailsElement>(".avatar-menu");
 	avatarMenu?.addEventListener("focusout", (event) => {
 		const next = event.relatedTarget;
@@ -1605,13 +1773,44 @@ const render = (x: DashboardSnapshot | null) => {
 	bindControls();
 	bindStatusDetails();
 };
-async function reconcileNow() {
+async function reconcileAllNow(focusSelector: string) {
+	const count =
+		current?.pullRequests.filter((pullRequest) => pullRequest.state === "open")
+			.length ?? 0;
+	if (
+		!globalThis.confirm(
+			`Reconcile ${count} known PR${count === 1 ? "" : "s"}? Estimated provider requests: ${count * 4}.`,
+		)
+	)
+		return;
+	await reconcileNow(
+		"/api/reconcile/pull-requests",
+		undefined,
+		"All known PRs reconciled.",
+		focusSelector,
+	);
+}
+async function reconcileNow(
+	path: string,
+	body: unknown,
+	successMessage: string,
+	focusSelector: string,
+) {
 	if (reconciliationState === "running") return;
 	reconciliationState = "running";
 	reconcileMessage = "Reconciliation running.";
 	render(current);
 	try {
-		const response = await fetch("/api/reconcile", { method: "POST" });
+		const response = await fetch(
+			path,
+			body === undefined
+				? { method: "POST" }
+				: {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(body),
+					},
+		);
 		if (!response.ok) {
 			console.error("Reconciliation request failed", response.status);
 			reconcileMessage = "Reconciliation could not be completed.";
@@ -1619,7 +1818,7 @@ async function reconcileNow() {
 		}
 		const result = await response.json();
 		if (result.status === "success") {
-			reconcileMessage = "Reconciliation complete.";
+			reconcileMessage = successMessage;
 			await load();
 		} else if (result.status === "running") {
 			reconcileMessage = "Reconciliation is already running.";
@@ -1632,6 +1831,7 @@ async function reconcileNow() {
 	} finally {
 		reconciliationState = "idle";
 		render(current);
+		document.querySelector<HTMLElement>(focusSelector)?.focus();
 	}
 }
 const browserGlobal = globalThis as typeof globalThis & {

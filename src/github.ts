@@ -1,6 +1,15 @@
 import { createSign } from "node:crypto";
-import type { Db, ReconciliationEvidence } from "#/db";
-import { appendReconciliationEvidence, mutateUser } from "#/db";
+import type {
+	Db,
+	MergedPullRequestEvidence,
+	ReconciliationEvidence,
+} from "#/db";
+import {
+	appendReconciliationEvidence,
+	correlateDeploymentPullRequest,
+	mutateUser,
+	retainRecentMergedPullRequests,
+} from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 import { projectOpenSpec } from "#/openspec";
@@ -46,6 +55,22 @@ type OpenSpecTask = {
 	sha: string;
 	content: string;
 };
+type GraphqlConnection = {
+	nodes?: unknown[];
+	pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+};
+const graphqlEndpoint = "https://api.github.com/graphql";
+const providerFailedState = (value: unknown) =>
+	[
+		"action_required",
+		"cancelled",
+		"canceled",
+		"failed",
+		"failure",
+		"timed_out",
+	].includes(String(value).toLowerCase());
+const optionalString = (value: unknown) =>
+	typeof value === "string" ? value : undefined;
 const base64url = (value: string | Buffer) =>
 	Buffer.from(value).toString("base64url");
 const diagnosticString = (value: unknown) =>
@@ -132,6 +157,38 @@ export const retryDelay = (
 	if (reset * 1000 > now) return Math.min(reset * 1000 - now, 60_000);
 	return Math.min(1000 * 2 ** attempt, 60_000);
 };
+async function githubGraphql(
+	token: string,
+	query: string,
+	variables: Record<string, unknown>,
+	fetcher: FetchLike,
+) {
+	let response: Response | undefined;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		response = await fetcher(graphqlEndpoint, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token}`,
+				accept: "application/vnd.github+json",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({ query, variables }),
+		});
+		const delay = retryDelay(response, attempt);
+		if (delay === undefined || attempt === 2) break;
+		await new Promise((resolve) => setTimeout(resolve, delay));
+	}
+	if (!response?.ok) throw new Error("GitHub GraphQL request failed");
+	const body: unknown = await response.json();
+	if (
+		!body ||
+		typeof body !== "object" ||
+		Array.isArray((body as { errors?: unknown }).errors) ||
+		!(body as { data?: unknown }).data
+	)
+		throw new Error("GitHub GraphQL response was incomplete");
+	return (body as { data: Record<string, unknown> }).data;
+}
 const safeUrl = (value: unknown) =>
 	URL.canParse(String(value)) &&
 	["http:", "https:"].includes(new URL(String(value)).protocol)
@@ -166,6 +223,7 @@ async function pagedGet(
 	evidence: Pick<ReconciliationEvidence, "operation" | "repository"> = {
 		operation: "unknown",
 	},
+	collectionKey?: string,
 ): Promise<ReadResult> {
 	const all: unknown[] = [],
 		seen = new Set([url]);
@@ -206,7 +264,14 @@ async function pagedGet(
 				...evidence,
 				summary: "GitHub cached page is unavailable",
 			};
-		if (!Array.isArray(page) && !Array.isArray((page as any).repositories))
+		const items = Array.isArray(page)
+			? page
+			: Array.isArray((page as any).repositories)
+				? (page as any).repositories
+				: collectionKey && Array.isArray((page as any)[collectionKey])
+					? (page as any)[collectionKey]
+					: undefined;
+		if (!items)
 			return {
 				kind: "error",
 				message: "GitHub pagination payload was invalid",
@@ -245,7 +310,7 @@ async function pagedGet(
 				},
 				{ upsert: true },
 			);
-		all.push(...(Array.isArray(page) ? page : (page as any).repositories));
+		all.push(...items);
 		next = following;
 	}
 	await db.providerCache.updateOne(
@@ -428,6 +493,619 @@ async function fetchOpenSpecTasksForPullRequests(
 		return true;
 	});
 }
+
+async function refreshRepositoryPolicy(
+	db: Db,
+	installationId: string,
+	repository: { repositoryId: string; full_name: string; policy?: unknown },
+	request: FetchLike,
+) {
+	const evidence = {
+		operation: "repository_policy",
+		repository: repository.full_name,
+	};
+	const details = await conditionalGet(
+		db,
+		`installation:${installationId}:repo:${repository.repositoryId}:details`,
+		`https://api.github.com/repos/${repository.full_name}`,
+		request,
+		evidence,
+	);
+	const branch =
+		details.kind === "changed"
+			? (details.body as any)?.default_branch
+			: undefined;
+	if (typeof branch !== "string" || !branch)
+		return {
+			policy: repository.policy && {
+				...(repository.policy as Record<string, unknown>),
+				stale: true,
+			},
+			stale: true,
+		};
+	const encoded = encodeURIComponent(branch);
+	const [rules, protection] = await Promise.all([
+		conditionalGet(
+			db,
+			`installation:${installationId}:repo:${repository.repositoryId}:rules:${branch}`,
+			`https://api.github.com/repos/${repository.full_name}/rules/branches/${encoded}`,
+			request,
+			evidence,
+		),
+		conditionalGet(
+			db,
+			`installation:${installationId}:repo:${repository.repositoryId}:protection:${branch}`,
+			`https://api.github.com/repos/${repository.full_name}/branches/${encoded}/protection`,
+			request,
+			evidence,
+		),
+	]);
+	if (
+		rules.kind !== "changed" ||
+		(protection.kind === "error" && protection.status !== 404)
+	)
+		return {
+			policy: repository.policy && {
+				...(repository.policy as Record<string, unknown>),
+				stale: true,
+			},
+			stale: true,
+		};
+	if (!Array.isArray(rules.body))
+		return {
+			policy: repository.policy && {
+				...(repository.policy as Record<string, unknown>),
+				stale: true,
+			},
+			stale: true,
+		};
+	const required = new Map<
+		string,
+		{ context: string; integration_id?: string }
+	>();
+	for (const rule of rules.body as any[])
+		for (const parameter of rule?.rules ?? [])
+			if (parameter?.type === "required_status_checks")
+				for (const check of parameter?.parameters?.required_status_checks ??
+					[]) {
+					const context = optionalString(check?.context);
+					if (context)
+						required.set(`${context}:${check.integration_id ?? ""}`, {
+							context,
+							...(check.integration_id == null
+								? {}
+								: { integration_id: String(check.integration_id) }),
+						});
+				}
+	const classic =
+		protection.kind === "changed"
+			? (protection.body as any)?.required_status_checks
+			: undefined;
+	for (const check of classic?.checks ?? []) {
+		const context = optionalString(check?.context);
+		if (context)
+			required.set(`${context}:${check.app_id ?? ""}`, {
+				context,
+				...(check.app_id == null
+					? {}
+					: { integration_id: String(check.app_id) }),
+			});
+	}
+	for (const context of classic?.contexts ?? [])
+		if (typeof context === "string") required.set(`${context}:`, { context });
+	return {
+		policy: {
+			refreshed_at: new Date().toISOString(),
+			required_checks: [...required.values()],
+		},
+		stale: false,
+	};
+}
+
+const pullRequestLifecycleQuery = `query PullRequestLifecycle($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      state merged isDraft createdAt updatedAt title url headRefName headRefOid mergeable reviewDecision
+      labels(first: 100) { nodes { name } pageInfo { hasNextPage endCursor } }
+      reviewRequests(first: 100) { totalCount }
+      reviews(first: 100) { nodes { state } pageInfo { hasNextPage endCursor } }
+      reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage endCursor } }
+      statusCheckRollup { contexts(first: 100) { nodes { ... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } } ... on StatusContext { context state targetUrl } } pageInfo { hasNextPage endCursor } }
+    }
+  }
+}`;
+
+const graphqlConnectionQuery = (
+	field: "labels" | "reviews" | "reviewThreads" | "contexts",
+) =>
+	`query PullRequestConnection($owner: String!, $repo: String!, $number: Int!, $after: String!) {
+  repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
+    ${field === "contexts" ? "statusCheckRollup { contexts" : field}(first: 100, after: $after) { nodes { ${
+			field === "labels"
+				? "name"
+				: field === "reviews"
+					? "state"
+					: field === "reviewThreads"
+						? "isResolved"
+						: "... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } } ... on StatusContext { context state targetUrl }"
+		} } pageInfo { hasNextPage endCursor } }${field === "contexts" ? " }" : ""}
+  } }
+}`;
+
+function graphqlConnection(value: unknown): GraphqlConnection {
+	if (!value || typeof value !== "object")
+		throw new Error("GitHub pull request pagination was incomplete");
+	const connection = value as GraphqlConnection;
+	if (
+		!Array.isArray(connection.nodes) ||
+		!connection.pageInfo ||
+		typeof connection.pageInfo.hasNextPage !== "boolean"
+	)
+		throw new Error("GitHub pull request pagination was incomplete");
+	if (
+		connection.pageInfo.hasNextPage &&
+		typeof connection.pageInfo.endCursor !== "string"
+	)
+		throw new Error("GitHub pull request pagination was incomplete");
+	return connection;
+}
+
+async function completeGraphqlConnection(
+	token: string,
+	fetcher: FetchLike,
+	owner: string,
+	repo: string,
+	number: number,
+	field: "labels" | "reviews" | "reviewThreads" | "contexts",
+	initial: unknown,
+) {
+	const nodes = [...graphqlConnection(initial).nodes!];
+	let page = graphqlConnection(initial);
+	while (page.pageInfo!.hasNextPage) {
+		const data = await githubGraphql(
+			token,
+			graphqlConnectionQuery(field),
+			{
+				owner,
+				repo,
+				number,
+				after: page.pageInfo!.endCursor,
+			},
+			fetcher,
+		);
+		const pullRequest = (data.repository as any)?.pullRequest;
+		page = graphqlConnection(
+			field === "contexts"
+				? pullRequest?.statusCheckRollup?.contexts
+				: pullRequest?.[field],
+		);
+		nodes.push(...page.nodes!);
+	}
+	return nodes;
+}
+
+type ReconcilePullRequestInput = {
+	installationId: string;
+	repositoryId: string;
+	number: number;
+	token: string;
+	fetcher: FetchLike;
+	fetchTasks?: TaskFetcher;
+};
+type PullRequestRead = {
+	pullRequest: Record<string, unknown>;
+	headSha: string;
+	labels: unknown[];
+	reviews: unknown[];
+	threads: unknown[];
+	contexts: unknown[];
+	actions: unknown[];
+	tasks: OpenSpecTask[];
+};
+
+const loadReconciliationTarget = async (
+	db: Db,
+	input: ReconcilePullRequestInput,
+) => {
+	const users = await db.users
+		.find(
+			{ "installations.installationId": input.installationId },
+			{ projection: { _id: 1, installations: 1 } },
+		)
+		.toArray();
+	const installation = users
+		.flatMap((user) => user.installations)
+		.find(
+			(installation) =>
+				installation.installationId === input.installationId &&
+				approvedInstallationAccount(installation.accountLogin),
+		);
+	return {
+		users,
+		installation,
+		repository: installation?.repositories.find(
+			(item) => item.repositoryId === input.repositoryId,
+		),
+	};
+};
+
+const removeClosedPullRequest = async (
+	db: Db,
+	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
+	input: ReconcilePullRequestInput,
+): Promise<ReadResult> => {
+	await Promise.all(
+		users.map((user) =>
+			mutateUser(db, user._id, (aggregate) => {
+				const target = aggregate.installations
+					.find((item) => item.installationId === input.installationId)
+					?.repositories.find(
+						(item) => item.repositoryId === input.repositoryId,
+					);
+				if (target)
+					target.pullRequests = target.pullRequests.filter(
+						(item) => Number(item.number) !== input.number,
+					);
+			}),
+		),
+	);
+	return { kind: "changed", body: null };
+};
+
+const readOpenPullRequest = async (
+	db: Db,
+	input: ReconcilePullRequestInput,
+	request: FetchLike,
+	owner: string,
+	name: string,
+	repository: NonNullable<
+		Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]
+	>,
+): Promise<PullRequestRead | undefined> => {
+	const data = await githubGraphql(
+		input.token,
+		pullRequestLifecycleQuery,
+		{ owner, repo: name, number: input.number },
+		input.fetcher,
+	);
+	const pullRequest = (
+		data.repository as { pullRequest?: Record<string, unknown> } | undefined
+	)?.pullRequest;
+	if (!pullRequest || typeof pullRequest !== "object")
+		throw new Error("GitHub pull request response was incomplete");
+	if (
+		["CLOSED", "MERGED"].includes(String(pullRequest.state)) ||
+		pullRequest.merged === true
+	)
+		return undefined;
+	if (
+		!pullRequest.reviewRequests ||
+		typeof (pullRequest.reviewRequests as any).totalCount !== "number"
+	)
+		throw new Error("GitHub pull request response was incomplete");
+	const headSha =
+		typeof pullRequest.headRefOid === "string"
+			? pullRequest.headRefOid
+			: undefined;
+	if (!headSha) throw new Error("GitHub pull request head was unavailable");
+	const [labels, reviews, threads, contexts] = await Promise.all([
+		completeGraphqlConnection(
+			input.token,
+			input.fetcher,
+			owner,
+			name,
+			input.number,
+			"labels",
+			pullRequest.labels,
+		),
+		completeGraphqlConnection(
+			input.token,
+			input.fetcher,
+			owner,
+			name,
+			input.number,
+			"reviews",
+			pullRequest.reviews,
+		),
+		completeGraphqlConnection(
+			input.token,
+			input.fetcher,
+			owner,
+			name,
+			input.number,
+			"reviewThreads",
+			pullRequest.reviewThreads,
+		),
+		pullRequest.statusCheckRollup === null
+			? Promise.resolve([])
+			: completeGraphqlConnection(
+					input.token,
+					input.fetcher,
+					owner,
+					name,
+					input.number,
+					"contexts",
+					(pullRequest.statusCheckRollup as any)?.contexts,
+				),
+	]);
+	const actions = await pagedGet(
+		db,
+		"installation:" +
+			input.installationId +
+			":repo:" +
+			input.repositoryId +
+			":actions:" +
+			headSha,
+		"https://api.github.com/repositories/" +
+			input.repositoryId +
+			"/actions/runs?head_sha=" +
+			headSha +
+			"&per_page=100",
+		request,
+		{ operation: "actions", repository: repository.full_name },
+		"workflow_runs",
+	);
+	if (actions.kind !== "changed" || !Array.isArray(actions.body))
+		throw new Error("GitHub Actions response was incomplete");
+	const taskFetcher =
+		input.fetchTasks ??
+		(async (task: Parameters<TaskFetcher>[0]) => {
+			const response = await request(
+				"https://api.github.com/repositories/" +
+					task.repositoryId +
+					"/contents/" +
+					task.path +
+					"?ref=" +
+					task.sha,
+				{ headers: { accept: "application/vnd.github.raw" } },
+			);
+			return response.ok ? response.text() : null;
+		});
+	const tasks = await fetchOpenSpecTasksForPullRequests(
+		db,
+		input.installationId,
+		input.repositoryId,
+		[
+			{
+				number: input.number,
+				head: { sha: headSha },
+				updated_at: pullRequest.updatedAt,
+			},
+		],
+		request,
+		taskFetcher,
+		repository.full_name,
+	);
+	if (!Array.isArray(tasks))
+		throw new Error("GitHub OpenSpec read was incomplete");
+	if (
+		!labels.every((item: any) => item && typeof item.name === "string") ||
+		!reviews.every((item: any) => item && typeof item.state === "string") ||
+		!threads.every(
+			(item: any) => item && typeof item.isResolved === "boolean",
+		) ||
+		!contexts.every(
+			(item: any) =>
+				item &&
+				(typeof item.name === "string" || typeof item.context === "string"),
+		)
+	)
+		throw new Error("GitHub pull request response was incomplete");
+	return {
+		pullRequest,
+		headSha,
+		labels,
+		reviews,
+		threads,
+		contexts,
+		actions: actions.body,
+		tasks,
+	};
+};
+
+const applyOpenPullRequest = async (
+	db: Db,
+	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
+	installation: Awaited<
+		ReturnType<typeof loadReconciliationTarget>
+	>["installation"],
+	repository: NonNullable<
+		Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]
+	>,
+	input: ReconcilePullRequestInput,
+	read: PullRequestRead,
+): Promise<ReadResult> => {
+	const {
+		pullRequest,
+		headSha,
+		labels,
+		reviews,
+		threads,
+		contexts,
+		actions,
+		tasks,
+	} = read;
+	const reviewNodes = reviews as Array<{ state: string }>;
+	const threadNodes = threads as Array<{ isResolved: boolean }>;
+	const policy = repository.policy as
+		| {
+				required_checks?: Array<{
+					context?: string;
+					integration_id?: string;
+				}>;
+				stale?: boolean;
+		  }
+		| undefined;
+	const requiredChecks = (policy?.required_checks ?? []).map((required) => {
+		const context = contexts.find(
+			(item: any) =>
+				[item?.name, item?.context].includes(required.context) &&
+				(!required.integration_id ||
+					String(required.integration_id) ===
+						String(item?.checkSuite?.app?.databaseId)),
+		);
+		const conclusion = (context as any)?.conclusion ?? (context as any)?.state;
+		return {
+			head_sha: headSha,
+			conclusion:
+				context &&
+				["success", "neutral", "skipped"].includes(
+					String(conclusion).toLowerCase(),
+				)
+					? String(conclusion).toLowerCase()
+					: "missing",
+		};
+	});
+	const next = {
+		number: input.number,
+		title: optionalString(pullRequest.title),
+		url: optionalString(pullRequest.url),
+		state: "open",
+		draft: pullRequest.isDraft ? 1 : 0,
+		opened_at: optionalString(pullRequest.createdAt),
+		updated_at: optionalString(pullRequest.updatedAt),
+		head_ref: optionalString(pullRequest.headRefName),
+		head_sha: headSha,
+		mergeable:
+			pullRequest.mergeable === "MERGEABLE"
+				? "clean"
+				: pullRequest.mergeable === "CONFLICTING"
+					? "conflicting"
+					: "unknown",
+		labels,
+		review_activity:
+			Number((pullRequest.reviewRequests as any).totalCount) > 0 ||
+			reviewNodes.some((review) =>
+				["APPROVED", "COMMENTED", "CHANGES_REQUESTED"].includes(
+					String(review.state),
+				),
+			),
+		completed_review_count: reviewNodes.filter((review) =>
+			["APPROVED", "COMMENTED", "CHANGES_REQUESTED"].includes(
+				String(review.state),
+			),
+		).length,
+		unresolved_review_threads: threadNodes.filter(
+			(thread) => !thread.isResolved,
+		).length,
+		changes_requested: pullRequest.reviewDecision === "CHANGES_REQUESTED",
+		repository_policy_loaded: Boolean(policy && !policy.stale),
+		required_checks: requiredChecks,
+		workflow_state: actions.some((run: any) =>
+			providerFailedState(run.conclusion ?? run.status),
+		)
+			? "failure"
+			: "success",
+		checks_state: contexts.some((context: any) =>
+			providerFailedState(context?.conclusion ?? context?.state),
+		)
+			? "failure"
+			: "success",
+	};
+	await Promise.all(
+		users.map((user) =>
+			mutateUser(db, user._id, (aggregate) => {
+				const target = aggregate.installations
+					.find((item) => item.installationId === input.installationId)
+					?.repositories.find(
+						(item) => item.repositoryId === input.repositoryId,
+					);
+				const previous = target?.pullRequests.find(
+					(item) => Number(item.number) === input.number,
+				);
+				if (
+					!target ||
+					(previous?.updated_at &&
+						String(previous.updated_at) > String(next.updated_at)) ||
+					(previous?.head_sha &&
+						previous.head_sha !== next.head_sha &&
+						String(previous.updated_at ?? "") >= String(next.updated_at ?? ""))
+				)
+					return;
+				if (previous) Object.assign(previous, next, { lifecycle_stale: false });
+				else target.pullRequests.push({ ...next, lifecycle_stale: false });
+			}),
+		),
+	);
+	for (const task of tasks)
+		await projectOpenSpec(db, {
+			installationId: input.installationId,
+			accountLogin: installation?.accountLogin ?? "",
+			...task,
+		});
+	return { kind: "changed", body: next };
+};
+
+export async function reconcilePullRequest(
+	db: Db,
+	input: ReconcilePullRequestInput,
+): Promise<ReadResult> {
+	const { users, installation, repository } = await loadReconciliationTarget(
+		db,
+		input,
+	);
+	if (!repository)
+		return {
+			kind: "error",
+			stale: true,
+			message: "pull request target is unavailable",
+			operation: "pull_request",
+			summary: "Pull request target is unavailable",
+		};
+	const [owner, name] = repository.full_name.split("/");
+	if (!owner || !name)
+		return {
+			kind: "error",
+			stale: true,
+			message: "repository identity is invalid",
+			operation: "pull_request",
+			summary: "Pull request target is unavailable",
+		};
+	const request: FetchLike = (url, init) =>
+		input.fetcher(url, {
+			...init,
+			headers: {
+				...Object.fromEntries(new Headers(init?.headers)),
+				authorization: `Bearer ${input.token}`,
+			},
+		});
+	try {
+		const read = await readOpenPullRequest(
+			db,
+			input,
+			request,
+			owner,
+			name,
+			repository,
+		);
+		return read
+			? applyOpenPullRequest(db, users, installation, repository, input, read)
+			: removeClosedPullRequest(db, users, input);
+	} catch {
+		await Promise.all(
+			users.map((user) =>
+				mutateUser(db, user._id, (aggregate) => {
+					const target = aggregate.installations
+						.find((item) => item.installationId === input.installationId)
+						?.repositories.find(
+							(item) => item.repositoryId === input.repositoryId,
+						);
+					const previous = target?.pullRequests.find(
+						(item) => Number(item.number) === input.number,
+					);
+					if (previous) previous.lifecycle_stale = true;
+				}),
+			),
+		);
+		return {
+			kind: "error",
+			stale: true,
+			message: "pull request reconciliation failed",
+			operation: "pull_request",
+			summary: "Pull request reconciliation failed",
+		};
+	}
+}
 export async function bootstrapInstallation(
 	db: Db,
 	installationId: string,
@@ -526,9 +1204,25 @@ export async function bootstrapInstallation(
 		pullRequests: any[];
 		openSpecs: Record<string, unknown>[];
 		deployments: Record<string, unknown>[];
+		recentMergedPullRequests?: MergedPullRequestEvidence[];
+		policy?: { refreshed_at: string; required_checks: unknown[] };
 	}>;
 	const openSpecTasks: OpenSpecTask[] = [];
 	for (const repo of repositories) {
+		const existingRepository = bound
+			.flatMap((user) => user.installations)
+			.find((item) => item.installationId === installationId)
+			?.repositories.find((item) => item.repositoryId === String(repo.id));
+		const policy = await refreshRepositoryPolicy(
+			db,
+			installationId,
+			{
+				repositoryId: String(repo.id),
+				full_name: repo.full_name,
+				policy: existingRepository?.policy,
+			},
+			request,
+		);
 		const prs = await pagedGet(
 			db,
 			`installation:${installationId}:repo:${repo.id}:prs`,
@@ -549,6 +1243,14 @@ export async function bootstrapInstallation(
 		const deploymentRows =
 			deployments.kind === "changed" ? deployments.body : [];
 		const pullRequests = Array.isArray(prs.body) ? prs.body : [];
+		const deploymentPullRequests = pullRequests.map((pr: any) => ({
+			...pr,
+			url: pr.html_url,
+			head_sha: pr.head?.sha,
+		}));
+		const recentMergedPullRequests = retainRecentMergedPullRequests(
+			existingRepository?.recentMergedPullRequests ?? [],
+		);
 		const tasks = await fetchOpenSpecTasksForPullRequests(
 			db,
 			installationId,
@@ -563,6 +1265,14 @@ export async function bootstrapInstallation(
 		snapshots.push({
 			repositoryId: String(repo.id),
 			full_name: repo.full_name,
+			...(policy.policy
+				? {
+						policy: policy.policy as {
+							refreshed_at: string;
+							required_checks: unknown[];
+						},
+					}
+				: {}),
 			pullRequests: Array.isArray(prs.body)
 				? prs.body.map((pr: any) => ({
 						number: pr.number,
@@ -577,7 +1287,15 @@ export async function bootstrapInstallation(
 					}))
 				: [],
 			openSpecs: [],
-			deployments: deploymentRows as Record<string, unknown>[],
+			deployments: (deploymentRows as Record<string, unknown>[]).map(
+				(deployment) =>
+					correlateDeploymentPullRequest(
+						deployment,
+						deploymentPullRequests,
+						recentMergedPullRequests,
+					),
+			),
+			...(recentMergedPullRequests.length ? { recentMergedPullRequests } : {}),
 		});
 	}
 	const account = (installation.body as any).account.login;
@@ -621,6 +1339,9 @@ export async function bootstrapInstallation(
 							}),
 						openSpecs: snapshot.openSpecs,
 						deployments: snapshot.deployments.slice(0, 20),
+						...(snapshot.recentMergedPullRequests
+							? { recentMergedPullRequests: snapshot.recentMergedPullRequests }
+							: {}),
 					};
 				});
 				installation.lastSuccessfulSyncAt = new Date();
@@ -714,6 +1435,10 @@ export async function reconcileInstallations(
 	installationIds?: string[],
 	fetchTasks?: TaskFetcher,
 	reportTaskFetchFailure?: GitHubRequestFailureReporter,
+	onResult?: (item: {
+		installationId: string;
+		result: ReadResult;
+	}) => Promise<void>,
 ) {
 	const ids = installationIds
 		? [...new Set(installationIds)].sort()
@@ -759,6 +1484,7 @@ export async function reconcileInstallations(
 			);
 		}
 		results.push({ installationId, result });
+		await onResult?.({ installationId, result });
 		if (result.kind === "error") {
 			logReconciliationFailure(
 				"installation reconciliation failed",
