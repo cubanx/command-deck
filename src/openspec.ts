@@ -66,6 +66,7 @@ export async function projectOpenSpec(
 				{ projection: { _id: 1 } },
 			)
 			.toArray();
+		let changed = false;
 		await Promise.all(
 			users.map((user) =>
 				mutateUser(db, user._id, (aggregate) => {
@@ -81,14 +82,17 @@ export async function projectOpenSpec(
 					const repository = installation.repositories.find(
 						(item) => item.repositoryId === input.repositoryId,
 					);
-					if (repository)
+					if (repository) {
+						const before = repository.openSpecs.length;
 						repository.openSpecs = repository.openSpecs.filter(
 							(item) => item.change_name !== changeName,
 						);
+						changed ||= repository.openSpecs.length !== before;
+					}
 				}),
 			),
 		);
-		return false;
+		return { changed, completed: false };
 	}
 	const progress = parseTasks(input.content ?? "");
 	const users = await db.users
@@ -97,7 +101,8 @@ export async function projectOpenSpec(
 			{ projection: { _id: 1 } },
 		)
 		.toArray();
-	let completed = false;
+	let changed = false,
+		completed = false;
 	await Promise.all(
 		users.map((user) =>
 			mutateUser(db, user._id, (aggregate) => {
@@ -134,10 +139,25 @@ export async function projectOpenSpec(
 						: null,
 					updated_at: new Date().toISOString(),
 				};
+				changed ||=
+					!previous ||
+					(
+						[
+							"completed",
+							"total",
+							"pre_merge_ready",
+							"source_commit",
+							"source_ref",
+							"active_group",
+						] as const
+					).some(
+						(key) =>
+							JSON.stringify(previous[key]) !== JSON.stringify(next[key]),
+					);
 				if (index >= 0) repository.openSpecs[index] = next;
 				else repository.openSpecs.push(next);
 			}),
 		),
 	);
-	return completed;
+	return { changed, completed };
 }

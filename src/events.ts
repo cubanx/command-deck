@@ -578,6 +578,7 @@ const projectPush = async (
 	account: string,
 	fetchTasks: TaskFetcher,
 ) => {
+	let changed = false;
 	const commits = Array.isArray(data.commits) ? data.commits : [];
 	const files = commits.flatMap((commit) => [
 		...(commit.added ?? []),
@@ -601,7 +602,7 @@ const projectPush = async (
 				});
 		if (!deleted && content === null)
 			throw new Error("OpenSpec artifact fetch failed");
-		const completed = await projectOpenSpec(db, {
+		const result = await projectOpenSpec(db, {
 			installationId,
 			accountLogin: account,
 			repositoryId,
@@ -611,7 +612,8 @@ const projectPush = async (
 			sha: data.after ?? "unknown",
 			sourceRef,
 		});
-		if (completed)
+		changed ||= result.changed;
+		if (result.completed)
 			await notifyBoundUsers(
 				db,
 				installationId,
@@ -621,6 +623,7 @@ const projectPush = async (
 				path.split("/")[2] ?? "OpenSpec",
 			);
 	}
+	return changed;
 };
 
 const notifyReviewRequest = async (
@@ -770,6 +773,7 @@ async function projectGitHub(
 	if (!installationId || !repositoryId || !approvedInstallationAccount(account))
 		return { status: "ignored" as const, targets: [] };
 	let terminalTransition = false;
+	let changed = false;
 	const mergeabilityUsers = new Set<string>();
 	const targets = new Map<string, ReconciliationTarget>();
 	const users = await db.users
@@ -780,6 +784,7 @@ async function projectGitHub(
 		.toArray();
 	for (const user of users)
 		await mutateUser(db, user._id, (aggregate) => {
+			const before = JSON.stringify(aggregate);
 			const result = applyGitHubEvent(
 				aggregate,
 				installationId,
@@ -791,6 +796,7 @@ async function projectGitHub(
 			);
 			terminalTransition ||= result.terminalTransition;
 			if (result.mergeabilityChanged) mergeabilityUsers.add(aggregate._id);
+			changed ||= before !== JSON.stringify(aggregate);
 			const repository = aggregate.installations
 				.find((item) => item.installationId === installationId)
 				?.repositories.find((item) => item.repositoryId === repositoryId);
@@ -800,7 +806,7 @@ async function projectGitHub(
 				targets.set(`${target.repositoryId}:${target.number}`, target);
 		});
 	if (event === "push" && fetchTasks)
-		await projectPush(
+		changed ||= await projectPush(
 			db,
 			data,
 			installationId,
@@ -830,6 +836,7 @@ async function projectGitHub(
 	return {
 		status:
 			lifecycleHint && !targets.size ? ("ignored" as const) : ("done" as const),
+		changed,
 		targets: [...targets.values()],
 	};
 }
@@ -1020,7 +1027,7 @@ export async function drainInbox(
 					reviewBot,
 				);
 				const installationId = verification.installationId;
-				if (installationId)
+				if (projection.changed && installationId)
 					(
 						await db.users
 							.find(

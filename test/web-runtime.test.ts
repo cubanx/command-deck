@@ -185,6 +185,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	const fetchRequests: Array<{ input: string; init?: RequestInit }> = [];
 	let resolveReconciliation: ((response?: Response) => void) | undefined;
 	let deferReconciliation = false;
+	let refresh: (() => unknown) | undefined;
 	const fetch = async (input: string, init?: RequestInit) => {
 		fetchCalls.push(input);
 		fetchRequests.push({ input, init });
@@ -220,12 +221,26 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		EventSource: {
 			configurable: true,
 			value: class {
-				addEventListener() {}
+				addEventListener(name: string, listener: () => unknown) {
+					if (name === "refresh") refresh = listener;
+				}
 			},
 		},
 	});
 	const app = await import("#/web/app");
 	await new Promise((resolve) => setTimeout(resolve, 0));
+	const snapshotsBeforeRefresh = fetchCalls.filter(
+		(call) => call === "/api/snapshot",
+	).length;
+	refresh?.();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(fetchCalls.filter((call) => call === "/api/snapshot").length).toBe(
+		snapshotsBeforeRefresh + 1,
+	);
+	await new Promise((resolve) => setTimeout(resolve, 25));
+	expect(fetchCalls.filter((call) => call === "/api/snapshot").length).toBe(
+		snapshotsBeforeRefresh + 1,
+	);
 	expect(element("#app").innerHTML).toContain("Prepare the Defiant");
 	expect(element("#app").innerHTML).toContain(
 		"OpenSpec · prepare-defiant · 1/2 · Readiness",

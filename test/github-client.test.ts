@@ -52,7 +52,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
 		});
 		await db.users.replaceOne({ _id: "u" }, user!);
-		const result = await reconcilePullRequest(db, {
+		const input: Parameters<typeof reconcilePullRequest>[1] = {
 			installationId: "9",
 			repositoryId: "2",
 			number: 7,
@@ -112,7 +112,8 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 				path.includes("alpha")
 					? "- [x] Align the deflector"
 					: "- [x] Tune the warp core",
-		});
+		};
+		const result = await reconcilePullRequest(db, input);
 		expect(result.kind).toBe("changed");
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
@@ -127,6 +128,11 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		expect(
 			(await dashboardForUser(db, "u")).pullRequests[0]?.open_specs,
 		).toMatchObject([{ change_name: "alpha" }, { change_name: "zeta" }]);
+		const repaired = await db.users.findOne({ _id: "u" });
+		if (!repaired) throw new Error("test user missing");
+		repaired.installations[0]!.repositories[0]!.openSpecs = [];
+		await db.users.replaceOne({ _id: "u" }, repaired);
+		expect((await reconcilePullRequest(db, input)).kind).toBe("changed");
 	}));
 
 test("targeted repair fails closed when the preserved repository policy is stale", () =>

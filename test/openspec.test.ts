@@ -37,7 +37,7 @@ test("projects installation-scoped OpenSpec progress", () =>
 				content: "- [x] Ready",
 				sha: "a".repeat(40),
 			}),
-		).toBe(true);
+		).toEqual({ changed: true, completed: true });
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
 				?.openSpecs,
@@ -52,7 +52,7 @@ test("projects installation-scoped OpenSpec progress", () =>
 				sha: "a".repeat(40),
 				sourceRef: "main",
 			}),
-		).toBe(false);
+		).toEqual({ changed: true, completed: false });
 		await projectOpenSpec(db, {
 			installationId: "1",
 			accountLogin: "cubanx",

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Personal operational summary
-The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, opened time, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a conditional guarded Merge control beside the linked title, and every branch/SHA-linked OpenSpec status, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The OpenSpec collection SHALL be deterministically sorted and deduplicated; the first item MAY remain available only through the existing singular compatibility field. The default pull-request order SHALL be GitHub opened time ascending across all repositories, with unavailable opened times last and a deterministic stable identity fallback.
+The system SHALL present every authorized open pull request authored by the signed-in developer with title, PR number, opened time, draft state, attention classification, distinct Actions/check/formal-review/automated-review/mergeability evidence, a conditional guarded Merge control beside the linked title, every OpenSpec status confirmed by the authoritative exhaustive `## OpenSpecs` PR-body section, and detected changed-path candidates labeled as detected from changed files, plus recent authoritative GitHub deployment projections, from local installation-scoped projections. The confirmed OpenSpec collection SHALL be deterministically sorted and deduplicated; the first item MAY remain available only through the existing singular compatibility field. The default pull-request order SHALL be GitHub opened time ascending across all repositories, with unavailable opened times last and a deterministic stable identity fallback.
 
 #### Scenario: Developer opens the command center
 - **WHEN** a signed-in developer has projected state across one or more bound GitHub installations
@@ -39,6 +39,18 @@ The system SHALL present every authorized open pull request authored by the sign
 #### Scenario: Pull request has multiple correlated OpenSpecs
 - **WHEN** more than one deterministically ordered and deduplicated OpenSpec is correlated to a pull request
 - **THEN** the dashboard renders every correlated OpenSpec without treating the collection as ambiguous, while legacy consumers receive the first item through the existing singular field only
+
+#### Scenario: OpenSpec directory listing does not render as evidence
+- **WHEN** a repository snapshot lists OpenSpec artifacts at a pull request's head without accepted PR-specific correlation evidence
+- **THEN** the dashboard renders none of those artifacts as pull-request OpenSpec evidence
+
+#### Scenario: Detected OpenSpec candidates await body confirmation
+- **WHEN** changed files detect OpenSpec candidates but the PR body has no authoritative `## OpenSpecs` declaration or exact exemption label
+- **THEN** the dashboard labels the candidates as detected from changed files and shows `Confirm OpenSpec association` as a blocker
+
+#### Scenario: Authoritative declaration excludes detected candidates
+- **WHEN** a valid authoritative `## OpenSpecs` declaration omits one or more changed-path candidates
+- **THEN** the dashboard labels the omitted candidates as detected from changed files without treating them as task evidence or lifecycle blockers
 
 #### Scenario: OpenSpec disclosure appears in any color scheme
 - **WHEN** the dashboard renders collapsed or expanded OpenSpec evidence in System, Dark, or Light appearance

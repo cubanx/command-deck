@@ -68,15 +68,23 @@ An authenticated developer SHALL be able to request targeted reconciliation for 
 ## ADDED Requirements
 
 ### Requirement: Authoritative targeted PR lifecycle repair
-The system SHALL repair one authorized PR from current provider evidence for open/draft state, opened time, exact head SHA, conflict-free mergeability, completed reviews, current changes-requested state, every review thread's resolution state, current-head checks and Actions, labels, and every correlated committed OpenSpec task projection. The OpenSpec collection SHALL include every exact-head match or, only when none exists, every unique-branch match, deterministically sorted and deduplicated; its first item SHALL remain available only through the existing singular compatibility field. It SHALL fail closed on incomplete pagination or indeterminate required evidence and SHALL remove the target when provider evidence shows it is closed.
+The system SHALL repair one authorized PR from current provider evidence for open/draft state, opened time, exact head SHA, PR body, conflict-free mergeability, completed reviews, current changes-requested state, every review thread's resolution state, current-head checks and Actions, labels, and every committed OpenSpec task projection declared by the exact human-readable `## OpenSpecs` PR-body section. That section is authoritative and exhaustive when present: every listed exact change slug SHALL resolve to a committed active OpenSpec at the exact PR head, an empty declaration SHALL be the explicit no-OpenSpec path only with the exact `openspec-not-required` label, and missing, invalid, duplicate, or conflicting declarations SHALL fail closed. A changes-directory listing or repository snapshot presence at the PR head SHALL NOT alone correlate an OpenSpec; changed paths under `openspec/changes/<slug>/...` SHALL be projected only as detected/inferred informational candidates. The confirmed collection SHALL be deterministically sorted and deduplicated; its first item SHALL remain available only through the existing singular compatibility field. It SHALL fail closed on incomplete pagination or indeterminate required evidence and SHALL remove the target when provider evidence shows it is closed.
 
 #### Scenario: Targeted repair succeeds
 - **WHEN** every required provider page for an authorized open PR is retrieved successfully
 - **THEN** the system atomically replaces that PR's lifecycle evidence and refreshes affected user snapshots
 
 #### Scenario: Targeted repair finds multiple correlated OpenSpecs
-- **WHEN** provider evidence identifies multiple exact-head OpenSpec matches or, with no exact-head match, multiple unique-branch matches
+- **WHEN** the authoritative `## OpenSpecs` section lists multiple valid changes that resolve at the exact PR head
 - **THEN** targeted repair projects every deterministically sorted and deduplicated correlated OpenSpec without treating multiple matches as ambiguous
+
+#### Scenario: Directory listing does not imply PR correlation
+- **WHEN** targeted repair reads a changes directory that lists OpenSpec artifacts but the PR body has no authoritative declaration for the target pull request
+- **THEN** it projects no OpenSpec correlation from that listing alone and preserves the normal empty-collection applicability decision
+
+#### Scenario: Declared and detected OpenSpecs differ
+- **WHEN** an authoritative `## OpenSpecs` section declares valid changes and changed paths detect additional unlisted candidates
+- **THEN** targeted repair projects the declared changes as confirmed task evidence and the unlisted candidates as informational detected evidence only
 
 #### Scenario: Review threads exceed one page
 - **WHEN** review-thread results are paginated

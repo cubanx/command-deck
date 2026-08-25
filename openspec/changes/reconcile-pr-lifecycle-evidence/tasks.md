@@ -38,8 +38,8 @@
 - [x] 5.4 Route lifecycle-relevant signed events through direct projection plus the targeted coordinator, document the required GitHub App subscriptions, and verify event/inbox/SSE tests pass without installation-wide reads or silent verified-delivery loss.
 - [x] 5.5 Add failing projection tests for PR-title/number/URL retention, exact head/merge-SHA deployment correlation in either event order, 48-hour retention, uncorrelated fallback, and stale deployment-status protection.
 - [x] 5.6 Extend existing PR and deployment projections with bounded exact-SHA correlation evidence and verify deployment tests pass without parsing refs or fetching commits.
-- [ ] 5.7 Add failing SSE acceptance tests for close deletion, missed close/open startup repair, OAuth/bootstrap, explicit repair, post-commit ordering, affected-user scope, and no polling.
-- [ ] 5.8 Route successful user-visible mutations through the existing invalidation seam and verify focused behavior; defer cross-instance transport.
+- [x] 5.7 Add failing SSE acceptance tests for close deletion, missed close/open startup repair, OAuth/bootstrap, explicit repair, post-commit ordering, affected-user scope, and no polling.
+- [x] 5.8 Route successful user-visible mutations through the existing invalidation seam and verify focused behavior; defer cross-instance transport.
 
 ## 6. Reconciliation controls and deployment presentation
 
@@ -55,3 +55,7 @@
 - [ ] 7.2 Under separate explicit provider authorization, subscribe the GitHub App to any missing `pull_request_review_comment`, `pull_request_review_thread`, and `status` events, and verify a configuration reread matches the intended event set.
 - [ ] 7.3 Under separate explicit provider authorization, verify or create the exact `openspec-not-required` label in each watched repository that will use the exemption and record repository-scoped evidence without applying the label to a PR.
 - [ ] 7.4 Observe the next natural review-thread resolution and check completion without manufacturing activity, and verify delivery ID, targeted reconciliation, SSE refresh, and sanitized telemetry evidence at the deployed SHA.
+
+## 8. PR-specific OpenSpec correlation
+
+- [ ] 8.1 Add failing provider, access, lifecycle, guarded-merge, and UI tests for the authoritative exhaustive `## OpenSpecs` PR-body declaration, exact-head active-slug resolution, empty-list exemption, invalid/duplicate/conflicting declarations, detected changed-path candidates, confirmation and exemption blockers, and declared-versus-detected rendering; implement the approved minimal path with deterministic confirmed plural projection and legacy singular compatibility.

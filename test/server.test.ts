@@ -283,8 +283,298 @@ test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
 		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
 			"event: refresh",
 		);
+		expect(
+			await app.fetch(
+				new Request("http://local/webhooks/github", {
+					method: "POST",
+					headers: {
+						"x-github-delivery": "targeted-refresh-noop",
+						"x-github-event": "pull_request_review",
+						"x-hub-signature-256": signature,
+					},
+					body,
+				}),
+			),
+		).toMatchObject({ status: 202 });
+		await app.drain();
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(
+			await Promise.race([
+				reader.read(),
+				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
+			]),
+		).toBeUndefined();
 		await reader.cancel();
 		app.stop?.();
+	}));
+
+test("installation repair refreshes only bound streams after a changed bootstrap", () =>
+	withDatabase(async (db) => {
+		for (const [id, installationId] of [
+			["u", "9"],
+			["shared", "9"],
+			["foreign", "10"],
+		] as const) {
+			await upsertIdentity(db, id, id);
+			await bindInstallation(db, id, installationId, "cubanx");
+		}
+		let outcome: "changed" | "unchanged" | "error" = "changed";
+		const app = createApp(db, testConfig, undefined, {
+			reconcileInstallations: async () => [],
+			bootstrapInstallation: async (database, installationId) => {
+				if (outcome === "error")
+					return {
+						kind: "error",
+						stale: true,
+						message: "reconciliation failed",
+					};
+				if (outcome === "changed")
+					await mutateUser(database, "u", (user) => {
+						user.installations.find(
+							(item) => item.installationId === installationId,
+						)!.repositories = [
+							{
+								repositoryId: "2",
+								full_name: "ds9/ops",
+								pullRequests: [],
+								openSpecs: [],
+								deployments: [],
+							},
+						];
+					});
+				return outcome === "changed"
+					? { kind: "changed", body: [{ id: 2 }] }
+					: { kind: "unchanged" };
+			},
+		});
+		const stream = async (id: string) => {
+			const session = await createSession(db, id);
+			const response = await app.fetch(
+				new Request("http://local/events", {
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			const reader = response.body?.getReader();
+			if (!reader) throw new Error("event stream body missing");
+			await reader.read();
+			return { reader, session };
+		};
+		const primary = await stream("u"),
+			shared = await stream("shared"),
+			foreign = await stream("foreign");
+		const repair = () =>
+			app.fetch(
+				new Request("http://local/api/installations/9/repair", {
+					method: "POST",
+					headers: { cookie: `dcc_session=${primary.session.token}` },
+				}),
+			);
+		const none = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
+			Promise.race([
+				reader.read(),
+				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
+			]);
+		try {
+			expect((await repair()).status).toBe(200);
+			expect(
+				(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories,
+			).toHaveLength(1);
+			for (const item of [primary, shared])
+				expect(
+					new TextDecoder().decode((await item.reader.read()).value),
+				).toContain("event: refresh");
+			outcome = "unchanged";
+			await repair();
+			expect(await none(primary.reader)).toBeUndefined();
+			expect(await none(shared.reader)).toBeUndefined();
+			outcome = "error";
+			const failed = await repair();
+			expect(failed.status).toBe(200);
+			expect(await none(primary.reader)).toBeUndefined();
+			expect(await none(shared.reader)).toBeUndefined();
+			expect(await none(foreign.reader)).toBeUndefined();
+			expect(await failed.text()).toContain("reconciliation failed");
+		} finally {
+			await Promise.all([
+				primary.reader.cancel(),
+				shared.reader.cancel(),
+				foreign.reader.cancel(),
+			]);
+			app.stop();
+		}
+	}));
+
+test("changed repairs refresh every bound stream after persistence and suppress no-op, ignored, and failed refreshes", () =>
+	withDatabase(async (db) => {
+		for (const [id, login, installationId] of [
+			["u", "sisko", "9"],
+			["shared", "bashir", "9"],
+			["foreign", "garak", "10"],
+		] as const) {
+			await upsertIdentity(db, id, login);
+			await bindInstallation(db, id, installationId, "cubanx");
+			await mutateUser(db, id, (user) => {
+				user.installations[0]!.repositories = [
+					{
+						repositoryId: "2",
+						full_name: "ds9/ops",
+						openSpecs: [],
+						deployments: [],
+						pullRequests: [
+							{
+								number: 7,
+								title: "Hold the wormhole",
+								author_login: login,
+								state: "open",
+								draft: false,
+								mergeable: "unknown",
+							},
+						],
+					},
+				];
+			});
+		}
+		let outcome: "changed" | "openspec" | "closed" | "unchanged" | "error" =
+			"changed";
+		const app = createApp(
+			db,
+			{ ...testConfig, githubWebhookSecret: "secret" },
+			undefined,
+			{
+				reconcilePullRequest: async (database, target) => {
+					if (outcome === "error")
+						return {
+							kind: "error",
+							stale: true,
+							message: "provider unavailable",
+						};
+					if (
+						outcome === "changed" ||
+						outcome === "openspec" ||
+						outcome === "closed"
+					)
+						await Promise.all(
+							["u", "shared"].map((id) =>
+								mutateUser(database, id, (user) => {
+									const pullRequests =
+										user.installations[0]!.repositories[0]!.pullRequests;
+									if (outcome === "closed") pullRequests.splice(0);
+									else if (outcome === "openspec")
+										user.installations[0]!.repositories[0]!.openSpecs.push({
+											change_name: "repair-wolf-359",
+											completed: 0,
+											total: 1,
+											pre_merge_ready: false,
+											source_commit: "a".repeat(40),
+											active_group: null,
+											updated_at: "2030-01-01T00:00:00Z",
+										});
+									else pullRequests[0]!.title = "Repair the wormhole";
+								}),
+							),
+						);
+					return outcome === "changed" ||
+						outcome === "openspec" ||
+						outcome === "closed"
+						? { kind: "changed", body: { number: target.number } }
+						: { kind: "unchanged" };
+				},
+			},
+		);
+		const streamFor = async (id: string) => {
+			const session = await createSession(db, id);
+			const stream = await app.fetch(
+				new Request("http://local/events", {
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			const reader = stream.body?.getReader();
+			if (!reader) throw new Error("event stream body missing");
+			await reader.read();
+			return { reader, session };
+		};
+		const primary = await streamFor("u");
+		const shared = await streamFor("shared");
+		const foreign = await streamFor("foreign");
+		const repair = () =>
+			app.fetch(
+				new Request("http://local/api/reconcile/pull-request", {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${primary.session.token}`,
+						"content-type": "application/json",
+					},
+					body: JSON.stringify({
+						installationId: "9",
+						repositoryId: "2",
+						number: 7,
+					}),
+				}),
+			);
+		try {
+			expect((await repair()).status).toBe(200);
+			expect(
+				(await db.users.findOne({ _id: "u" }))?.installations[0]
+					?.repositories[0]?.pullRequests[0]?.title,
+			).toBe("Repair the wormhole");
+			for (const stream of [primary, shared])
+				expect(
+					new TextDecoder().decode((await stream.reader.read()).value),
+				).toContain("event: refresh");
+			const openSpec = await streamFor("u");
+			outcome = "openspec";
+			expect((await repair()).status).toBe(200);
+			expect(
+				(await db.users.findOne({ _id: "u" }))?.installations[0]
+					?.repositories[0]?.openSpecs,
+			).toMatchObject([{ change_name: "repair-wolf-359" }]);
+			expect(
+				new TextDecoder().decode((await openSpec.reader.read()).value),
+			).toContain("event: refresh");
+			expect(
+				new TextDecoder().decode((await primary.reader.read()).value),
+			).toContain("event: refresh");
+			await openSpec.reader.cancel();
+			outcome = "unchanged";
+			expect((await repair()).status).toBe(200);
+			const ignored = JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+			});
+			const signature = `sha256=${createHmac("sha256", "secret").update(ignored).digest("hex")}`;
+			expect(
+				(
+					await app.fetch(
+						new Request("http://local/webhooks/github", {
+							method: "POST",
+							headers: {
+								"x-github-delivery": "ignored-refresh",
+								"x-github-event": "ping",
+								"x-hub-signature-256": signature,
+							},
+							body: ignored,
+						}),
+					)
+				).status,
+			).toBe(202);
+			await app.drain();
+			const noEvent = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
+				Promise.race([
+					reader.read(),
+					new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
+				]);
+			expect(await noEvent(primary.reader)).toBeUndefined();
+			outcome = "error";
+			expect((await repair()).status).toBe(502);
+			expect(await noEvent(foreign.reader)).toBeUndefined();
+		} finally {
+			await Promise.all([
+				primary.reader.cancel(),
+				shared.reader.cancel(),
+				foreign.reader.cancel(),
+			]);
+			app.stop();
+		}
 	}));
 
 test("dashboard shell uses compact OpenSpec disclosure and an accessible PR section name", () =>
@@ -1544,6 +1834,16 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			githubAppId: "1",
 			githubAppPrivateKey: pem,
 		});
+		await upsertIdentity(db, "9", "kira");
+		const existingSession = await createSession(db, "9");
+		const existingStream = await app.fetch(
+			new Request("http://local/events", {
+				headers: { cookie: `dcc_session=${existingSession.token}` },
+			}),
+		);
+		const existingReader = existingStream.body?.getReader();
+		if (!existingReader) throw new Error("event stream body missing");
+		await existingReader.read();
 		const original = globalThis.fetch,
 			originalError = console.error,
 			logs: unknown[][] = [];
@@ -1611,6 +1911,9 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					)
 				).status,
 			).toBe(302);
+			expect(
+				new TextDecoder().decode((await existingReader.read()).value),
+			).toContain("event: refresh");
 			for (let attempts = 0; !logs.length && attempts < 50; attempts++)
 				await new Promise((resolve) => setTimeout(resolve));
 			expect(
@@ -1664,6 +1967,8 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			console.error = originalError;
 			process.off("unhandledRejection", onUnhandledRejection);
 			users.replaceOne = originalReplace;
+			await existingReader.cancel();
+			app.stop();
 		}
 	}));
 

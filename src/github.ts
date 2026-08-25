@@ -762,6 +762,7 @@ const removeClosedPullRequest = async (
 	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
 	input: ReconcilePullRequestInput,
 ): Promise<ReadResult> => {
+	let changed = false;
 	await Promise.all(
 		users.map((user) =>
 			mutateUser(db, user._id, (aggregate) => {
@@ -770,14 +771,17 @@ const removeClosedPullRequest = async (
 					?.repositories.find(
 						(item) => item.repositoryId === input.repositoryId,
 					);
-				if (target)
+				if (target) {
+					const before = target.pullRequests.length;
 					target.pullRequests = target.pullRequests.filter(
 						(item) => Number(item.number) !== input.number,
 					);
+					changed ||= target.pullRequests.length !== before;
+				}
 			}),
 		),
 	);
-	return { kind: "changed", body: null };
+	return { kind: changed ? "changed" : "unchanged", body: null };
 };
 
 const readOpenPullRequest = async (
@@ -1030,6 +1034,7 @@ const applyOpenPullRequest = async (
 			? "failure"
 			: "success",
 	};
+	let changed = false;
 	await Promise.all(
 		users.map((user) =>
 			mutateUser(db, user._id, (aggregate) => {
@@ -1050,18 +1055,29 @@ const applyOpenPullRequest = async (
 						String(previous.updated_at ?? "") >= String(next.updated_at ?? ""))
 				)
 					return;
+				if (
+					previous?.lifecycle_stale === false &&
+					Object.entries(next).every(
+						([key, value]) =>
+							JSON.stringify(previous?.[key]) === JSON.stringify(value),
+					)
+				)
+					return;
+				changed = true;
 				if (previous) Object.assign(previous, next, { lifecycle_stale: false });
 				else target.pullRequests.push({ ...next, lifecycle_stale: false });
 			}),
 		),
 	);
-	for (const task of tasks)
-		await projectOpenSpec(db, {
+	for (const task of tasks) {
+		const openSpec = await projectOpenSpec(db, {
 			installationId: input.installationId,
 			accountLogin: installation?.accountLogin ?? "",
 			...task,
 		});
-	return { kind: "changed", body: next };
+		changed ||= openSpec.changed;
+	}
+	return { kind: changed ? "changed" : "unchanged", body: next };
 };
 
 export async function reconcilePullRequest(
