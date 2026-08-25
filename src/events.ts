@@ -3,7 +3,11 @@ import type { ReviewBotConfig } from "#/config";
 import type { Db } from "#/db";
 import { mutateUser } from "#/db";
 import { shouldApplyDeploymentStatus } from "#/deployment-status";
-import { approvedInstallationAccount, sameLogin } from "#/installations";
+import {
+	approvedInstallationAccount,
+	normalizedLogin,
+	sameLogin,
+} from "#/installations";
 import { changedTaskPaths, projectOpenSpec } from "#/openspec";
 
 export function githubSignatureValid(
@@ -25,19 +29,54 @@ export async function acceptGitHubDelivery(
 	eventName: string,
 	body: string,
 ) {
-	let account: unknown;
+	let data: GitHubPayload;
 	try {
-		account = JSON.parse(body)?.installation?.account?.login;
+		data = JSON.parse(body);
 	} catch {
 		return false;
 	}
-	if (!approvedInstallationAccount(account)) return false;
+	const installationId = id(data.installation?.id);
+	let account = data.installation?.account?.login;
+	if (!approvedInstallationAccount(account)) {
+		if (!installationId || account != null) return false;
+		const bindings = (
+			await db.users
+				.find({ "installations.installationId": installationId })
+				.toArray()
+		).flatMap((user) =>
+			user.installations.filter(
+				(item) =>
+					item.installationId === installationId &&
+					approvedInstallationAccount(item.accountLogin),
+			),
+		);
+		const identities = new Set(
+			bindings.map((binding) => normalizedLogin(binding.accountLogin)),
+		);
+		if (identities.size !== 1 || identities.has(undefined)) return false;
+		account = bindings[0]?.accountLogin;
+	} else if (installationId) {
+		const bindings = await db.users
+			.find({ "installations.installationId": installationId })
+			.toArray();
+		if (
+			bindings.some((user) =>
+				user.installations.some(
+					(item) =>
+						item.installationId === installationId &&
+						!sameLogin(item.accountLogin, account),
+				),
+			)
+		)
+			return false;
+	}
 	try {
 		await db.inboxDeliveries.insertOne({
 			_id: `github:${deliveryId}`,
 			provider: "github",
 			deliveryId,
 			payload: body,
+			resolvedAccount: account,
 			eventName,
 			status: "pending",
 			attempts: 0,
@@ -538,13 +577,14 @@ async function projectGitHub(
 	db: Db,
 	event: string,
 	raw: string,
+	resolvedAccount?: string,
 	fetchTasks?: TaskFetcher,
 	reviewBot?: ReviewBotConfig,
 ) {
 	const data = JSON.parse(raw) as GitHubPayload;
 	const installationId = id(data.installation?.id);
 	const repositoryId = id(data.repository?.id);
-	const account = data.installation?.account?.login;
+	const account = data.installation?.account?.login ?? resolvedAccount;
 	if (!installationId || !repositoryId || !approvedInstallationAccount(account))
 		return "ignored";
 	let terminalTransition = false;
@@ -631,6 +671,7 @@ export async function drainInbox(
 					db,
 					row.eventName,
 					row.payload ?? "",
+					row.resolvedAccount,
 					fetchTasks,
 					reviewBot,
 				);
