@@ -7,6 +7,10 @@ The system SHALL verify the raw GitHub request body with a timing-safe SHA-256 H
 - **WHEN** a request has a valid signature, valid unused delivery identifier, valid event header, and a body within the accepted limit
 - **THEN** the system durably queues it before identity resolution and returns `202` before projection processing
 
+#### Scenario: Missing account resolved from installation binding
+- **WHEN** a supported correctly signed payload has installation ID, no installation account login, and approved bindings resolve to exactly one normalized account
+- **THEN** durably queue original payload before projection, inbox verification records bound account, projects exactly once, clears payload only after success
+
 #### Scenario: Redelivered GitHub event
 - **WHEN** a valid request reuses an already persisted delivery identifier
 - **THEN** the system acknowledges it as idempotent success without applying projections or notifications twice

@@ -551,6 +551,54 @@ test("closest-to-merge retains named lifecycle blockers", () => {
 	).toHaveLength(1);
 });
 
+test("closest-to-merge counts each unresolved gate once and shows exact labels", () => {
+	const complete = { change_name: "complete", completed: 3, total: 3 };
+	const cases = [
+		[{ ...lifecycleReady, completed_review_count: 0 }, "Review pending"],
+		[
+			{
+				...lifecycleReady,
+				changes_requested: true,
+				review_state: "changes_requested",
+			},
+			"Changes requested",
+		],
+		[
+			{ ...lifecycleReady, unresolved_review_threads: 1 },
+			"Unresolved review threads",
+		],
+		[
+			{ ...lifecycleReady, repository_policy_loaded: false },
+			"Repository policy unavailable",
+		],
+		[
+			{
+				...lifecycleReady,
+				required_checks: [{ head_sha: "stale", conclusion: "failure" }],
+			},
+			"Required checks incomplete",
+		],
+		[{ ...lifecycleReady, mergeable: "conflicting" }, "Mergeability blocked"],
+	] as const;
+	for (const [pr, label, spec = complete] of cases)
+		expect(blockersFor(pr, spec)).toEqual([label]);
+	expect(
+		blockersFor(
+			{
+				...lifecycleReady,
+				completed_review_count: 0,
+				changes_requested: true,
+				review_state: "changes_requested",
+				unresolved_review_threads: 1,
+				repository_policy_loaded: false,
+				required_checks: [{ head_sha: "stale", conclusion: "failure" }],
+				mergeable: "conflicting",
+			},
+			complete,
+		),
+	).toHaveLength(6);
+});
+
 test("closest-to-merge keeps incomplete OpenSpec blockers visible before progress and PR ties", () => {
 	const ordered = derivePullRequests(
 		[
@@ -991,6 +1039,13 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 	expect(
 		numbers(
 			derivePullRequests(sortable, {
+				sort: { mode: "closest", direction: "desc" },
+			}),
+		),
+	).toEqual([3, 4, 1, 2]);
+	expect(
+		numbers(
+			derivePullRequests(sortable, {
 				sort: { mode: "progress", direction: "desc" },
 			}),
 		),
@@ -1028,6 +1083,15 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 		mode: "opened",
 		direction: "asc",
 	});
+	expect(
+		derivePullRequests(
+			[
+				{ pr: { number: 7, full_name: "ds9/zeta" }, spec: null },
+				{ pr: { number: 7, full_name: "ds9/alpha" }, spec: null },
+			],
+			{},
+		).map(({ pr }) => pr.full_name),
+	).toEqual(["ds9/alpha", "ds9/zeta"]);
 	expect(
 		derivePullRequests(
 			[

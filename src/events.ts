@@ -7,7 +7,11 @@ import {
 	retainRecentMergedPullRequests,
 } from "#/db";
 import { shouldApplyDeploymentStatus } from "#/deployment-status";
-import { approvedInstallationAccount, sameLogin } from "#/installations";
+import {
+	approvedInstallationAccount,
+	normalizedLogin,
+	sameLogin,
+} from "#/installations";
 import { changedTaskPaths, projectOpenSpec } from "#/openspec";
 
 export function githubSignatureValid(
@@ -119,7 +123,71 @@ const branch = (value: unknown) =>
 	!value.includes("..")
 		? value
 		: undefined;
-type GitHubPayload = Record<string, any>;
+type GitHubPayload = {
+	action?: string;
+	after?: string;
+	ref?: string;
+	sha?: unknown;
+	commits?: Array<{
+		added?: string[];
+		modified?: string[];
+		removed?: string[];
+	}>;
+	installation?: { id?: unknown; account?: { login?: unknown } };
+	repository?: { id?: unknown; full_name?: string };
+	pull_request?: {
+		number?: unknown;
+		state?: string;
+		title?: string;
+		html_url?: unknown;
+		user?: { login?: string };
+		draft?: unknown;
+		mergeable?: unknown;
+		head?: { ref?: unknown; sha?: unknown };
+		merge_commit_sha?: unknown;
+		merged_at?: unknown;
+		merged?: unknown;
+		updated_at?: unknown;
+	};
+	check_run?: {
+		conclusion?: unknown;
+		pull_requests?: Array<{ number?: unknown }>;
+		head_sha?: unknown;
+		check_suite?: { head_sha?: unknown };
+	};
+	check_suite?: {
+		conclusion?: unknown;
+		pull_requests?: Array<{ number?: unknown }>;
+		head_sha?: unknown;
+	};
+	workflow_run?: {
+		id?: unknown;
+		name?: unknown;
+		html_url?: unknown;
+		conclusion?: unknown;
+		status?: unknown;
+		pull_requests?: Array<{ number?: unknown }>;
+		head_sha?: unknown;
+	};
+	review?: { state?: unknown };
+	issue?: { pull_request?: unknown; number?: unknown };
+	comment?: { user?: { login?: unknown }; body?: unknown };
+	requested_reviewer?: { id?: unknown };
+	deployment?: {
+		id?: unknown;
+		environment?: unknown;
+		ref?: unknown;
+		sha?: unknown;
+		created_at?: unknown;
+	};
+	deployment_status?: {
+		id?: unknown;
+		state?: unknown;
+		created_at?: unknown;
+		target_url?: unknown;
+		log_url?: unknown;
+	};
+};
 type TaskFetcher = (input: {
 	installationId: string;
 	repositoryId: string;
@@ -150,19 +218,20 @@ const ensureRepository = (
 
 const retainMergedPullRequest = (
 	repository: import("./db").Repository,
-	pr: GitHubPayload,
+	pr: NonNullable<GitHubPayload["pull_request"]>,
 	previous: Record<string, unknown> | undefined,
 ) => {
 	const headSha =
 		exactHeadSha(pr.head?.sha) ?? exactHeadSha(previous?.head_sha);
 	const mergeSha = exactHeadSha(pr.merge_commit_sha);
 	const mergedAt = typeof pr.merged_at === "string" ? pr.merged_at : undefined;
+	const number = Number(pr.number);
 	const title = typeof pr.title === "string" ? pr.title.trim() : "";
 	const url = safeUrl(pr.html_url);
 	if (
 		pr.merged === true &&
-		Number.isSafeInteger(pr.number) &&
-		pr.number > 0 &&
+		Number.isSafeInteger(number) &&
+		number > 0 &&
 		title &&
 		url &&
 		headSha &&
@@ -173,7 +242,7 @@ const retainMergedPullRequest = (
 		repository.recentMergedPullRequests = retainRecentMergedPullRequests([
 			...(repository.recentMergedPullRequests ?? []),
 			{
-				number: pr.number,
+				number,
 				title,
 				url,
 				head_sha: headSha,
@@ -281,16 +350,18 @@ const lifecycleTargets = (
 	)
 		numbers = [Number(data.pull_request?.number)];
 	else if (["check_run", "check_suite", "workflow_run"].includes(event)) {
-		const source = data[event];
+		const source = data[event as "check_run" | "check_suite" | "workflow_run"];
 		const associations = Array.isArray(source?.pull_requests)
 			? source.pull_requests
 			: [];
 		numbers = associations
-			.map((item: GitHubPayload) => Number(item?.number))
+			.map((item: { number?: unknown }) => Number(item.number))
 			.filter(Number.isInteger);
 		if (!numbers.length) {
 			const sha = exactHeadSha(
-				source?.head_sha ?? source?.check_suite?.head_sha,
+				source?.head_sha ??
+					(source as { check_suite?: { head_sha?: unknown } })?.check_suite
+						?.head_sha,
 			);
 			if (sha)
 				numbers = repository.pullRequests
@@ -360,14 +431,15 @@ const projectBotReview = (
 	data: GitHubPayload,
 	reviewBot?: ReviewBotConfig,
 ) => {
+	const issue = data.issue;
 	if (
 		!["created", "edited"].includes(String(data.action)) ||
 		!reviewBot ||
-		!data.issue?.pull_request
+		!issue?.pull_request
 	)
 		return;
 	const target = repository.pullRequests.find(
-		(item) => item.number === Number(data.issue.number),
+		(item) => item.number === Number(issue.number),
 	);
 	const actor = data.comment?.user?.login;
 	const text = String(data.comment?.body ?? "").toLowerCase();
@@ -507,7 +579,7 @@ const projectPush = async (
 	fetchTasks: TaskFetcher,
 ) => {
 	const commits = Array.isArray(data.commits) ? data.commits : [];
-	const files = commits.flatMap((commit: GitHubPayload) => [
+	const files = commits.flatMap((commit) => [
 		...(commit.added ?? []),
 		...(commit.modified ?? []),
 		...(commit.removed ?? []),
@@ -516,7 +588,7 @@ const projectPush = async (
 		? branch(data.ref.slice(11))
 		: undefined;
 	for (const path of changedTaskPaths(files)) {
-		const deleted = commits.some((commit: GitHubPayload) =>
+		const deleted = commits.some((commit) =>
 			(commit.removed ?? []).includes(path),
 		);
 		const content = deleted
@@ -631,7 +703,12 @@ const notifyProjectionChanges = async (
 	terminalTransition: boolean,
 	mergeabilityUsers: Set<string>,
 ) => {
-	if (event === "deployment_status" && terminalTransition)
+	if (
+		event === "deployment_status" &&
+		terminalTransition &&
+		data.deployment &&
+		data.deployment_status
+	)
 		await notifyBoundUsers(
 			db,
 			installationId,
@@ -640,14 +717,15 @@ const notifyProjectionChanges = async (
 			`Deployment ${String(data.deployment_status.state).toLowerCase()}`,
 			data.repository?.full_name ?? "Repository",
 		);
-	for (const userId of mergeabilityUsers)
-		await notifyUser(
-			db,
-			userId,
-			`mergeability:${repositoryId}:${data.pull_request.number}:${data.pull_request.mergeable}`,
-			"Mergeability changed",
-			data.pull_request.title ?? "Pull request",
-		);
+	if (data.pull_request)
+		for (const userId of mergeabilityUsers)
+			await notifyUser(
+				db,
+				userId,
+				`mergeability:${repositoryId}:${data.pull_request.number}:${data.pull_request.mergeable}`,
+				"Mergeability changed",
+				data.pull_request.title ?? "Pull request",
+			);
 	if (event === "pull_request")
 		await notifyReviewRequest(db, data, installationId, repositoryId, account);
 	await notifyCheckFailure(
@@ -664,6 +742,7 @@ async function projectGitHub(
 	db: Db,
 	event: string,
 	raw: string,
+	resolvedAccount?: string,
 	fetchTasks?: TaskFetcher,
 	reviewBot?: ReviewBotConfig,
 ) {
@@ -687,7 +766,7 @@ async function projectGitHub(
 		return { status: "ignored" as const, targets: [] };
 	const installationId = id(data.installation?.id);
 	const repositoryId = id(data.repository?.id);
-	const account = data.installation?.account?.login;
+	const account = data.installation?.account?.login ?? resolvedAccount;
 	if (!installationId || !repositoryId || !approvedInstallationAccount(account))
 		return { status: "ignored" as const, targets: [] };
 	let terminalTransition = false;
@@ -756,7 +835,12 @@ async function projectGitHub(
 }
 
 type Verification =
-	| { kind: "ready"; raw: string; installationId: string }
+	| {
+			kind: "ready";
+			raw: string;
+			account: string;
+			installationId: string;
+	  }
 	| {
 			kind: "pending";
 			reason:
@@ -796,7 +880,8 @@ const verifyGitHubDelivery = async (
 								item.installationId === installationId &&
 								approvedInstallationAccount(item.accountLogin),
 						)
-						.map((item) => String(item.accountLogin).toLowerCase()),
+						.map((item) => normalizedLogin(item.accountLogin))
+						.filter((account): account is string => Boolean(account)),
 				),
 			),
 		];
@@ -811,7 +896,12 @@ const verifyGitHubDelivery = async (
 			...(data.installation.account ?? {}),
 			login: accounts[0],
 		};
-		return { kind: "ready", raw: JSON.stringify(data), installationId };
+		return {
+			kind: "ready",
+			raw: JSON.stringify(data),
+			account: accounts[0],
+			installationId,
+		};
 	} catch {
 		return { kind: "pending", reason: "verification_unavailable" };
 	}
@@ -917,10 +1007,15 @@ export async function drainInbox(
 					);
 					continue;
 				}
+				await db.inboxDeliveries.updateOne(
+					{ _id: row._id },
+					{ $set: { resolvedAccount: verification.account } },
+				);
 				const projection = await projectGitHub(
 					db,
 					row.eventName,
 					verification.raw,
+					verification.account,
 					fetchTasks,
 					reviewBot,
 				);

@@ -2,6 +2,7 @@ import { createSign } from "node:crypto";
 import type {
 	Db,
 	MergedPullRequestEvidence,
+	PullRequest,
 	ReconciliationEvidence,
 } from "#/db";
 import {
@@ -18,6 +19,26 @@ type FetchLike = (
 	input: RequestInfo | URL,
 	init?: RequestInit,
 ) => Promise<Response>;
+export const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
+export const githubFetch = async (
+	fetcher: FetchLike,
+	input: RequestInfo | URL,
+	init?: RequestInit,
+) => {
+	const timeout = AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS);
+	try {
+		return await fetcher(input, {
+			...init,
+			signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+		});
+	} catch (error) {
+		if (timeout.aborted)
+			throw new Error(
+				`GitHub request timed out after ${GITHUB_REQUEST_TIMEOUT_MS}ms: ${init?.method ?? "GET"} ${String(input)}`,
+			);
+		throw error;
+	}
+};
 export type TaskFetcher = (input: {
 	installationId: string;
 	repositoryId: string;
@@ -125,7 +146,8 @@ export async function installationToken(
 	installationId: string,
 	fetcher: FetchLike = fetch,
 ) {
-	const response = await fetcher(
+	const response = await githubFetch(
+		fetcher,
 		`https://api.github.com/app/installations/${installationId}/access_tokens`,
 		{
 			method: "POST",
@@ -234,7 +256,7 @@ async function pagedGet(
 			cached = await db.providerCache.findOne({ _id: pageKey });
 		let response: Response | undefined;
 		for (let attempt = 0; attempt < 3; attempt++) {
-			response = await fetcher(next, {
+			response = await githubFetch(fetcher, next, {
 				headers: cached?.etag
 					? {
 							accept: "application/vnd.github+json",
@@ -332,7 +354,7 @@ export async function conditionalGet(
 	const cached = await db.providerCache.findOne({ _id: key });
 	let response: Response | undefined;
 	for (let attempt = 0; attempt < 3; attempt++) {
-		response = await fetcher(url, {
+		response = await githubFetch(fetcher, url, {
 			headers: cached?.etag
 				? {
 						"if-none-match": cached.etag,
@@ -416,15 +438,19 @@ async function fetchOpenSpecTasksForPullRequests(
 	db: Db,
 	installationId: string,
 	repositoryId: string,
-	pullRequests: any[],
+	pullRequests: Array<{
+		number?: unknown;
+		updated_at?: unknown;
+		head?: { sha?: unknown };
+	}>,
 	request: FetchLike,
 	taskFetcher: TaskFetcher,
 	repository?: string,
 ): Promise<OpenSpecTask[] | ReadResult> {
 	const tasks: OpenSpecTask[] = [];
 	for (const pr of [...pullRequests].sort((a, b) => {
-		const aUpdatedAt = Date.parse(a.updated_at),
-			bUpdatedAt = Date.parse(b.updated_at),
+		const aUpdatedAt = Date.parse(String(a.updated_at ?? "")),
+			bUpdatedAt = Date.parse(String(b.updated_at ?? "")),
 			aHasValidUpdatedAt = Number.isFinite(aUpdatedAt),
 			bHasValidUpdatedAt = Number.isFinite(bUpdatedAt);
 		if (aHasValidUpdatedAt !== bHasValidUpdatedAt)
@@ -459,9 +485,11 @@ async function fetchOpenSpecTasksForPullRequests(
 				summary: "GitHub OpenSpec listing payload was invalid",
 			};
 		for (const change of changes.body) {
-			const name = (change as any)?.name;
+			const entry = change as Record<string, unknown>;
+			const name = entry.name;
 			if (
-				(change as any)?.type !== "dir" ||
+				entry.type !== "dir" ||
+				typeof name !== "string" ||
 				name === "archive" ||
 				!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)
 			)
@@ -1135,7 +1163,7 @@ export async function bootstrapInstallation(
 		fetchTasks ??
 		(async (input) => {
 			const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
-			const response = await request(target, {
+			const response = await githubFetch(request, target, {
 				headers: { accept: "application/vnd.github.raw" },
 			});
 			if (response.ok) return response.text();
@@ -1178,10 +1206,20 @@ export async function bootstrapInstallation(
 		{ operation: "installation_identity" },
 	);
 	if (installation.kind === "error") return installation;
-	if (
-		installation.kind !== "changed" ||
-		!approvedInstallationAccount((installation.body as any)?.account?.login)
-	)
+	if (installation.kind !== "changed")
+		return {
+			kind: "error",
+			stale: true,
+			message: "installation account is not approved",
+			operation: "installation_identity",
+			summary: "Installation account is not approved",
+		};
+	const installationBody = installation.body as {
+		account?: { login?: unknown };
+		permissions?: { pull_requests?: unknown };
+	};
+	const account = installationBody.account?.login;
+	if (!approvedInstallationAccount(account))
 		return {
 			kind: "error",
 			stale: true,
@@ -1201,7 +1239,7 @@ export async function bootstrapInstallation(
 	const snapshots = [] as Array<{
 		repositoryId: string;
 		full_name: string;
-		pullRequests: any[];
+		pullRequests: PullRequest[];
 		openSpecs: Record<string, unknown>[];
 		deployments: Record<string, unknown>[];
 		recentMergedPullRequests?: MergedPullRequestEvidence[];
@@ -1274,17 +1312,29 @@ export async function bootstrapInstallation(
 					}
 				: {}),
 			pullRequests: Array.isArray(prs.body)
-				? prs.body.map((pr: any) => ({
-						number: pr.number,
-						title: pr.title,
-						url: pr.html_url,
-						author_login: pr.user?.login,
-						state: pr.state,
-						draft: pr.draft ? 1 : 0,
-						head_ref: pr.head?.ref,
-						head_sha: pr.head?.sha,
-						updated_at: pr.updated_at,
-					}))
+				? prs.body.map((item): PullRequest => {
+						const pr = item as {
+							number?: unknown;
+							title?: unknown;
+							html_url?: unknown;
+							user?: { login?: unknown };
+							state?: unknown;
+							draft?: unknown;
+							head?: { ref?: unknown; sha?: unknown };
+							updated_at?: unknown;
+						};
+						return {
+							number: pr.number,
+							title: pr.title,
+							url: pr.html_url,
+							author_login: pr.user?.login,
+							state: pr.state,
+							draft: pr.draft ? 1 : 0,
+							head_ref: pr.head?.ref,
+							head_sha: pr.head?.sha,
+							updated_at: pr.updated_at,
+						};
+					})
 				: [],
 			openSpecs: [],
 			deployments: (deploymentRows as Record<string, unknown>[]).map(
@@ -1298,9 +1348,7 @@ export async function bootstrapInstallation(
 			...(recentMergedPullRequests.length ? { recentMergedPullRequests } : {}),
 		});
 	}
-	const account = (installation.body as any).account.login;
-	const pullRequestsPermission = (installation.body as any).permissions
-		?.pull_requests;
+	const pullRequestsPermission = installationBody.permissions?.pull_requests;
 	await Promise.all(
 		bound.map((user) =>
 			mutateUser(db, user._id, (aggregate) => {
@@ -1388,7 +1436,8 @@ export async function bootstrapDeployments(
 	);
 	if (list.kind !== "changed" || !Array.isArray(list.body)) return list;
 	const deployments: Record<string, unknown>[] = [];
-	for (const deployment of (list.body as any[]).slice(0, 20)) {
+	for (const item of list.body.slice(0, 20)) {
+		const deployment = item as Record<string, unknown>;
 		const status = await pagedGet(
 			db,
 			`installation:${installationId}:repo:${repositoryId}:deployment:${deployment.id}:statuses`,
@@ -1399,13 +1448,16 @@ export async function bootstrapDeployments(
 		if (status.kind === "error") return status;
 		const latest =
 			status.kind === "changed" && Array.isArray(status.body)
-				? (latestDeploymentStatus(
-						status.body.map((item: any) => ({
-							...item,
-							status_id: item.id,
-							status_created_at: item.created_at,
-						})),
-					) as any)
+				? latestDeploymentStatus(
+						status.body.map((item) => {
+							const value = item as Record<string, unknown>;
+							return {
+								...value,
+								status_id: value.id,
+								status_created_at: value.created_at,
+							};
+						}),
+					)
 				: undefined;
 		deployments.push({
 			id: String(deployment.id),
@@ -1480,7 +1532,6 @@ export async function reconcileInstallations(
 				installationId,
 				result,
 				error instanceof Error ? "Error" : "unknown",
-				error,
 			);
 		}
 		results.push({ installationId, result });
@@ -1519,14 +1570,13 @@ export const logReconciliationFailure = (
 	installationId: string,
 	result: Extract<ReadResult, { kind: "error" }>,
 	classification: string,
-	error?: unknown,
 ) =>
 	console.error(
 		event,
 		installationId,
 		result.operation ?? "reconciliation",
 		classification,
-		error ?? result.message,
+		result.message,
 	);
 
 export async function persistReconciliationFailure(
