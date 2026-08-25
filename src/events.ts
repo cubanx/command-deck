@@ -70,6 +70,7 @@ export async function acceptGitHubDelivery(
 		)
 			return false;
 	}
+	if (!approvedInstallationAccount(account)) return false;
 	try {
 		await db.inboxDeliveries.insertOne({
 			_id: `github:${deliveryId}`,
