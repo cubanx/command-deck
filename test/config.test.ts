@@ -30,6 +30,28 @@ test("local demo is loopback-only and rejected in hosted environments", () => {
 	).toThrow("local demo");
 });
 
+test("local OAuth uses an explicit loopback HTTP origin and non-secure cookies", () => {
+	expect(
+		loadConfig({
+			NODE_ENV: "development",
+			PUBLIC_URL: "http://127.0.0.1:3000",
+		}),
+	).toMatchObject({
+		publicUrl: "http://127.0.0.1:3000",
+		oauthCallbackUrl: "http://127.0.0.1:3000/auth/github/callback",
+		secureCookies: false,
+	});
+	for (const publicUrl of [
+		"http://command-center.example",
+		"http://localhost.evil.example",
+		"not a URL",
+	]) {
+		expect(() => loadConfig({ PUBLIC_URL: publicUrl })).toThrow(
+			"PUBLIC_URL must be a loopback HTTP origin",
+		);
+	}
+});
+
 test("automated review signals are configured together", () => {
 	expect(() => loadConfig({ GITHUB_REVIEW_BOT_LOGIN: "claude[bot]" })).toThrow(
 		"review bot",

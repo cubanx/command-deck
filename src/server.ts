@@ -25,6 +25,7 @@ import {
 	type GitHubRequestFailure,
 	githubAppJwt,
 	githubErrorDiagnostic,
+	githubFetch,
 	githubNextLink,
 	installationToken,
 	logReconciliationFailure,
@@ -160,7 +161,7 @@ const escapeHtml = (value: unknown) =>
 		.replaceAll('"', "&quot;");
 
 const githubJson = async (url: string, token: string) => {
-	const response = await fetch(url, {
+	const response = await githubFetch(fetch, url, {
 		headers: {
 			authorization: `Bearer ${token}`,
 			accept: "application/vnd.github+json",
@@ -172,7 +173,7 @@ const githubJson = async (url: string, token: string) => {
 };
 
 const githubRead = async (url: string, token: string) => {
-	const response = await fetch(url, {
+	const response = await githubFetch(fetch, url, {
 		headers: {
 			authorization: `Bearer ${token}`,
 			accept: "application/vnd.github+json",
@@ -332,18 +333,22 @@ export const defaultMergeProvider = (
 	return {
 		inspect: (intent) => inspectMerge(intent, tokenFor),
 		async merge(intent, variables) {
-			const response = await fetch("https://api.github.com/graphql", {
-				method: "POST",
-				headers: {
-					authorization: `Bearer ${await tokenFor(intent)}`,
-					"content-type": "application/json",
+			const response = await githubFetch(
+				fetch,
+				"https://api.github.com/graphql",
+				{
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${await tokenFor(intent)}`,
+						"content-type": "application/json",
+					},
+					body: JSON.stringify({
+						query:
+							"mutation MergePullRequest($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) { mergePullRequest(input: { pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid, mergeMethod: $mergeMethod }) { pullRequest { merged } } }",
+						variables,
+					}),
 				},
-				body: JSON.stringify({
-					query:
-						"mutation MergePullRequest($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) { mergePullRequest(input: { pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid, mergeMethod: $mergeMethod }) { pullRequest { merged } } }",
-					variables,
-				}),
-			});
+			);
 			if (!response.ok) return { errors: [{ type: "FORBIDDEN" }] };
 			const body = (await response.json()) as {
 				data?: { mergePullRequest?: { pullRequest?: { merged?: boolean } } };
@@ -450,7 +455,7 @@ const verifyInstallation = async (
 	let verified: VerifiedInstallation | undefined;
 	const seen = new Set([next]);
 	for (let pages = 0; next && pages < 100; pages++) {
-		const response: Response = await fetch(next, { headers });
+		const response: Response = await githubFetch(fetch, next, { headers });
 		if (!response.ok) return { failed: true };
 		const body = (await response.json()) as {
 			installations?: VerifiedInstallation[];
@@ -474,8 +479,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 	queueMicrotask(() => {
 		void (async () => {
 			let result: ReadResult,
-				classification = "ReadResult",
-				diagnostic: unknown;
+				classification = "ReadResult";
 			try {
 				const appJwt = githubAppJwt(
 					githubAppId,
@@ -494,7 +498,6 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 			} catch (error) {
 				result = normalizedReconciliationFailure();
 				classification = error instanceof Error ? "Error" : "unknown";
-				diagnostic = error;
 			}
 			if (result.kind === "error") {
 				try {
@@ -509,7 +512,6 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 						installationId,
 						result,
 						error instanceof Error ? "Error" : "unknown",
-						error,
 					);
 				}
 				logReconciliationFailure(
@@ -517,7 +519,6 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 					installationId,
 					result,
 					classification,
-					diagnostic,
 				);
 			}
 		})();
@@ -542,7 +543,8 @@ const oauthCallback = async (
 		!githubClientSecret
 	)
 		return new Response("invalid OAuth callback", { status: 400 });
-	const tokenResponse = await fetch(
+	const tokenResponse = await githubFetch(
+		fetch,
 		"https://github.com/login/oauth/access_token",
 		{
 			method: "POST",
@@ -567,7 +569,7 @@ const oauthCallback = async (
 		accept: "application/vnd.github+json",
 	};
 	const identity = (await (
-		await fetch("https://api.github.com/user", { headers })
+		await githubFetch(fetch, "https://api.github.com/user", { headers })
 	).json()) as { id: number; login: string; avatar_url?: string };
 	const userId = String(identity.id);
 	await upsertIdentity(context.db, userId, identity.login, identity.avatar_url);
@@ -648,7 +650,8 @@ const mergeCallback = async (
 		!githubAppPrivateKey
 	)
 		return new Response("merge is unavailable", { status: 503 });
-	const tokenResponse = await fetch(
+	const tokenResponse = await githubFetch(
+		fetch,
 		"https://github.com/login/oauth/access_token",
 		{
 			method: "POST",
@@ -668,7 +671,7 @@ const mergeCallback = async (
 	if (!userToken)
 		return new Response("merge authorization failed", { status: 502 });
 	const identity = (await (
-		await fetch("https://api.github.com/user", {
+		await githubFetch(fetch, "https://api.github.com/user", {
 			headers: { authorization: `Bearer ${userToken}` },
 		})
 	).json()) as { id?: number | string; login?: string };
@@ -835,7 +838,6 @@ const repairRoute = async (
 			installationId,
 			result,
 			error instanceof Error ? "Error" : "unknown",
-			error,
 		);
 		return Response.json(result);
 	}
@@ -1041,7 +1043,7 @@ export function createApp(
 			input.installationId,
 		);
 		const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
-		const response = await fetch(target, {
+		const response = await githubFetch(fetch, target, {
 			headers: {
 				authorization: `Bearer ${token}`,
 				accept: "application/vnd.github.raw",
@@ -1137,6 +1139,7 @@ if (import.meta.main) {
 			Bun.serve({
 				port: config.port,
 				hostname: config.hostname,
+				idleTimeout: 255,
 				fetch: app.fetch,
 			});
 			void app.drain();

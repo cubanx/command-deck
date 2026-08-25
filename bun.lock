@@ -10,9 +10,11 @@
       "devDependencies": {
         "@biomejs/biome": "2.5.6",
         "@types/bun": "latest",
+        "@varlock/1password-plugin": "^2.0.3",
         "@vitest/coverage-v8": "4.1.10",
         "crap-ts": "0.1.1",
         "typescript": "latest",
+        "varlock": "^1.17.0",
         "vitest": "4.1.10",
       },
     },
@@ -141,6 +143,16 @@
     "@typescript/typescript-win32-arm64": ["@typescript/typescript-win32-arm64@7.0.2", "", { "os": "win32", "cpu": "arm64" }, "sha512-Gyl1Vy6OsWesLzmq+EP0Fb7b4Nid5232AvcA2SFcdYreldpNtYFFofPjnt62y9hQy7VTaZp65ICJjuAQRaVcIQ=="],
 
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "", { "os": "win32", "cpu": "x64" }, "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g=="],
+
+    "@varlock/1password-plugin": ["@varlock/1password-plugin@2.0.3", "", { "peerDependencies": { "varlock": "^1.15.0" } }, "sha512-XmhxX9H3ZXbWJlR0g97uqxellKSoeXVwKKTmMPWQov7SxN718RedE2pKRIzO+WB/N8mS14IxiNNwxtRlkTJWow=="],
+
+    "@varlock/native-helper-darwin": ["@varlock/native-helper-darwin@1.17.0", "", { "os": "darwin" }, "sha512-D1jWBh/uxsKI0CWNRPTFoTCNH0/6eE80TPJrytLMmRxAkBWEJdO18tETyH2cTMlucEciWWLgE713tjW9hX2s+Q=="],
+
+    "@varlock/native-helper-linux-arm64": ["@varlock/native-helper-linux-arm64@1.17.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-fedMNFXSC2Yt5whcM2qkHhEpuaGr1ONtXv6vPc2xivQsljj+jFeCg9I5klzFwLjzwRKWGyKAVwmUcn6m3DvRdA=="],
+
+    "@varlock/native-helper-linux-x64": ["@varlock/native-helper-linux-x64@1.17.0", "", { "os": "linux", "cpu": "x64" }, "sha512-p8ZIEmubkS4uV7doa7VHO11/O/v/w53RWcgbPYclNk6POmGIH9ysqmBxGVNFVd1xU+M0461utojvpl1JbIsU9w=="],
+
+    "@varlock/native-helper-win32-x64": ["@varlock/native-helper-win32-x64@1.17.0", "", { "os": [ "linux", "win32", ] }, "sha512-oJQaHhgB78QPDqz8oqpu1J+ROvqgveo9UR09V6E2iYHm2xRvxPV5R7seJRmilxmDCHKwLps2QPSa3BBWXNLALg=="],
 
     "@vitest/coverage-v8": ["@vitest/coverage-v8@4.1.10", "", { "dependencies": { "@bcoe/v8-coverage": "^1.0.2", "@vitest/utils": "4.1.10", "ast-v8-to-istanbul": "^1.0.0", "istanbul-lib-coverage": "^3.2.2", "istanbul-lib-report": "^3.0.1", "istanbul-reports": "^3.2.0", "magicast": "^0.5.2", "obug": "^2.1.1", "std-env": "^4.0.0-rc.1", "tinyrainbow": "^3.1.0" }, "peerDependencies": { "@vitest/browser": "4.1.10", "vitest": "4.1.10" }, "optionalPeers": ["@vitest/browser"] }, "sha512-IM49HmthevbgAO4anp1hwtoT9wYe59w0LR00gr+eagHE+ZJ5lK4sLPeO0ubgoJcwLk6dehU3R24N+FbEEKDc8g=="],
 
@@ -275,6 +287,8 @@
     "typescript": ["typescript@7.0.2", "", { "optionalDependencies": { "@typescript/typescript-aix-ppc64": "7.0.2", "@typescript/typescript-darwin-arm64": "7.0.2", "@typescript/typescript-darwin-x64": "7.0.2", "@typescript/typescript-freebsd-arm64": "7.0.2", "@typescript/typescript-freebsd-x64": "7.0.2", "@typescript/typescript-linux-arm": "7.0.2", "@typescript/typescript-linux-arm64": "7.0.2", "@typescript/typescript-linux-loong64": "7.0.2", "@typescript/typescript-linux-mips64el": "7.0.2", "@typescript/typescript-linux-ppc64": "7.0.2", "@typescript/typescript-linux-riscv64": "7.0.2", "@typescript/typescript-linux-s390x": "7.0.2", "@typescript/typescript-linux-x64": "7.0.2", "@typescript/typescript-netbsd-arm64": "7.0.2", "@typescript/typescript-netbsd-x64": "7.0.2", "@typescript/typescript-openbsd-arm64": "7.0.2", "@typescript/typescript-openbsd-x64": "7.0.2", "@typescript/typescript-sunos-x64": "7.0.2", "@typescript/typescript-win32-arm64": "7.0.2", "@typescript/typescript-win32-x64": "7.0.2" }, "bin": { "tsc": "bin/tsc" } }, "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA=="],
 
     "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
+
+    "varlock": ["varlock@1.17.0", "", { "optionalDependencies": { "@varlock/native-helper-darwin": "1.17.0", "@varlock/native-helper-linux-arm64": "1.17.0", "@varlock/native-helper-linux-x64": "1.17.0", "@varlock/native-helper-win32-x64": "1.17.0" }, "bin": { "varlock": "bin/cli.js" } }, "sha512-MbNWTtwE6IEhxmpswk2f/+ppLQBxxS6mKmOk9JRpKlVNzStIRL1mFeJCCjXc+zBOPREzMER7Fm9KVU8MVknqrQ=="],
 
     "vite": ["vite@8.2.1", "", { "dependencies": { "lightningcss": "^1.33.0", "picomatch": "^4.0.5", "postcss": "^8.5.25", "rolldown": "~1.2.1", "tinyglobby": "^0.2.17" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^20.19.0 || >=22.12.0", "@vitejs/devtools": "^0.4.0", "esbuild": "^0.27.0 || ^0.28.0", "jiti": ">=1.21.0", "less": "^4.0.0", "sass": "^1.70.0", "sass-embedded": "^1.70.0", "stylus": ">=0.54.8", "sugarss": "^5.0.0", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "@vitejs/devtools", "esbuild", "jiti", "less", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-EU/eS7BH3XROHh2YnBefjM6DBKA6ZeMZEYQbj7NLWg5wHYlhB8B/Mayd5XsgWq+NFYccDOTemRpdETWR6Ka/lw=="],
 
