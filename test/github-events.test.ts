@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { expect, test } from "vitest";
 import { bindInstallation, upsertIdentity } from "#/access";
+import { mutateUser } from "#/db";
 import {
 	acceptGitHubDelivery,
 	drainInbox,
@@ -14,6 +15,139 @@ test("malformed signed webhook bodies are ignored without an inbox row", () =>
 			await acceptGitHubDelivery(db, "bad-json", "pull_request", "{"),
 		).toBe(false);
 		expect(await db.inboxDeliveries.countDocuments({})).toBe(0);
+	}));
+
+test("GitHub close delivery without installation account projects an existing PR", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "153423118", "Crisp-Inc");
+		await acceptGitHubDelivery(
+			db,
+			"opened-186",
+			"pull_request",
+			JSON.stringify({
+				action: "opened",
+				installation: { id: 153423118, account: { login: "Crisp-Inc" } },
+				repository: { id: 2, full_name: "ds9/ops" },
+				pull_request: {
+					number: 186,
+					title: "Repair webhook intake",
+					state: "open",
+					merged: false,
+					user: { login: "sisko" },
+				},
+			}),
+		);
+		await drainInbox(db);
+		const payload = JSON.stringify({
+			action: "closed",
+			installation: { id: 153423118 },
+			repository: { id: 2, full_name: "ds9/ops" },
+			pull_request: {
+				number: 186,
+				title: "Repair webhook intake",
+				state: "closed",
+				merged: true,
+				user: { login: "sisko" },
+			},
+		});
+		expect(githubSignatureValid(payload, sign(payload), "secret")).toBe(true);
+		expect(
+			await acceptGitHubDelivery(
+				db,
+				"b669cef0-9fc4-11f1-9853-5f3952ffcaf7",
+				"pull_request",
+				payload,
+			),
+		).toBe(true);
+		expect(
+			await db.inboxDeliveries.findOne({
+				_id: "github:b669cef0-9fc4-11f1-9853-5f3952ffcaf7",
+			}),
+		).toMatchObject({
+			payload,
+			resolvedAccount: "Crisp-Inc",
+		});
+		await drainInbox(db);
+		expect(
+			await db.inboxDeliveries.findOne({
+				_id: "github:b669cef0-9fc4-11f1-9853-5f3952ffcaf7",
+			}),
+		).toMatchObject({
+			status: "done",
+		});
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests,
+		).toEqual([]);
+	}));
+
+test("GitHub delivery without installation account requires one approved binding", () =>
+	withDatabase(async (db) => {
+		const payload = JSON.stringify({ installation: { id: 153423118 } });
+		expect(
+			await acceptGitHubDelivery(db, "unbound", "pull_request", payload),
+		).toBe(false);
+		await upsertIdentity(db, "u1", "sisko");
+		await upsertIdentity(db, "u2", "kira");
+		await bindInstallation(db, "u1", "153423118", "Crisp-Inc");
+		await bindInstallation(db, "u2", "153423118", "cubanx");
+		expect(
+			await acceptGitHubDelivery(db, "ambiguous", "pull_request", payload),
+		).toBe(false);
+		await upsertIdentity(db, "u3", "odo");
+		await bindInstallation(db, "u3", "153423119", "Crisp-Inc");
+		await mutateUser(db, "u3", (user) => {
+			user.installations.push({
+				installationId: "153423119",
+				accountLogin: "ferengi",
+				boundAt: new Date(),
+				repositories: [],
+			});
+		});
+		expect(
+			await acceptGitHubDelivery(
+				db,
+				"unapproved-conflict",
+				"pull_request",
+				JSON.stringify({
+					installation: {
+						id: 153423119,
+						account: { login: "Crisp-Inc" },
+					},
+				}),
+			),
+		).toBe(false);
+		expect(await db.inboxDeliveries.countDocuments({})).toBe(0);
+	}));
+
+test("GitHub delivery without installation account fans out a shared approved account", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u1", "sisko");
+		await upsertIdentity(db, "u2", "SISKO");
+		await bindInstallation(db, "u1", "153423120", "Crisp-Inc");
+		await bindInstallation(db, "u2", "153423120", "crisp-inc");
+		const payload = JSON.stringify({
+			action: "opened",
+			installation: { id: 153423120 },
+			repository: { id: 2, full_name: "ds9/ops" },
+			pull_request: {
+				number: 187,
+				title: "Share the webhook projection",
+				state: "open",
+				user: { login: "sisko" },
+			},
+		});
+		expect(githubSignatureValid(payload, sign(payload), "secret")).toBe(true);
+		expect(
+			await acceptGitHubDelivery(db, "shared-account", "pull_request", payload),
+		).toBe(true);
+		await drainInbox(db);
+		for (const userId of ["u1", "u2"])
+			expect(
+				(await db.users.findOne({ _id: userId }))?.installations[0]
+					?.repositories[0]?.pullRequests,
+			).toMatchObject([{ number: 187 }]);
 	}));
 
 test("webhook author matching is case-insensitive", () =>

@@ -63,6 +63,7 @@ export type InboxDelivery = {
 	provider: string;
 	deliveryId: string;
 	payload?: string;
+	resolvedAccount?: string;
 	eventName: string;
 	status: "pending" | "pending_verification" | "done" | "ignored" | "rejected";
 	attempts: number;
