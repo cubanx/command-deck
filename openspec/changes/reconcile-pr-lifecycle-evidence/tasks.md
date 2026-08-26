@@ -51,11 +51,27 @@
 
 ## 7. [post-merge] GitHub configuration and observation
 
-- [ ] 7.1 After merge and exact deployed-SHA proof, verify the GitHub App's current Pull requests and commit-status read permissions and subscription state without changing provider configuration.
-- [ ] 7.2 Under separate explicit provider authorization, subscribe the GitHub App to any missing `pull_request_review_comment`, `pull_request_review_thread`, and `status` events, and verify a configuration reread matches the intended event set.
+- [ ] 7.1 After merge and exact deployed-SHA proof, verify the GitHub App's current Pull requests, commit-status, and Checks read permissions plus subscription state without changing provider configuration.
+- [ ] 7.2 Under separate explicit provider authorization, add any missing `Checks: read` permission and subscribe the GitHub App to any missing `pull_request_review_comment`, `pull_request_review_thread`, `check_run`, `check_suite`, and `status` events; verify a configuration reread matches the intended permission and event set.
 - [ ] 7.3 Under separate explicit provider authorization, verify or create the exact `openspec-not-required` label in each watched repository that will use the exemption and record repository-scoped evidence without applying the label to a PR.
 - [ ] 7.4 Observe the next natural review-thread resolution and check completion without manufacturing activity, and verify delivery ID, targeted reconciliation, SSE refresh, and sanitized telemetry evidence at the deployed SHA.
 
 ## 8. PR-specific OpenSpec correlation
 
-- [ ] 8.1 Add failing provider, access, lifecycle, guarded-merge, and UI tests for the authoritative exhaustive `## OpenSpecs` PR-body declaration, exact-head active-slug resolution, empty-list exemption, invalid/duplicate/conflicting declarations, detected changed-path candidates, confirmation and exemption blockers, and declared-versus-detected rendering; implement the approved minimal path with deterministic confirmed plural projection and legacy singular compatibility.
+- [x] 8.1 Add failing provider, access, lifecycle, guarded-merge, and UI tests for the authoritative exhaustive `## OpenSpecs` PR-body declaration, exact-head active-slug resolution, empty-list exemption, invalid/duplicate/conflicting declarations, detected changed-path candidates, confirmation and exemption blockers, and declared-versus-detected rendering; implement the approved minimal path with deterministic confirmed plural projection and legacy singular compatibility.
+
+## 9. Local dashboard corrections
+
+- [x] 9.1 Add failing sort, control, config, and Varlock-contract tests for Closest-to-merge default ordering, avatar-only all-PR reconciliation, and real-data local development; implement the smallest changes and update user-facing documentation.
+- [x] 9.2 Run focused tests, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`, strict validation, and `git diff --check`; leave changes uncommitted for review.
+
+## 10. Archived declaration recovery and visible retry
+
+- [x] 10.1 Add failing provider and runtime tests for exact-head active-first archive recovery, fail-closed archive ambiguity/provider errors, semantic detected candidates, and visible one-PR reconciliation retry; implement the smallest canonical path.
+- [x] 10.2 Run focused tests, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`, strict validation, and `git diff --check`; leave changes uncommitted for review.
+- [x] 10.3 Add failing targeted-reconciliation diagnostics tests for sanitized provider stage and status reporting, implement the existing reporter path without changing the HTTP response, and run focused validation.
+- [x] 10.4 Add failing targeted-reconciliation tests for sanitized GraphQL error classification at successful HTTP status, implement the existing reporter path without changing the HTTP response, and run focused validation.
+- [x] 10.5 Add failing targeted-reconciliation tests for bounded sanitized GraphQL messages without path/type classification, implement the existing reporter path without changing the HTTP response, and run focused validation.
+- [x] 10.6 Add a failing targeted lifecycle GraphQL document-balance regression, restore the missing query-operation closing brace, and run focused validation.
+- [x] 10.7 Add failing provider regressions excluding removed changed-file entries from OpenSpec detection and archive fallback while retaining current filenames, implement the shared boundary filter, and run focused validation.
+- [x] 10.8 Add failing targeted GraphQL diagnostic tests retaining bounded full string-only error paths, implement the existing sanitizer path without changing provider queries, and run focused validation.

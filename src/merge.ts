@@ -62,6 +62,7 @@ export const mergeEligibility = (pr: Record<string, unknown>) => {
 	const labels = Array.isArray(pr.labels)
 		? pr.labels.filter((label): label is string => typeof label === "string")
 		: [];
+	const openSpec = openSpecGate(specs, labels, pr);
 	const gates = [
 		{ blocked: pr.state !== "open", reason: "Pull request is closed." },
 		{ blocked: Boolean(pr.draft), reason: "Pull request is a draft." },
@@ -86,8 +87,11 @@ export const mergeEligibility = (pr: Record<string, unknown>) => {
 			reason: "Required review is not approved.",
 		},
 		{
-			blocked: !openSpecGate(specs, labels).ready,
-			reason: "OpenSpec completion is not confirmed.",
+			blocked: !openSpec.ready,
+			reason:
+				openSpec.blocker === "confirm"
+					? "Confirm OpenSpec association."
+					: "OpenSpec completion is not confirmed.",
 		},
 		{
 			blocked: pr.merge_method !== "MERGE",

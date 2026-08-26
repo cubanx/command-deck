@@ -13,14 +13,14 @@ MongoDB is also required for tests and runtime. Set `MONGODB_URI_BASE` to an iso
 ```bash
 docker run --detach --rm --name dcc-mongodb-test --publish 127.0.0.1:27018:27017 mongo:8
 bun install
-bun run dev
+bun run dev:demo
 MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test
 MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test:mongo
 ```
 
 Stop the disposable test database with `docker stop dcc-mongodb-test`. Tests create UUID-named guarded databases and drop only those databases.
 
-Open `http://localhost:3000`. The development command binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
+`bun run dev:demo` binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
 
 Both top-level actions open one configuration screen for local checkouts, notifications, appearance, and manual reconciliation. **Reconcile now** reuses the authenticated, user-scoped installation reconciliation path and reports running, success, or sanitized failure state.
 
@@ -28,7 +28,7 @@ On browsers with the File System Access API, grant read-only access to one organ
 
 Appearance supports System, Dark, and Light and persists locally. System follows the current browser color scheme. Merge actions are absent while the GitHub App installation has read-only Pull requests permission and appear beside a title only when the projected PR is mergeable and the existing cheap UI gates pass; `operate-command-deck-merge-permission` owns the separate post-merge permission rollout and proof.
 
-For real local provider integration, use the ambient Local Automation `OP_SERVICE_ACCOUNT_TOKEN`; do not create or copy a `.env` file. Set the approved local environment's `PUBLIC_URL` to `http://127.0.0.1:3000`, leave `DCC_LOCAL_DEMO=0`, and run `bunx varlock run -- bun run start`. Register `http://127.0.0.1:3000/auth/github/callback` as that App's callback URL. Local webhooks additionally require a public forwarding URL.
+For real local provider integration, use the ambient Local Automation `OP_SERVICE_ACCOUNT_TOKEN`; do not create or copy a `.env` file. `bun run dev` loads the approved Environment through Varlock with `DCC_LOCAL_DEMO=0`; an absent `PUBLIC_URL` derives `http://127.0.0.1:<PORT>`. Register that callback URL with the App. Local webhooks additionally require a public forwarding URL.
 
 Local validation:
 

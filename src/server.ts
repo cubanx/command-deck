@@ -1259,6 +1259,7 @@ const reconcileTargetedPullRequest = async (
 						counted.fetcher,
 					),
 					fetcher: counted.fetcher,
+					reportFailure: logGitHubRequestFailure,
 				});
 			})();
 	if (result.kind === "changed")

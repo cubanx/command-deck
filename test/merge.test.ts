@@ -93,6 +93,22 @@ test("merge eligibility fails closed for every mutable gate", () => {
 	expect(
 		mergeEligibility({
 			...eligible,
+			open_specs: [],
+			open_spec_declaration: "absent",
+			detected_open_specs: ["capture-wolf-359"],
+		}),
+	).toEqual({ ok: false, reason: "Confirm OpenSpec association." });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [],
+			open_spec_declaration: "empty",
+			labels: ["openspec-not-required"],
+		}),
+	).toEqual({ ok: true });
+	expect(
+		mergeEligibility({
+			...eligible,
 			open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
 		}),
 	).toEqual({ ok: true });

@@ -46,7 +46,7 @@ The system SHALL present every authorized open pull request authored by the sign
 
 #### Scenario: Detected OpenSpec candidates await body confirmation
 - **WHEN** changed files detect OpenSpec candidates but the PR body has no authoritative `## OpenSpecs` declaration or exact exemption label
-- **THEN** the dashboard labels the candidates as detected from changed files and shows `Confirm OpenSpec association` as a blocker
+- **THEN** the dashboard renders the candidates in a labeled accessible unordered list, shows `Confirm OpenSpec association` as a blocker, and does not assign numeric order
 
 #### Scenario: Authoritative declaration excludes detected candidates
 - **WHEN** a valid authoritative `## OpenSpecs` declaration omits one or more changed-path candidates
@@ -173,7 +173,7 @@ Every projected pull request SHALL belong to exactly one clickable lifecycle buc
 - **THEN** only pull requests in those same mutually exclusive buckets remain visible
 
 ### Requirement: Persisted pull-request ordering
-The dashboard SHALL offer Opened, Closest to merge, Codex activity, Recently updated, OpenSpec progress, and Repository sort modes with an explicit direction, SHALL default safely to Opened ascending across all repositories, and SHALL persist only the allowlisted mode and direction browser-locally. Search, status, Actions, Checks, and repository controls SHALL filter before sorting. PR-number ordering SHALL NOT be offered as a global sort because PR numbers are repository-local.
+The dashboard SHALL offer Opened, Closest to merge, Codex activity, Recently updated, OpenSpec progress, and Repository sort modes with an explicit direction, SHALL default safely to Closest to merge ascending across all repositories, and SHALL persist only the allowlisted mode and direction browser-locally. Search, status, Actions, Checks, and repository controls SHALL filter before sorting. PR-number ordering SHALL NOT be offered as a global sort because PR numbers are repository-local.
 
 #### Scenario: Opened ordering is calculated
 - **WHEN** pull requests from one or more repositories have authoritative GitHub creation times
@@ -185,7 +185,7 @@ The dashboard SHALL offer Opened, Closest to merge, Codex activity, Recently upd
 
 #### Scenario: Closest-to-merge ordering is calculated
 - **WHEN** the developer selects Closest to merge and pull requests have lifecycle blockers
-- **THEN** each unresolved category contributes exactly one named blocker, cards show the blocker count and exact blockers, and the order is blocker count ascending, valid OpenSpec progress descending, then stable identity
+- **THEN** later lifecycle stages rank first from Mergeable through Draft, then each unresolved category contributes exactly one named blocker, cards show the blocker count and exact blockers, and the order is blocker count ascending, valid OpenSpec progress descending, then stable identity
 
 #### Scenario: Sort preference is restored
 - **WHEN** a developer reloads after selecting a supported sort mode and direction
@@ -193,7 +193,7 @@ The dashboard SHALL offer Opened, Closest to merge, Codex activity, Recently upd
 
 #### Scenario: Stored sort preference is invalid
 - **WHEN** storage is absent, corrupt, inaccessible, or contains an obsolete mode or direction
-- **THEN** ordering falls back to Opened ascending and exposes no raw storage error
+- **THEN** ordering falls back to Closest to merge ascending and exposes no raw storage error
 
 #### Scenario: Developer selects another available sort
 - **WHEN** Closest to merge, Recently updated, OpenSpec progress, or Repository is selected
@@ -277,7 +277,7 @@ The dashboard SHALL let a signed-in developer trigger `Reconcile PR` for one aut
 
 #### Scenario: Reconciliation fails
 - **WHEN** any selected reconciliation fails
-- **THEN** the control reports sanitized per-operation success or failure without exposing credentials, raw provider payloads, or unrelated installation state
+- **THEN** the control reports sanitized per-operation success or failure without exposing credentials, raw provider payloads, or unrelated installation state; a failed one-PR control remains visibly retryable with an accessible failure status
 
 ### Requirement: Post-commit dashboard invalidation
 After a successful persisted user-visible Command Deck change, the system SHALL emit one post-commit invalidation to every affected connected user through the existing single-process in-memory stream boundary. The browser SHALL refetch `/api/snapshot`, including deletions, without polling. Cross-instance transport is deferred.

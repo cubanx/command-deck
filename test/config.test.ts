@@ -28,6 +28,10 @@ test("local demo is loopback-only and rejected in hosted environments", () => {
 });
 
 test("local OAuth uses an explicit loopback HTTP origin and non-secure cookies", () => {
+	expect(loadConfig({ NODE_ENV: "development", PORT: "3005" })).toMatchObject({
+		publicUrl: "http://127.0.0.1:3005",
+		oauthCallbackUrl: "http://127.0.0.1:3005/auth/github/callback",
+	});
 	expect(
 		loadConfig({
 			NODE_ENV: "development",

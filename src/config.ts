@@ -123,9 +123,15 @@ const productionUrls = (
 	};
 };
 
-const localUrls = (env: Record<string, string | undefined>) => {
+const localUrls = (env: Record<string, string | undefined>, port: number) => {
 	const value = env.PUBLIC_URL?.trim();
-	if (!value) return {};
+	if (!value) {
+		const origin = new URL(`http://127.0.0.1:${port}`);
+		return {
+			publicUrl: origin.origin,
+			oauthCallbackUrl: new URL("/auth/github/callback", origin).toString(),
+		};
+	}
 	let origin: URL;
 	try {
 		origin = new URL(value);
@@ -171,7 +177,9 @@ export function loadConfig(
 		throw new Error("MONGODB_DATABASE is invalid");
 	if (production && mongoDatabase !== "command-center-ai-production")
 		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
-	const urls = production ? productionUrls(env, production) : localUrls(env);
+	const urls = production
+		? productionUrls(env, production)
+		: localUrls(env, port);
 	return {
 		port,
 		hostname: localDemo ? "127.0.0.1" : undefined,

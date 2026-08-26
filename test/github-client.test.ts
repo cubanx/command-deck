@@ -5,6 +5,7 @@ import {
 	bootstrapInstallation,
 	conditionalGet,
 	GITHUB_REQUEST_TIMEOUT_MS,
+	type GitHubRequestFailure,
 	githubFetch,
 	githubNextLink,
 	reconcileInstallations,
@@ -61,6 +62,10 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 				const value = String(url);
 				if (value.endsWith("/graphql")) {
 					expect(init?.method).toBe("POST");
+					const query = JSON.parse(String(init?.body)).query;
+					expect(
+						[...query].filter((character) => character === "{").length,
+					).toBe([...query].filter((character) => character === "}").length);
 					return Response.json({
 						data: {
 							repository: {
@@ -71,6 +76,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 									createdAt: "2026-08-20T12:00:00Z",
 									updatedAt: "2026-08-24T12:00:00Z",
 									title: "Defiant readiness",
+									body: "## OpenSpecs\n- alpha\n- `zeta`",
 									url: "https://github.com/ds9/ops/pull/7",
 									headRefOid: "a".repeat(40),
 									mergeable: "MERGEABLE",
@@ -101,10 +107,14 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 				}
 				if (value.includes("actions/runs"))
 					return Response.json({ workflow_runs: [] });
-				if (value.includes("openspec/changes"))
+				if (value.includes("/pulls/7/files"))
 					return Response.json([
-						{ type: "dir", name: "alpha" },
-						{ type: "dir", name: "zeta" },
+						{ filename: "openspec/changes/alpha/tasks.md", status: "modified" },
+						{ filename: "openspec/changes/zeta/tasks.md", status: "renamed" },
+						{
+							filename: "openspec/changes/removed/tasks.md",
+							status: "removed",
+						},
 					]);
 				throw new Error(`unexpected targeted request ${value}`);
 			},
@@ -128,11 +138,82 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		expect(
 			(await dashboardForUser(db, "u")).pullRequests[0]?.open_specs,
 		).toMatchObject([{ change_name: "alpha" }, { change_name: "zeta" }]);
+		expect(
+			(await dashboardForUser(db, "u")).pullRequests[0]?.detected_open_specs,
+		).toEqual(["alpha", "zeta"]);
 		const repaired = await db.users.findOne({ _id: "u" });
 		if (!repaired) throw new Error("test user missing");
 		repaired.installations[0]!.repositories[0]!.openSpecs = [];
 		await db.users.replaceOne({ _id: "u" }, repaired);
 		expect((await reconcilePullRequest(db, input)).kind).toBe("changed");
+		const failures: GitHubRequestFailure[] = [];
+		input.fetchTasks = async () => {
+			throw Object.assign(new Error("fixture failure"), { status: 500 });
+		};
+		input.reportFailure = (failure) => {
+			failures.push(failure);
+		};
+		expect((await reconcilePullRequest(db, input)).kind).toBe("error");
+		expect(failures).toEqual([
+			{
+				operation: "targeted pull request reconciliation active OpenSpec task",
+				status: 500,
+				target: "repositories/2/pulls/7",
+			},
+		]);
+		failures.splice(0);
+		input.fetcher = async () =>
+			Response.json({
+				errors: [
+					{
+						message: "fixture provider message must not escape",
+						path: ["repository", "pullRequest", "reviewThreads", "nodes", 0],
+						type: "FORBIDDEN",
+					},
+				],
+			});
+		expect((await reconcilePullRequest(db, input)).kind).toBe("error");
+		expect(failures).toEqual([
+			{
+				operation: "targeted pull request reconciliation GraphQL lifecycle",
+				status: 200,
+				target: "repositories/2/pulls/7",
+				diagnostic: {
+					errors: [
+						{
+							field: "repository.pullRequest.reviewThreads.nodes",
+							code: "FORBIDDEN",
+						},
+					],
+				},
+			},
+		]);
+		expect(JSON.stringify(failures)).not.toContain(
+			"fixture provider message must not escape",
+		);
+		failures.splice(0);
+		const message = `${"m".repeat(200)} fixture-token-value`;
+		input.fetcher = async () =>
+			Response.json({
+				errors: [
+					{
+						message,
+						raw_body_fixture: "must-not-escape",
+					},
+				],
+				query: "must-not-escape",
+				variables: { token: "must-not-escape" },
+			});
+		expect((await reconcilePullRequest(db, input)).kind).toBe("error");
+		expect(failures).toEqual([
+			{
+				operation: "targeted pull request reconciliation GraphQL lifecycle",
+				status: 200,
+				target: "repositories/2/pulls/7",
+				diagnostic: { errors: [{ message: "m".repeat(200) }] },
+			},
+		]);
+		expect(JSON.stringify(failures)).not.toContain("must-not-escape");
 	}));
 
 test("targeted repair fails closed when the preserved repository policy is stale", () =>
@@ -190,7 +271,8 @@ test("targeted repair fails closed when the preserved repository policy is stale
 					});
 				if (value.includes("actions/runs"))
 					return Response.json({ workflow_runs: [] });
-				if (value.includes("openspec/changes")) return Response.json([]);
+				if (value.includes("/pulls/") && value.includes("/files"))
+					return Response.json([]);
 				throw new Error(`unexpected targeted request ${value}`);
 			},
 		});
@@ -291,7 +373,8 @@ test("targeted repair paginates lifecycle and exact-head Actions evidence", () =
 						},
 					);
 				}
-				if (value.includes("openspec/changes")) return Response.json([]);
+				if (value.includes("/pulls/") && value.includes("/files"))
+					return Response.json([]);
 				throw new Error(`unexpected targeted request ${value}`);
 			},
 		});
@@ -350,7 +433,8 @@ test("installation bootstrap projects ruleset and classic required checks", () =
 					});
 				if (value.includes("/pulls?")) return Response.json([]);
 				if (value.includes("/deployments")) return Response.json([]);
-				if (value.includes("openspec/changes")) return Response.json([]);
+				if (value.includes("/pulls/") && value.includes("/files"))
+					return Response.json([]);
 				throw new Error(`unexpected bootstrap request ${value}`);
 			},
 			"app-jwt",
@@ -401,7 +485,7 @@ test("failed policy refresh preserves the prior policy as stale", () =>
 				if (value.includes("/pulls?")) return Response.json([]);
 				if (
 					value.includes("/deployments") ||
-					value.includes("openspec/changes")
+					(value.includes("/pulls/") && value.includes("/files"))
 				)
 					return Response.json([]);
 				throw new Error(`unexpected bootstrap request ${value}`);
@@ -845,6 +929,9 @@ test("installation bootstrap reports direct projected PR reconciliation counts",
 					author_login: "sisko",
 					state: "open",
 					draft: 0,
+					open_spec: null,
+					open_spec_declaration: "absent",
+					detected_open_specs: [],
 				},
 			],
 		});
@@ -1303,26 +1390,31 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 						state: "open",
 						updated_at: "2026-08-21T12:00:00Z",
 						head: { sha: newerSha },
+						body: "## OpenSpecs\n- capture-wolf-359",
 					},
 				]);
-			if (value.includes("/contents/openspec/changes"))
+			if (value.includes("/pulls/8/files"))
 				if (listingUnchanged) return new Response(null, { status: 304 });
 				else
 					return hasChange
 						? Response.json(
 								[
-									{ type: "dir", name: "archive" },
-									{ type: "dir", name: "capture-wolf-359" },
+									{ filename: "openspec/changes/capture-wolf-359/tasks.md" },
+									{
+										filename:
+											"openspec/changes/archive/2026-08-26-capture-wolf-359/tasks.md",
+									},
 								],
 								{
 									headers: { etag: "changes-v1" },
 								},
 							)
-						: new Response(null, { status: 404 });
+						: Response.json([]);
+			if (value.includes("/pulls/") && value.includes("/files"))
+				return Response.json([]);
 			return Response.json([]);
 		};
 		const fetchTasks = async (input: { path: string; sha: string }) => {
-			expect(input.path).not.toBe("openspec/changes/archive/tasks.md");
 			expect(input).toMatchObject({
 				path: "openspec/changes/capture-wolf-359/tasks.md",
 			});
@@ -1390,7 +1482,93 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
 				?.openSpecs,
-		).toEqual([]);
+		).toMatchObject([{ change_name: "capture-wolf-359" }]);
+	}));
+
+test("bootstrap resolves a declared OpenSpec from one changed archive path only after active 404", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const sha = "a".repeat(40);
+		const reads: string[] = [];
+		let archivePaths = [
+			"openspec/changes/archive/2026-08-26-standardize-sortable-headers/tasks.md",
+		];
+		const fetcher = async (url: RequestInfo | URL) => {
+			const value = String(url);
+			if (value.includes("/app/installations/"))
+				return Response.json({ account: { login: "cubanx" } });
+			if (value.includes("installation/repositories"))
+				return Response.json({
+					repositories: [{ id: 2, full_name: "ds9/ops" }],
+				});
+			if (value.includes("/pulls?"))
+				return Response.json([
+					{
+						number: 7,
+						title: "Archive",
+						user: { login: "sisko" },
+						state: "open",
+						head: { sha },
+						body: "## OpenSpecs\n- standardize-sortable-headers",
+					},
+				]);
+			if (value.includes("/pulls/7/files"))
+				return Response.json([
+					...archivePaths.map((filename) => ({ filename })),
+					{
+						filename:
+							"openspec/changes/archive/2026-08-25-standardize-sortable-headers/tasks.md",
+						status: "removed",
+					},
+				]);
+			if (value.includes("/deployments")) return Response.json([]);
+			return Response.json([]);
+		};
+		const result = await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			fetcher,
+			"app-jwt",
+			async ({ path }) => {
+				reads.push(path);
+				return path.includes("archive/") ? "- [x] Archive me" : null;
+			},
+		);
+		expect(result.kind).toBe("changed");
+		expect(reads).toEqual([
+			"openspec/changes/standardize-sortable-headers/tasks.md",
+			"openspec/changes/archive/2026-08-26-standardize-sortable-headers/tasks.md",
+		]);
+		expect(
+			(await dashboardForUser(db, "u")).pullRequests[0]?.open_spec,
+		).toMatchObject({
+			change_name: "standardize-sortable-headers",
+			source_commit: sha,
+		});
+		for (const paths of [
+			[],
+			[
+				"openspec/changes/archive/2026-08-25-standardize-sortable-headers/tasks.md",
+				"openspec/changes/archive/2026-08-26-standardize-sortable-headers/tasks.md",
+			],
+		]) {
+			archivePaths = paths;
+			expect(
+				await bootstrapInstallation(
+					db,
+					"9",
+					"token",
+					fetcher,
+					"app-jwt",
+					async () => null,
+				),
+			).toMatchObject({
+				kind: "error",
+				message: "GitHub OpenSpec artifact fetch failed",
+			});
+		}
 	}));
 
 test("bootstrap keeps OpenSpec task failures generic while reporting safe diagnostics", () =>
@@ -1418,11 +1596,18 @@ test("bootstrap keeps OpenSpec task failures generic while reporting safe diagno
 							user: { login: "sisko" },
 							state: "open",
 							head: { sha: "a".repeat(40) },
+							body: "## OpenSpecs\n- hold-the-line",
 						},
 					]);
 				if (value.includes("/deployments")) return Response.json([]);
-				if (value.includes("contents/openspec/changes?"))
-					return Response.json([{ type: "dir", name: "hold-the-line" }]);
+				if (value.includes("/pulls/7/files"))
+					return Response.json([
+						{ filename: "openspec/changes/hold-the-line/tasks.md" },
+						{
+							filename:
+								"openspec/changes/archive/2026-08-26-hold-the-line/tasks.md",
+						},
+					]);
 				return Response.json(
 					{
 						message: "Resource not accessible by integration",

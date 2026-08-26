@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 import { bindInstallation, createSession, upsertIdentity } from "#/access";
 import { mutateUser } from "#/db";
 import { acceptGitHubDelivery } from "#/events";
@@ -352,8 +352,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 
 test("broad reconciliation records each installation's own elapsed duration", async () =>
 	withDatabase(async (db) => {
-		vi.useFakeTimers();
-		vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));
+		const now = Date.now();
 		const app = createApp(
 			db,
 			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fixture" },
@@ -362,15 +361,12 @@ test("broad reconciliation records each installation's own elapsed duration", as
 				reconcileInstallations: async (...args: any[]) => {
 					await args[6]?.({
 						installationId: "9",
-						startedAt: new Date(),
+						startedAt: new Date(now - 60_000),
 						result: { kind: "unchanged" },
 					});
-					vi.advanceTimersByTime(5_000);
-					const startedAt = new Date();
-					vi.advanceTimersByTime(1_000);
 					await args[6]?.({
 						installationId: "10",
-						startedAt,
+						startedAt: new Date(now - 1_000),
 						result: { kind: "unchanged" },
 					});
 					return [];
@@ -379,16 +375,21 @@ test("broad reconciliation records each installation's own elapsed duration", as
 		);
 		try {
 			expect(await app.reconcile()).toBe("success");
-			const second = await db.reconciliationRuns.findOne({
-				installationId: "10",
-			});
-			if (!second) throw new Error("second reconciliation run missing");
-			expect(second.durationMs).toBe(1_000);
-			expect(second?.durationMs).toBe(
-				second.completedAt.getTime() - second.startedAt.getTime(),
-			);
+			const runs = await db.reconciliationRuns
+				.find({})
+				.sort({ installationId: 1 })
+				.toArray();
+			expect(runs).toHaveLength(2);
+			const first = runs.find((run) => run.installationId === "9");
+			const second = runs.find((run) => run.installationId === "10");
+			if (!first || !second) throw new Error("reconciliation runs missing");
+			for (const run of runs)
+				expect(run.durationMs).toBe(
+					run.completedAt.getTime() - run.startedAt.getTime(),
+				);
+			expect(second.durationMs).toBeGreaterThan(0);
+			expect(first.durationMs).toBeGreaterThan(second.durationMs * 10);
 		} finally {
 			app.stop();
-			vi.useRealTimers();
 		}
 	}));

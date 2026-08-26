@@ -1,11 +1,15 @@
 ## MODIFIED Requirements
 
 ### Requirement: Installation-token provider reads
-The system SHALL use GitHub App installation access tokens for repository automation reads, SHALL authoritatively verify that the installation account is `cubanx`, `Crisp-Inc`, or `hudson-law` before repository or deployment reads and projection mutation, SHALL retrieve every page of repositories and open pull requests available to the approved installation during bootstrap or explicit installation reconciliation, and MUST NOT use a developer's GitHub user token for projection bootstrap or reconciliation.
+The system SHALL use GitHub App installation access tokens for repository automation reads, SHALL authoritatively verify that the installation account is `cubanx`, `Crisp-Inc`, or `hudson-law` before repository or deployment reads and projection mutation, SHALL retrieve every page of repositories and open pull requests available to the approved installation during bootstrap or explicit installation reconciliation, and MUST NOT use a developer's GitHub user token for projection bootstrap or reconciliation. Targeted lifecycle reads of the GitHub status-check rollup require repository `Checks: read` permission; missing permission SHALL remain a sanitized, fail-closed provider diagnostic until separately authorized post-merge configuration repair.
 
 #### Scenario: Bootstrap reads repository state
 - **WHEN** a developer explicitly requests bootstrap for a bound installation whose account is approved
 - **THEN** the system verifies and stores its authoritative account login before every page of GitHub repository and open-pull-request reads uses a freshly minted token for that installation
+
+#### Scenario: Checks read permission is missing
+- **WHEN** an installation token cannot read a targeted pull request status-check rollup because repository `Checks: read` is absent
+- **THEN** the targeted reconciliation fails closed with a sanitized diagnostic and does not infer check state or alter GitHub App configuration
 
 #### Scenario: Verified OAuth binding completes
 - **WHEN** an approved installation is durably bound through the verified OAuth callback

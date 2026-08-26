@@ -44,7 +44,7 @@ Add one canonical targeted repair operation keyed by installation, repository, a
 
 1. One GraphQL query for PR state, draft, creation time, labels, exact head, mergeability, reviews, review threads, and current-head status-check rollup.
 2. One REST Actions query scoped to the exact head SHA to preserve the separate Actions evidence already shown by the dashboard.
-3. One REST PR changed-files/path read for detected candidates under `openspec/changes/<slug>/...`, and one raw task-file read per declared change, resolving every listed slug at the exact PR head.
+3. One REST PR changed-files/path read for detected candidates under `openspec/changes/<slug>/...`, excluding entries whose status is `removed`, and one raw task-file read per declared change, resolving every listed slug at the exact PR head. On an active task-file 404 only, the same already-fetched current changed paths may locate exactly one canonical `openspec/changes/archive/YYYY-MM-DD-<slug>/tasks.md` artifact at that head; zero or multiple matches fail closed, and non-404 failures never fall back.
 
 The normal single-OpenSpec cost includes the PR changed-files/path read; the PR body is already part of provider PR evidence. Additional declared OpenSpecs add only their raw task-file reads. A repository changes-directory listing is unnecessary for detection and never confirms a PR/OpenSpec association. Confirmed declarations are sorted and deduplicated deterministically before projection; the first remains the legacy singular item. Invalid or conflicting declarations preserve detected candidates only as informational evidence and fail lifecycle and guarded-merge readiness closed. GraphQL review-thread, review, or check connections and REST Actions paginate when required. The service reads every thread page before asserting zero unresolved threads. Required check matching uses cached context plus integration identity when supplied by a ruleset; visible non-required checks remain informational.
 
@@ -92,7 +92,7 @@ Store a repository policy snapshot and last successful refresh time alongside re
 
 ### 8. Controls reuse the same operations
 
-Add `Reconcile PR` to each PR card. Add `Reconcile all PRs` to the dashboard and avatar/configuration dropdown; it previews current known PR count and estimated calls, then invokes the same targeted operation serially. Keep one broad `Reconcile installation` control in Configuration and fold repository-policy refresh into it. Reuse existing authenticated user-to-installation binding and sanitized result handling.
+Add `Reconcile PR` to each PR card. Keep `Reconcile all PRs` in the avatar/configuration dropdown; it previews current known PR count and estimated calls, then invokes the same targeted operation serially. Keep one broad `Reconcile installation` control in Configuration and fold repository-policy refresh into it. Reuse existing authenticated user-to-installation binding and sanitized result handling.
 
 ### 9. Reconciliation telemetry uses a small TTL collection
 
@@ -104,7 +104,7 @@ No PR identity, title, SHA, review content, URL, webhook payload, raw provider d
 
 ### 10. Opened-time ordering is provider-authoritative
 
-Project GitHub `created_at`/`createdAt` from webhooks, bootstrap, and targeted repair. Default to ascending opened time across repositories. Missing values sort last with stable repository/PR identity and are backfilled by later repair. Do not infer from repository-local PR numbers or update time. Remove PR-number sort from the global sort menu.
+Project GitHub `created_at`/`createdAt` from webhooks, bootstrap, and targeted repair. Default to Closest to merge ascending: lifecycle stage first (Mergeable through Draft), then blockers, valid OpenSpec progress, and stable identity. Opened time remains available explicitly and missing values sort last. Do not infer from repository-local PR numbers or update time. Remove PR-number sort from the global sort menu.
 
 ### 11. Deployment headline enriches existing projection locally
 
@@ -136,7 +136,7 @@ After any successful persisted change to user-visible Command Deck data, emit on
 3. Persist verified deliveries before identity resolution and add retryable pending-verification state without clearing unresolved payloads.
 4. Add targeted repair, coalescing, telemetry, one startup installation repair, manual controls, and the weekday scheduler; then remove the broad timer.
 5. Switch the dashboard reducer, filters, ordering, and deployment headline after server snapshots supply the new evidence.
-6. After deployment, explicitly update GitHub App event subscriptions for review comments, resolved review threads, and commit statuses under separate provider authorization.
+6. After deployment, explicitly verify GitHub App Pull requests, commit-status, and Checks read permissions, then under separate provider authorization add any missing `Checks: read` permission and subscriptions for review comments, resolved review threads, check runs, check suites, and commit statuses.
 7. Run `Reconcile installation` once to populate repository policy and retry unresolved deliveries; until then, existing PRs cannot enter Mergeable. The first targeted repair backfills opened times, while unknown times remain last.
 
 Rollback disables the weekday scheduler and new webhook-trigger routing, restores the prior dashboard reducer, and leaves optional MongoDB fields harmless. TTL telemetry expires automatically. Reverting GitHub App subscriptions is a separate provider operation and is not required for application rollback because unknown event pairs are ignored safely.

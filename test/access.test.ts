@@ -325,6 +325,7 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					url: "javascript:alert(1)",
 					head_sha: sha,
 					head_ref: "shared",
+					open_specs: [{ change_name: "sha-match", completed: 2, total: 2 }],
 				},
 				{
 					number: 2,
@@ -333,6 +334,7 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					state: "open",
 					updated_at: "2030-01-03",
 					head_ref: "unique",
+					open_specs: [{ change_name: "branch-match", completed: 2, total: 2 }],
 				},
 				{
 					number: 3,
@@ -400,9 +402,7 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 			change_name: "branch-match",
 		});
 		expect(pullRequests.get(3)?.open_spec).toBeNull();
-		expect(pullRequests.get(4)?.open_spec).toMatchObject({
-			change_name: "sha-match",
-		});
+		expect(pullRequests.get(4)?.open_spec).toBeNull();
 		expect(pullRequests.get(1)?.open_specs).toMatchObject([
 			{ change_name: "sha-match" },
 		]);
@@ -429,25 +429,36 @@ test("dashboard keeps every exact-head OpenSpec in deterministic order and falls
 						state: "open",
 						head_sha: sha,
 						head_ref: "feature/shared",
+						open_specs: [
+							{
+								change_name: "zeta",
+								completed: 1,
+								total: 1,
+								source_commit: sha,
+							},
+							{
+								change_name: "alpha",
+								completed: 1,
+								total: 1,
+								source_commit: sha,
+							},
+							{
+								change_name: "alpha",
+								completed: 1,
+								total: 1,
+								source_commit: sha,
+							},
+						],
 					},
 					{
 						number: 2,
 						author_login: "sisko",
 						state: "open",
 						head_ref: "feature/unique",
+						open_specs: [{ change_name: "branch", completed: 1, total: 1 }],
 					},
 				],
-				openSpecs: [
-					{ change_name: "zeta", completed: 1, total: 1, source_commit: sha },
-					{ change_name: "alpha", completed: 1, total: 1, source_commit: sha },
-					{ change_name: "alpha", completed: 1, total: 1, source_commit: sha },
-					{
-						change_name: "branch",
-						completed: 1,
-						total: 1,
-						source_ref: "feature/unique",
-					},
-				],
+				openSpecs: [],
 				deployments: [],
 			});
 		});

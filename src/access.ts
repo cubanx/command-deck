@@ -84,10 +84,6 @@ const pullRequestUrl = (fullName: unknown, number: unknown) => {
 	if (fullName == null || number == null) return null;
 	return `https://github.com/${String(fullName)}/pull/${String(number)}`;
 };
-const openSpecUrl = (fullName: unknown, sha: unknown, change: unknown) => {
-	if (fullName == null || sha == null || change == null) return null;
-	return `https://github.com/${String(fullName)}/blob/${String(sha)}/openspec/changes/${encodeURIComponent(String(change))}/tasks.md`;
-};
 const orderedOpenSpecs = (specs: Record<string, unknown>[]) => {
 	const unique = new Map<string, Record<string, unknown>>();
 	for (const spec of specs)
@@ -201,7 +197,22 @@ export async function seedLocalDemo(db: Db) {
 			{
 				repositoryId: "local-demo-repository",
 				full_name: "ds9/ops-console",
-				pullRequests: localDemoPullRequests,
+				pullRequests: localDemoPullRequests.map((pullRequest, index) =>
+					index
+						? pullRequest
+						: {
+								...pullRequest,
+								open_specs: [
+									{
+										change_name: "restore-defiant-launch-checklist",
+										completed: 26,
+										total: 27,
+										source_commit: "local-demo-119",
+										source_ref: "demo/restore-the-defiant-launch-checklist",
+									},
+								],
+							},
+				),
 				openSpecs: [
 					{
 						change_name: "restore-defiant-launch-checklist",
@@ -318,20 +329,6 @@ export async function dashboardForUser(
 			pullRequestsPermission: installation.permissions?.pull_requests,
 		})),
 	);
-	const openSpecs: Record<string, unknown>[] = repositories.flatMap(
-		(repository) =>
-			repository.openSpecs.map((spec) => ({
-				...spec,
-				installation_id: repository.installationId,
-				repository_id: repository.repositoryId,
-				full_name: repository.full_name,
-				source_url: openSpecUrl(
-					repository.full_name,
-					spec.source_commit,
-					spec.change_name,
-				),
-			})),
-	);
 	const projectedPullRequests: PullRequest[] = repositories.flatMap(
 		(repository) =>
 			repository.pullRequests
@@ -357,29 +354,12 @@ export async function dashboardForUser(
 	const openPullRequests = [...byIdentity.values()];
 	const pullRequests: PullRequest[] = openPullRequests
 		.map((pr): PullRequest => {
-			const candidates = openSpecs.filter(
-				(item) =>
-					item.installation_id === pr.installation_id &&
-					item.repository_id === pr.repository_id,
-			);
-			const matches = candidates.filter(
-				(item) => pr.head_sha && item.source_commit === pr.head_sha,
-			);
-			const branches = matches.length
-				? []
-				: candidates.filter(
-						(item) => pr.head_ref && item.source_ref === pr.head_ref,
-					);
-			const uniqueBranch =
-				openPullRequests.filter(
-					(item) =>
-						item.installation_id === pr.installation_id &&
-						item.repository_id === pr.repository_id &&
-						pr.head_ref &&
-						item.head_ref === pr.head_ref,
-				).length === 1;
 			const correlatedOpenSpecs = orderedOpenSpecs(
-				matches.length ? matches : uniqueBranch ? branches : [],
+				Array.isArray(pr.open_specs)
+					? (pr.open_specs as Record<string, unknown>[])
+					: pr.open_spec && typeof pr.open_spec === "object"
+						? [pr.open_spec as Record<string, unknown>]
+						: [],
 			);
 			const openSpec = correlatedOpenSpecs[0] ?? null;
 			return {

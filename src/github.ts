@@ -14,7 +14,12 @@ import {
 } from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
-import { projectOpenSpec } from "#/openspec";
+import {
+	detectedOpenSpecSlugs,
+	parseOpenSpecDeclaration,
+	parseTasks,
+	projectOpenSpec,
+} from "#/openspec";
 
 type FetchLike = (
 	input: RequestInfo | URL,
@@ -53,7 +58,12 @@ export type GitHubRequestFailure = {
 	diagnostic?: {
 		message?: string;
 		documentationUrl?: string;
-		errors?: Array<{ resource?: string; field?: string; code?: string }>;
+		errors?: Array<{
+			resource?: string;
+			field?: string;
+			code?: string;
+			message?: string;
+		}>;
 	};
 };
 export type GitHubRequestFailureReporter = (
@@ -106,6 +116,7 @@ const projectedPullRequestCounts = (
 type OpenSpecTask = {
 	repositoryId: string;
 	path: string;
+	changeName: string;
 	sha: string;
 	content: string;
 };
@@ -129,6 +140,34 @@ const base64url = (value: string | Buffer) =>
 	Buffer.from(value).toString("base64url");
 const diagnosticString = (value: unknown) =>
 	typeof value === "string" ? value.slice(0, 200) : undefined;
+const graphqlErrorDiagnostic = (errors: unknown) => {
+	if (!Array.isArray(errors)) return undefined;
+	const items = errors
+		.map((error) => {
+			if (!error || typeof error !== "object") return undefined;
+			const value = error as Record<string, unknown>;
+			const path = Array.isArray(value.path)
+				? diagnosticString(
+						value.path
+							.filter((item): item is string => typeof item === "string")
+							.join("."),
+					)
+				: undefined;
+			const code = diagnosticString(value.type);
+			const message =
+				path || code ? undefined : diagnosticString(value.message);
+			return path || code || message
+				? {
+						...(path ? { field: path } : {}),
+						...(code ? { code } : {}),
+						...(message ? { message } : {}),
+					}
+				: undefined;
+		})
+		.filter((item): item is NonNullable<typeof item> => Boolean(item))
+		.slice(0, 5);
+	return items.length ? { errors: items } : undefined;
+};
 export async function githubErrorDiagnostic(response: Response) {
 	let body: unknown;
 	try {
@@ -233,15 +272,23 @@ async function githubGraphql(
 		if (delay === undefined || attempt === 2) break;
 		await new Promise((resolve) => setTimeout(resolve, delay));
 	}
-	if (!response?.ok) throw new Error("GitHub GraphQL request failed");
+	if (!response?.ok)
+		throw Object.assign(new Error("GitHub GraphQL request failed"), {
+			status: response?.status,
+		});
 	const body: unknown = await response.json();
-	if (
-		!body ||
-		typeof body !== "object" ||
-		Array.isArray((body as { errors?: unknown }).errors) ||
-		!(body as { data?: unknown }).data
-	)
+	if (!body || typeof body !== "object")
 		throw new Error("GitHub GraphQL response was incomplete");
+	const errors = (body as { errors?: unknown }).errors;
+	if (Array.isArray(errors))
+		throw Object.assign(new Error("GitHub GraphQL response was incomplete"), {
+			status: response.status,
+			diagnostic: graphqlErrorDiagnostic(errors),
+		});
+	if (!(body as { data?: unknown }).data)
+		throw Object.assign(new Error("GitHub GraphQL response was incomplete"), {
+			status: response.status,
+		});
 	return (body as { data: Record<string, unknown> }).data;
 }
 const safeUrl = (value: unknown) =>
@@ -467,6 +514,30 @@ export async function reconcileSerial(
 	}
 	return results;
 }
+type PullRequestOpenSpecs = {
+	number: number;
+	tasks: OpenSpecTask[];
+	declaration: "absent" | "empty" | "declared" | "invalid";
+	detected: string[];
+};
+const openSpecProjection = (
+	evidence: PullRequestOpenSpecs | undefined,
+	sourceRef?: unknown,
+) => {
+	const open_specs = evidence?.tasks.map((task) => ({
+		change_name: task.changeName,
+		...parseTasks(task.content),
+		source_commit: task.sha,
+		source_ref: optionalString(sourceRef),
+	}));
+	return {
+		open_specs,
+		open_spec: open_specs?.[0] ?? null,
+		open_spec_declaration: evidence?.declaration ?? "absent",
+		detected_open_specs: evidence?.detected ?? [],
+	};
+};
+
 async function fetchOpenSpecTasksForPullRequests(
 	db: Db,
 	installationId: string,
@@ -475,12 +546,35 @@ async function fetchOpenSpecTasksForPullRequests(
 		number?: unknown;
 		updated_at?: unknown;
 		head?: { sha?: unknown };
+		body?: unknown;
 	}>,
 	request: FetchLike,
 	taskFetcher: TaskFetcher,
 	repository?: string,
-): Promise<OpenSpecTask[] | ReadResult> {
-	const tasks: OpenSpecTask[] = [];
+	stage?: { value: string },
+): Promise<PullRequestOpenSpecs[] | ReadResult> {
+	const artifactFailure = (status?: number): ReadResult => ({
+		kind: "error",
+		stale: true,
+		message: "GitHub OpenSpec artifact fetch failed",
+		operation: "openspec",
+		repository,
+		summary: "GitHub OpenSpec artifact fetch failed",
+		...(status === undefined ? {} : { status }),
+	});
+	const errorStatus = (error: unknown) => {
+		const status = Number((error as { status?: unknown })?.status);
+		return Number.isSafeInteger(status) ? status : undefined;
+	};
+	const archiveTaskPaths = (paths: string[], name: string) => {
+		const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		return paths.filter((path) =>
+			new RegExp(
+				`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escaped}/tasks\\.md$`,
+			).test(path),
+		);
+	};
+	const results: PullRequestOpenSpecs[] = [];
 	for (const pr of [...pullRequests].sort((a, b) => {
 		const aUpdatedAt = Date.parse(String(a.updated_at ?? "")),
 			bUpdatedAt = Date.parse(String(b.updated_at ?? "")),
@@ -496,63 +590,72 @@ async function fetchOpenSpecTasksForPullRequests(
 	})) {
 		const sha = typeof pr.head?.sha === "string" ? pr.head.sha : undefined;
 		if (!sha) continue;
-		const changes = await conditionalGet(
-			db,
-			`installation:${installationId}:repo:${repositoryId}:openspec:${sha}`,
-			`https://api.github.com/repositories/${repositoryId}/contents/openspec/changes?ref=${sha}`,
-			async (url, init) => {
-				const response = await request(url, init);
-				return response.status === 404 ? Response.json([]) : response;
-			},
-			{ operation: "openspec", repository },
-		);
-		if (changes.kind === "unchanged" || changes.kind === "error")
-			return changes;
-		if (!Array.isArray(changes.body))
+		const number = Number(pr.number);
+		if (!Number.isSafeInteger(number))
 			return {
 				kind: "error",
 				stale: true,
-				message: "GitHub OpenSpec listing payload was invalid",
+				message: "GitHub pull request number was invalid",
 				operation: "openspec",
 				repository,
-				summary: "GitHub OpenSpec listing payload was invalid",
+				summary: "GitHub OpenSpec read was incomplete",
 			};
-		for (const change of changes.body) {
-			const entry = change as Record<string, unknown>;
-			const name = entry.name;
-			if (
-				entry.type !== "dir" ||
-				typeof name !== "string" ||
-				name === "archive" ||
-				!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)
-			)
-				continue;
-			const path = `openspec/changes/${name}/tasks.md`;
-			const content = await taskFetcher({
-				installationId,
-				repositoryId,
-				path,
-				sha,
-			});
-			if (content === null)
-				return {
-					kind: "error",
-					stale: true,
-					message: "GitHub OpenSpec artifact fetch failed",
-					operation: "openspec",
-					repository,
-					summary: "GitHub OpenSpec artifact fetch failed",
-				};
-			tasks.push({ repositoryId, path, sha, content });
-		}
+		if (stage) stage.value = "changed files";
+		const changes = await pagedGet(
+			db,
+			`installation:${installationId}:repo:${repositoryId}:pr:${number}:files:${sha}`,
+			`https://api.github.com/repositories/${repositoryId}/pulls/${number}/files?per_page=100`,
+			request,
+			{ operation: "openspec", repository },
+			"filename",
+		);
+		if (changes.kind !== "changed" || !Array.isArray(changes.body))
+			return changes;
+		const declaration = parseOpenSpecDeclaration(pr.body);
+		const paths = changes.body
+			.filter((item) => (item as { status?: unknown }).status !== "removed")
+			.map((item) => String((item as { filename?: unknown }).filename ?? ""));
+		const detected = detectedOpenSpecSlugs(paths);
+		const tasks: OpenSpecTask[] = [];
+		if (declaration.state === "declared")
+			for (const name of declaration.slugs) {
+				let path = `openspec/changes/${name}/tasks.md`;
+				let content: string | null;
+				if (stage) stage.value = "active OpenSpec task";
+				try {
+					content = await taskFetcher({
+						installationId,
+						repositoryId,
+						path,
+						sha,
+					});
+				} catch (error) {
+					return artifactFailure(errorStatus(error));
+				}
+				if (content === null) {
+					const archivePaths = archiveTaskPaths(paths, name);
+					const [archivePath] = archivePaths;
+					if (archivePaths.length !== 1 || !archivePath)
+						return artifactFailure();
+					path = archivePath;
+					if (stage) stage.value = "archive OpenSpec task";
+					try {
+						content = await taskFetcher({
+							installationId,
+							repositoryId,
+							path,
+							sha,
+						});
+					} catch (error) {
+						return artifactFailure(errorStatus(error));
+					}
+					if (content === null) return artifactFailure();
+				}
+				tasks.push({ repositoryId, path, changeName: name, sha, content });
+			}
+		results.push({ number, tasks, declaration: declaration.state, detected });
 	}
-	const changes = new Set<string>();
-	return tasks.filter((task) => {
-		const key = `${task.repositoryId}:${task.path.split("/")[2]}`;
-		if (changes.has(key)) return false;
-		changes.add(key);
-		return true;
-	});
+	return results;
 }
 
 async function refreshRepositoryPolicy(
@@ -666,7 +769,7 @@ async function refreshRepositoryPolicy(
 const pullRequestLifecycleQuery = `query PullRequestLifecycle($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      state merged isDraft createdAt updatedAt title url headRefName headRefOid mergeable reviewDecision
+      state merged isDraft createdAt updatedAt title body url headRefName headRefOid mergeable reviewDecision
       labels(first: 100) { nodes { name } pageInfo { hasNextPage endCursor } }
       reviewRequests(first: 100) { totalCount }
       reviews(first: 100) { nodes { state } pageInfo { hasNextPage endCursor } }
@@ -674,6 +777,7 @@ const pullRequestLifecycleQuery = `query PullRequestLifecycle($owner: String!, $
       statusCheckRollup { contexts(first: 100) { nodes { ... on CheckRun { name status conclusion detailsUrl checkSuite { app { databaseId } } } ... on StatusContext { context state targetUrl } } pageInfo { hasNextPage endCursor } }
     }
   }
+}
 }`;
 
 const graphqlConnectionQuery = (
@@ -752,6 +856,7 @@ type ReconcilePullRequestInput = {
 	token: string;
 	fetcher: FetchLike;
 	fetchTasks?: TaskFetcher;
+	reportFailure?: GitHubRequestFailureReporter;
 };
 type PullRequestRead = {
 	pullRequest: Record<string, unknown>;
@@ -761,7 +866,7 @@ type PullRequestRead = {
 	threads: unknown[];
 	contexts: unknown[];
 	actions: unknown[];
-	tasks: OpenSpecTask[];
+	openSpecEvidence: PullRequestOpenSpecs;
 };
 
 const loadReconciliationTarget = async (
@@ -826,7 +931,9 @@ const readOpenPullRequest = async (
 	repository: NonNullable<
 		Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]
 	>,
+	stage: { value: string },
 ): Promise<PullRequestRead | undefined> => {
+	stage.value = "GraphQL lifecycle";
 	const data = await githubGraphql(
 		input.token,
 		pullRequestLifecycleQuery,
@@ -893,6 +1000,7 @@ const readOpenPullRequest = async (
 					(pullRequest.statusCheckRollup as any)?.contexts,
 				),
 	]);
+	stage.value = "Actions";
 	const actions = await pagedGet(
 		db,
 		"installation:" +
@@ -911,7 +1019,9 @@ const readOpenPullRequest = async (
 		"workflow_runs",
 	);
 	if (actions.kind !== "changed" || !Array.isArray(actions.body))
-		throw new Error("GitHub Actions response was incomplete");
+		throw Object.assign(new Error("GitHub Actions response was incomplete"), {
+			status: actions.kind === "error" ? actions.status : undefined,
+		});
 	const taskFetcher =
 		input.fetchTasks ??
 		(async (task: Parameters<TaskFetcher>[0]) => {
@@ -924,8 +1034,13 @@ const readOpenPullRequest = async (
 					task.sha,
 				{ headers: { accept: "application/vnd.github.raw" } },
 			);
-			return response.ok ? response.text() : null;
+			if (response.ok) return response.text();
+			if (response.status === 404) return null;
+			throw Object.assign(new Error("GitHub OpenSpec artifact fetch failed"), {
+				status: response.status,
+			});
 		});
+	stage.value = "changed files";
 	const tasks = await fetchOpenSpecTasksForPullRequests(
 		db,
 		input.installationId,
@@ -935,14 +1050,21 @@ const readOpenPullRequest = async (
 				number: input.number,
 				head: { sha: headSha },
 				updated_at: pullRequest.updatedAt,
+				body: pullRequest.body,
 			},
 		],
 		request,
 		taskFetcher,
 		repository.full_name,
+		stage,
 	);
-	if (!Array.isArray(tasks))
-		throw new Error("GitHub OpenSpec read was incomplete");
+	if (!Array.isArray(tasks) || tasks.length !== 1)
+		throw Object.assign(new Error("GitHub OpenSpec read was incomplete"), {
+			status:
+				Array.isArray(tasks) || tasks.kind !== "error"
+					? undefined
+					: tasks.status,
+		});
 	if (
 		!labels.every((item: any) => item && typeof item.name === "string") ||
 		!reviews.every((item: any) => item && typeof item.state === "string") ||
@@ -964,7 +1086,7 @@ const readOpenPullRequest = async (
 		threads,
 		contexts,
 		actions: actions.body,
-		tasks,
+		openSpecEvidence: tasks[0]!,
 	};
 };
 
@@ -988,7 +1110,7 @@ const applyOpenPullRequest = async (
 		threads,
 		contexts,
 		actions,
-		tasks,
+		openSpecEvidence,
 	} = read;
 	const reviewNodes = reviews as Array<{ state: string }>;
 	const threadNodes = threads as Array<{ isResolved: boolean }>;
@@ -1066,6 +1188,7 @@ const applyOpenPullRequest = async (
 		)
 			? "failure"
 			: "success",
+		...openSpecProjection(openSpecEvidence, pullRequest.headRefName),
 	};
 	let changed = false;
 	await Promise.all(
@@ -1102,7 +1225,7 @@ const applyOpenPullRequest = async (
 			}),
 		),
 	);
-	for (const task of tasks) {
+	for (const task of openSpecEvidence.tasks) {
 		const openSpec = await projectOpenSpec(db, {
 			installationId: input.installationId,
 			accountLogin: installation?.accountLogin ?? "",
@@ -1146,6 +1269,7 @@ export async function reconcilePullRequest(
 				authorization: `Bearer ${input.token}`,
 			},
 		});
+	const stage = { value: "GraphQL lifecycle" };
 	try {
 		const read = await readOpenPullRequest(
 			db,
@@ -1154,11 +1278,25 @@ export async function reconcilePullRequest(
 			owner,
 			name,
 			repository,
+			stage,
 		);
+		stage.value = "persistence";
 		return read
 			? applyOpenPullRequest(db, users, installation, repository, input, read)
 			: removeClosedPullRequest(db, users, input);
-	} catch {
+	} catch (error) {
+		const status = Number((error as { status?: unknown })?.status);
+		const diagnostic = (
+			error as {
+				diagnostic?: GitHubRequestFailure["diagnostic"];
+			}
+		)?.diagnostic;
+		await input.reportFailure?.({
+			operation: `targeted pull request reconciliation ${stage.value}`,
+			status: Number.isSafeInteger(status) ? status : 0,
+			target: `repositories/${input.repositoryId}/pulls/${input.number}`,
+			...(diagnostic ? { diagnostic } : {}),
+		});
 		await Promise.all(
 			users.map((user) =>
 				mutateUser(db, user._id, (aggregate) => {
@@ -1216,13 +1354,14 @@ export async function bootstrapInstallation(
 				headers: { accept: "application/vnd.github.raw" },
 			});
 			if (response.ok) return response.text();
+			if (response.status === 404) return null;
 			await reportTaskFetchFailure?.({
 				operation: "bootstrap OpenSpec task fetch",
 				status: response.status,
 				target,
 				diagnostic: await githubErrorDiagnostic(response),
 			});
-			return null;
+			throw new Error("GitHub OpenSpec artifact fetch failed");
 		});
 	const bound = await db.users
 		.find(
@@ -1340,7 +1479,8 @@ export async function bootstrapInstallation(
 			repo.full_name,
 		);
 		if (!Array.isArray(tasks)) return tasks;
-		openSpecTasks.push(...tasks);
+		openSpecTasks.push(...tasks.flatMap((item) => item.tasks));
+		const evidenceByNumber = new Map(tasks.map((item) => [item.number, item]));
 		snapshots.push({
 			repositoryId: String(repo.id),
 			full_name: repo.full_name,
@@ -1363,7 +1503,9 @@ export async function bootstrapInstallation(
 							draft?: unknown;
 							head?: { ref?: unknown; sha?: unknown };
 							updated_at?: unknown;
+							body?: unknown;
 						};
+						const evidence = evidenceByNumber.get(Number(pr.number));
 						return {
 							number: pr.number,
 							title: pr.title,
@@ -1374,6 +1516,7 @@ export async function bootstrapInstallation(
 							head_ref: pr.head?.ref,
 							head_sha: pr.head?.sha,
 							updated_at: pr.updated_at,
+							...openSpecProjection(evidence, pr.head?.ref),
 						};
 					})
 				: [],

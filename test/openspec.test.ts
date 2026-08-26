@@ -3,6 +3,7 @@ import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
 import {
 	changedTaskPaths,
 	openSpecGate,
+	parseOpenSpecDeclaration,
 	parseTasks,
 	projectOpenSpec,
 } from "#/openspec";
@@ -104,6 +105,33 @@ test("keeps total progress while ignoring only exact post-merge groups for readi
 - [ ] Implement before merge
 - [ ] Verify production`),
 	).toMatchObject({ preMergeReady: false });
+});
+
+test("parses only one exhaustive OpenSpecs declaration", () => {
+	expect(parseOpenSpecDeclaration("No declaration")).toMatchObject({
+		state: "absent",
+		slugs: [],
+	});
+	expect(parseOpenSpecDeclaration("## OpenSpecs\n\n## Next")).toMatchObject({
+		state: "empty",
+		slugs: [],
+	});
+	expect(
+		parseOpenSpecDeclaration(
+			"## OpenSpecs\n- `capture-wolf-359`\n- defend-ds9\n## Next\n- prose",
+		),
+	).toMatchObject({
+		state: "declared",
+		slugs: ["capture-wolf-359", "defend-ds9"],
+	});
+	for (const body of [
+		"## OpenSpecs\nProse",
+		"## OpenSpecs\n- [link](https://example.test)",
+		"## OpenSpecs\n- invalid slug",
+		"## OpenSpecs\n- alpha\n- alpha",
+		"## OpenSpecs\n- alpha\n## OpenSpecs\n- beta",
+	])
+		expect(parseOpenSpecDeclaration(body).state).toBe("invalid");
 });
 
 test("applies openspec-not-required only when no OpenSpec is correlated", () => {

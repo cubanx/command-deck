@@ -41,6 +41,8 @@ type PullRequest = {
 	opened_at?: string;
 	labels?: string[];
 	open_specs?: OpenSpecEvidence[];
+	open_spec_declaration?: "absent" | "empty" | "declared" | "invalid";
+	detected_open_specs?: string[];
 	review_activity?: boolean;
 	review_requested?: boolean;
 	completed_review_count?: number;
@@ -361,6 +363,7 @@ let known: Set<string> | null = null,
 	checkoutHandles = new Map<string, CheckoutRecord>(),
 	checkoutStates = new Map<string, CheckoutState>(),
 	reconciliationState: ReconciliationState | null = null,
+	reconciliationFailures = new Set<string>(),
 	reconcileMessage = "",
 	statusDetailKey: string | null = null,
 	statusDetailPinned = false,
@@ -428,7 +431,7 @@ const normalized = (value: unknown) =>
 	String(value ?? "")
 		.trim()
 		.toLowerCase();
-const defaultSort: SortPreference = { mode: "opened", direction: "asc" };
+const defaultSort: SortPreference = { mode: "closest", direction: "asc" };
 const sortModes = new Set<string>([
 	"opened",
 	"closest",
@@ -543,14 +546,16 @@ export const lifecycleFor = (
 	if (["closed", "merged"].includes(normalized(pr.state)))
 		return { stage: "closed", blockers: [] };
 	if (pr.draft) return { stage: "draft", blockers: ["Draft"] };
-	const gate = openSpecGate(specsFor(pr, spec), pr.labels ?? []);
+	const gate = openSpecGate(specsFor(pr, spec), pr.labels ?? [], pr);
 	if (!gate.ready)
 		return {
 			stage: "openspec",
 			blockers: [
-				gate.applicable && specsFor(pr, spec).length
-					? "OpenSpec incomplete"
-					: "No OpenSpec found",
+				gate.blocker === "confirm"
+					? "Confirm OpenSpec association"
+					: gate.applicable && specsFor(pr, spec).length
+						? "OpenSpec incomplete"
+						: "No OpenSpec found",
 			],
 		};
 	if (!reviewActivityFor(pr)) return { stage: "ready", blockers: [] };
@@ -623,10 +628,25 @@ const closestCompare = (
 	left: DerivedPullRequest,
 	right: DerivedPullRequest,
 	direction: SortDirection = "asc",
-) =>
-	nullableCompare(left.blockers.length, right.blockers.length, direction) ||
-	nullableCompare(left.progress, right.progress, "desc") ||
-	identityTie(left, right);
+) => {
+	const stageRank = {
+		mergeable: 0,
+		reviewing: 1,
+		ready: 2,
+		openspec: 3,
+		draft: 4,
+		closed: 5,
+	} as const;
+	const rank =
+		stageRank[left.bucket as keyof typeof stageRank] -
+		stageRank[right.bucket as keyof typeof stageRank];
+	const ordered =
+		rank ||
+		nullableCompare(left.blockers.length, right.blockers.length) ||
+		nullableCompare(left.progress, right.progress, "desc") ||
+		identityTie(left, right);
+	return direction === "desc" ? -ordered : ordered;
+};
 const sortCompare = (
 	left: DerivedPullRequest,
 	right: DerivedPullRequest,
@@ -1158,6 +1178,12 @@ const openSpecMarkup = (items: ReadonlyArray<OpenSpecEvidence>) =>
 			);
 		})
 		.join("");
+const detectedOpenSpecMarkup = (pr: PullRequest) =>
+	Array.isArray(pr.detected_open_specs) && pr.detected_open_specs.length
+		? '<section aria-label="Detected OpenSpec candidates"><p class="muted">Detected OpenSpec candidates</p><ul>' +
+			pr.detected_open_specs.map((slug) => `<li>${esc(slug)}</li>`).join("") +
+			"</ul></section>"
+		: "";
 const workflowFailuresMarkup = (pr: PullRequest) => {
 	const failures = Array.isArray(pr.workflow_failures)
 		? pr.workflow_failures
@@ -1185,6 +1211,8 @@ const reconciliationTargets = (filter: (pr: PullRequest) => boolean) =>
 	new Set((current?.pullRequests ?? []).filter(filter).map(statusKeyFor));
 const reconciliationActiveFor = (pr: PullRequest) =>
 	Boolean(reconciliationState?.targets.has(statusKeyFor(pr)));
+const reconciliationFailedFor = (pr: PullRequest) =>
+	reconciliationFailures.has(statusKeyFor(pr));
 export const statusDetailHoverDelay = 350;
 export const statusDetailPositionFor = (
 	trigger: { left: number; top: number; width: number; height: number },
@@ -1245,7 +1273,7 @@ export const pullRequestStatusMarkup = (item: DerivedPullRequest) =>
 	statusDetailMarkup(item);
 const statusDetailMarkup = (item: DerivedPullRequest) => {
 	const { pr, blockers } = item;
-	return `<aside id="status-detail" class="status-detail" role="dialog" aria-label="Pull request status detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close status detail">×</button><p><strong>${esc(stageLabel(item.bucket))}</strong>${blockers.length ? ` · ${esc(blockers.join(", "))}` : ""}</p><p>Actions: ${esc(pr.workflow_state ?? "unknown")} · Checks: ${esc(pr.checks_state ?? "unknown")} · Review: ${esc(pr.review_state ?? "unknown")} · Mergeability: ${esc(pr.mergeable ?? "unknown")}</p>${pr.bot_review_state ? `<p>Automated review${pr.bot_review_actor ? ` · ${esc(pr.bot_review_actor)}` : ""}: ${esc(pr.bot_review_state)}</p>` : ""}${workflowFailuresMarkup(pr)}<p class="muted">Branch: ${esc(pr.head_ref ?? "unknown")} · SHA: ${esc(pr.head_sha ?? "unknown")} · Updated: ${esc(pr.updated_at ?? "unknown")}</p>${openSpecMarkup(specsFor(pr, item.spec))}</aside>`;
+	return `<aside id="status-detail" class="status-detail" role="dialog" aria-label="Pull request status detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close status detail">×</button><p><strong>${esc(stageLabel(item.bucket))}</strong>${blockers.length ? ` · ${esc(blockers.join(", "))}` : ""}</p><p>Actions: ${esc(pr.workflow_state ?? "unknown")} · Checks: ${esc(pr.checks_state ?? "unknown")} · Review: ${esc(pr.review_state ?? "unknown")} · Mergeability: ${esc(pr.mergeable ?? "unknown")}</p>${pr.bot_review_state ? `<p>Automated review${pr.bot_review_actor ? ` · ${esc(pr.bot_review_actor)}` : ""}: ${esc(pr.bot_review_state)}</p>` : ""}${workflowFailuresMarkup(pr)}<p class="muted">Branch: ${esc(pr.head_ref ?? "unknown")} · SHA: ${esc(pr.head_sha ?? "unknown")} · Updated: ${esc(pr.updated_at ?? "unknown")}</p>${openSpecMarkup(specsFor(pr, item.spec))}${detectedOpenSpecMarkup(pr)}</aside>`;
 };
 const deploymentLabel = (deployment: DeploymentProjection) =>
 	[deployment.full_name, deployment.environment, deployment.ref, deployment.sha]
@@ -1709,7 +1737,6 @@ const render = (x: DashboardSnapshot | null) => {
 		"</header>";
 	const dashboardMarkup =
 		'<section class="card" aria-label="Pull requests">' +
-		`<div class="actions"><button id="reconcile-all" type="button" data-reconcile-all ${reconciliationButtonMarkup(reconciliationState?.kind === "all")}>${reconciliationState?.kind === "all" ? "Reconciling…" : "Reconcile all PRs"}</button></div>` +
 		controlsMarkup(allPullRequests, prs) +
 		rows(prs, "No open authored pull requests.", (item) => {
 			const pr = item.pr;
@@ -1726,12 +1753,16 @@ const render = (x: DashboardSnapshot | null) => {
 				esc(pr.title) +
 				"</a></h3>" +
 				mergeMarkup(pr) +
-				`<button id="reconcile-pr-${esc(statusKeyFor(pr).replaceAll(":", "-"))}" type="button" data-reconcile-pr='${esc(JSON.stringify({ installationId: pr.installation_id, repositoryId: pr.repository_id, number: pr.number }))}' ${reconciliationButtonMarkup(reconciliationActiveFor(pr))}>${reconciliationActiveFor(pr) ? "Reconciling…" : "Reconcile PR"}</button>` +
+				`<button id="reconcile-pr-${esc(statusKeyFor(pr).replaceAll(":", "-"))}" type="button" data-reconcile-pr='${esc(JSON.stringify({ installationId: pr.installation_id, repositoryId: pr.repository_id, number: pr.number }))}' ${reconciliationButtonMarkup(reconciliationActiveFor(pr))}>${reconciliationActiveFor(pr) ? "Reconciling…" : reconciliationFailedFor(pr) ? "Retry reconciliation" : "Reconcile PR"}</button>` +
 				'</div><div class="pr-statuses">' +
 				lifecycleFrameMarkup(item) +
 				warningRowMarkup(item) +
 				"</div>" +
 				openSpecMarkup(specsFor(pr, item.spec)) +
+				detectedOpenSpecMarkup(pr) +
+				(reconciliationFailedFor(pr)
+					? '<p class="muted" role="status">Reconciliation could not be completed. Retry.</p>'
+					: "") +
 				"</article>"
 			);
 		}) +
@@ -1890,20 +1921,32 @@ async function reconcileNow(
 		);
 		if (!response.ok) {
 			console.error("Reconciliation request failed", response.status);
+			nextState.targets.forEach((target) => {
+				reconciliationFailures.add(target);
+			});
 			reconcileMessage = "Reconciliation could not be completed.";
 			return;
 		}
 		const result = await response.json();
 		if (result.status === "success") {
+			nextState.targets.forEach((target) => {
+				reconciliationFailures.delete(target);
+			});
 			reconcileMessage = successMessage;
 			await load();
 		} else if (result.status === "running") {
 			reconcileMessage = "Reconciliation is already running.";
 		} else {
+			nextState.targets.forEach((target) => {
+				reconciliationFailures.add(target);
+			});
 			reconcileMessage = "Reconciliation could not be completed.";
 		}
 	} catch (error) {
 		console.error("Reconciliation request failed", errorName(error));
+		nextState.targets.forEach((target) => {
+			reconciliationFailures.add(target);
+		});
 		reconcileMessage = "Reconciliation could not be completed.";
 	} finally {
 		reconciliationState = null;

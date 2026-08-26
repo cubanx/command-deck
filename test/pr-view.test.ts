@@ -243,6 +243,53 @@ test("reduces lifecycle evidence with explicit precedence and named blockers", (
 	).toContain(">Merge</button>");
 });
 
+test("requires declaration confirmation for changed OpenSpec candidates", () => {
+	expect(
+		lifecycleFor({
+			...lifecycleReady,
+			open_spec_declaration: "absent",
+			detected_open_specs: ["capture-wolf-359"],
+		}),
+	).toEqual({ stage: "openspec", blockers: ["Confirm OpenSpec association"] });
+	expect(
+		lifecycleFor({
+			...lifecycleReady,
+			open_spec_declaration: "empty",
+			labels: ["openspec-not-required"],
+		}),
+	).toMatchObject({ stage: "mergeable" });
+	expect(
+		pullRequestStatusMarkup({
+			pr: {
+				...lifecycleReady,
+				number: 7,
+				open_spec_declaration: "declared",
+				detected_open_specs: ["extra<spec>"],
+			},
+			spec: null,
+			bucket: "mergeable",
+			blockers: [],
+			score: 0,
+			progress: null,
+		}),
+	).toContain('aria-label="Detected OpenSpec candidates"');
+	expect(
+		pullRequestStatusMarkup({
+			pr: {
+				...lifecycleReady,
+				number: 7,
+				open_spec_declaration: "declared",
+				detected_open_specs: ["zeta", "extra<spec>"],
+			},
+			spec: null,
+			bucket: "mergeable",
+			blockers: [],
+			score: 0,
+			progress: null,
+		}),
+	).toContain("<ul><li>zeta</li><li>extra&lt;spec&gt;</li></ul>");
+});
+
 test("uses five lifecycle stages and global opened ordering", () => {
 	const rendered = pullRequestStatusMarkup({
 		pr: { ...lifecycleReady, number: 7 },
@@ -278,7 +325,7 @@ test("uses five lifecycle stages and global opened ordering", () => {
 			},
 		},
 	]);
-	expect(numbers(ordered)).toEqual([1, 2, 3]);
+	expect(numbers(ordered)).toEqual([2, 1, 3]);
 	expect(
 		derivePullRequests(
 			[
@@ -304,7 +351,7 @@ test("uses five lifecycle stages and global opened ordering", () => {
 		).map(({ pr }) => `${pr.full_name}:${pr.number}`),
 	).toEqual(["ds9/alpha:1", "ds9/alpha:2", "ds9/zeta:2"]);
 	expect(sortPreference('{"mode":"number","direction":"desc"}')).toEqual({
-		mode: "opened",
+		mode: "closest",
 		direction: "asc",
 	});
 });
@@ -313,7 +360,7 @@ test("status buckets remain exclusive while closest-to-merge uses independent bl
 	expect(bucketFor(items[0].pr)).toBe("draft");
 	expect(bucketFor(items[1].pr)).toBe("ready");
 	expect(bucketFor(items[2].pr)).toBe("draft");
-	expect(numbers(derivePullRequests(items, {}))).toEqual([9, 10, 12, 11]);
+	expect(numbers(derivePullRequests(items, {}))).toEqual([9, 11, 10, 12]);
 });
 
 test("lifecycle precedence reflects current projected evidence, including regressions", () => {
@@ -1042,6 +1089,7 @@ test("local OpenSpec evidence keeps all exact matches and suppresses branch fall
 });
 
 test("sort modes use deterministic direction, null-last fallbacks, and safe preferences", () => {
+	expect(sortPreference(null)).toEqual({ mode: "closest", direction: "asc" });
 	const sortable = [
 		{
 			pr: {
@@ -1087,7 +1135,7 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 				sort: { mode: "closest", direction: "desc" },
 			}),
 		),
-	).toEqual([3, 4, 1, 2]);
+	).toEqual([4, 3, 2, 1]);
 	expect(
 		numbers(
 			derivePullRequests(sortable, {
@@ -1117,15 +1165,15 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 		),
 	).toEqual([4, 2, 1, 3]);
 	expect(sortPreference('{"mode":"number","direction":"desc"}')).toEqual({
-		mode: "opened",
+		mode: "closest",
 		direction: "asc",
 	});
 	expect(sortPreference("not JSON")).toEqual({
-		mode: "opened",
+		mode: "closest",
 		direction: "asc",
 	});
 	expect(sortPreference('{"mode":"codex","direction":"asc"}')).toEqual({
-		mode: "opened",
+		mode: "closest",
 		direction: "asc",
 	});
 	expect(
@@ -1146,4 +1194,21 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 			{},
 		).map(({ pr }) => pr.full_name),
 	).toEqual(["ds9/alpha", "ds9/zeta"]);
+});
+
+test("closest-to-merge ranks lifecycle stage before blockers", () => {
+	const sorted = derivePullRequests(
+		[
+			{
+				pr: { ...lifecycleReady, number: 1, full_name: "ds9/ops", draft: true },
+				spec: null,
+			},
+			{
+				pr: { ...lifecycleReady, number: 2, full_name: "ds9/ops" },
+				spec: null,
+			},
+		],
+		{ sort: { mode: "closest", direction: "asc" } },
+	);
+	expect(sorted.map((item) => item.pr.number)).toEqual([2, 1]);
 });

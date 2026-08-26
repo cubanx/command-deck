@@ -7,6 +7,49 @@ export { type OpenSpecGate, openSpecGate } from "#/openspec-gate";
 export const changedTaskPaths = (paths: string[]) =>
 	paths.filter((path) => /^openspec\/changes\/[^/]+\/tasks\.md$/.test(path));
 
+const openSpecSlug = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export type OpenSpecDeclaration = {
+	state: "absent" | "empty" | "declared" | "invalid";
+	slugs: string[];
+};
+
+export function parseOpenSpecDeclaration(body: unknown): OpenSpecDeclaration {
+	if (typeof body !== "string") return { state: "absent", slugs: [] };
+	const lines = body.split(/\r?\n/);
+	const headings = lines
+		.map((line, index) => ({ line, index }))
+		.filter(({ line }) => /^##\s+OpenSpecs\s*$/.test(line));
+	if (!headings.length) return { state: "absent", slugs: [] };
+	if (headings.length !== 1) return { state: "invalid", slugs: [] };
+	const slugs: string[] = [];
+	for (let index = headings[0]!.index + 1; index < lines.length; index++) {
+		const line = lines[index]!;
+		if (/^#{1,6}(?:\s|$)/.test(line)) break;
+		if (!line.trim()) continue;
+		const bullet = line.match(
+			/^\s*[-*+]\s+(?:`([A-Za-z0-9][A-Za-z0-9._-]*)`|([A-Za-z0-9][A-Za-z0-9._-]*))\s*$/,
+		);
+		const slug = bullet?.[1] ?? bullet?.[2];
+		if (!slug || !openSpecSlug.test(slug) || slugs.includes(slug))
+			return { state: "invalid", slugs: [] };
+		slugs.push(slug);
+	}
+	return slugs.length
+		? { state: "declared", slugs: slugs.sort() }
+		: { state: "empty", slugs: [] };
+}
+
+export const detectedOpenSpecSlugs = (paths: ReadonlyArray<string>) =>
+	[
+		...new Set(
+			paths
+				.map((path) => path.match(/^openspec\/changes\/([^/]+)\//)?.[1])
+				.filter((slug): slug is string =>
+					Boolean(slug && slug !== "archive" && openSpecSlug.test(slug)),
+				),
+		),
+	].sort();
+
 export function parseTasks(content: string) {
 	const groups: Array<{
 		title: string;
@@ -51,13 +94,14 @@ export async function projectOpenSpec(
 		accountLogin: string;
 		repositoryId: string;
 		path: string;
+		changeName?: string;
 		content?: string;
 		deleted?: boolean;
 		sha: string;
 		sourceRef?: string;
 	},
 ) {
-	const changeName = input.path.split("/")[2];
+	const changeName = input.changeName ?? input.path.split("/")[2];
 	if (!changeName) throw new Error("invalid OpenSpec tasks path");
 	if (input.deleted) {
 		const users = await db.users

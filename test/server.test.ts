@@ -952,7 +952,11 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 					return Response.json({
 						repositories: [{ id: 2, full_name: "cubanx/defiant" }],
 					});
-				if (url.includes("/pulls"))
+				if (url.includes("/pulls/1/files"))
+					return Response.json([
+						{ filename: "openspec/changes/repair-defiant/tasks.md" },
+					]);
+				if (url.includes("/pulls?"))
 					return Response.json([
 						{
 							number: 1,
@@ -960,6 +964,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 							user: { login: "kira" },
 							state: "open",
 							head: { sha: "a".repeat(40) },
+							body: "## OpenSpecs\n- repair-defiant",
 						},
 					]);
 				if (url.includes("/deployments")) return Response.json([]);
@@ -979,8 +984,6 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 						);
 					return new Response("## 1. Repair the defiant");
 				}
-				if (url.includes("contents/openspec/changes"))
-					return Response.json([{ name: "repair-defiant", type: "dir" }]);
 				throw new Error(`unexpected ${url}`);
 			};
 		});
@@ -1313,7 +1316,11 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 		await mutateUser(db, "u", (user) => {
 			const repository = user.installations[0]?.repositories[0];
 			if (!repository) throw new Error("merge repository missing");
-			repository.openSpecs = [
+			const pullRequest = repository.pullRequests[0];
+			if (!pullRequest) throw new Error("merge pull request missing");
+			pullRequest.labels = [];
+			pullRequest.open_spec_declaration = "declared";
+			const openSpecs = [
 				{
 					change_name: "ready-to-merge",
 					completed: 2,
@@ -1327,6 +1334,8 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 					source_commit: "a".repeat(40),
 				},
 			];
+			pullRequest.open_specs = openSpecs;
+			pullRequest.open_spec = openSpecs[0];
 		});
 		expect((await post(incomplete)).status).toBe(409);
 		expect(mutations).toBe(0);

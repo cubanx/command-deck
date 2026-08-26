@@ -70,7 +70,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 			selector === "[data-repository]"
 				? [repositoryCheckbox]
 				: selector === "[data-reconcile-all]"
-					? [element("#reconcile-all"), reconcileAllMenu]
+					? [reconcileAllMenu]
 					: selector === "[data-reconcile-pr]"
 						? [reconcilePrDefiant, reconcilePrEnterprise]
 						: selector === "[data-reconcile-installation]"
@@ -398,9 +398,8 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(element("#app").innerHTML).toContain('aria-busy="true"');
 	expect(element("#app").innerHTML).toContain('class="reconciling"');
 	expect(element("#app").innerHTML).not.toContain("aria-pressed=");
-	expect(element("#app").innerHTML).toContain(
-		'id="reconcile-all" type="button" data-reconcile-all disabled>Reconcile all PRs</button>',
-	);
+	expect(element("#app").innerHTML).not.toContain('id="reconcile-all"');
+	expect(element("#app").innerHTML).toContain('id="reconcile-all-menu"');
 	expect(element("#app").innerHTML).toContain(
 		"data-reconcile-pr='{&quot;installationId&quot;:&quot;13&quot;,&quot;repositoryId&quot;:&quot;43&quot;,&quot;number&quot;:10}' disabled>Reconcile PR</button>",
 	);
@@ -414,13 +413,18 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		failedTargeted,
 		new Response(null, { status: 500 }),
 	);
+	expect(element("#app").innerHTML).toContain("Retry reconciliation</button>");
+	expect(element("#app").innerHTML).toContain(
+		"Reconciliation could not be completed. Retry.",
+	);
+	expect(element("#app").innerHTML).toContain('role="status"');
 	deferReconciliation = true;
-	const reconcile = element("#reconcile-all").listeners.get("click");
+	const reconcile = reconcileAllMenu.listeners.get("click");
 	expect(reconcile).toBeTypeOf("function");
 	const all = reconcile?.(new Event("click"));
-	expect(element("#app").innerHTML.match(/aria-busy="true"/g)).toHaveLength(4);
+	expect(element("#app").innerHTML.match(/aria-busy="true"/g)).toHaveLength(3);
 	expect(element("#app").innerHTML).toContain(
-		'id="reconcile-all" type="button" data-reconcile-all disabled aria-busy="true" class="reconciling">Reconciling…</button>',
+		'id="reconcile-all-menu" type="button" data-reconcile-all disabled aria-busy="true" class="reconciling">Reconciling…</button>',
 	);
 	await completeReconciliation(all);
 	expect(fetchCalls).toContain("/api/reconcile/pull-requests");
@@ -500,7 +504,7 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	);
 	await completeReconciliation(installation);
 	snapshot.repositories = [];
-	await element("#reconcile-all").listeners.get("click")?.(new Event("click"));
+	await reconcileAllMenu.listeners.get("click")?.(new Event("click"));
 	Object.defineProperty(globalThis, "location", {
 		configurable: true,
 		value: { pathname: "/configuration" },
