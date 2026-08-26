@@ -82,3 +82,31 @@ test("does not run before hours, after hours, or on weekends", async () => {
 		scheduler.stop();
 	}
 });
+
+test("logs a sanitized scheduler diagnostic", async () => {
+	const originalError = console.error,
+		logs: unknown[][] = [];
+	console.error = (...args: unknown[]) => logs.push(args);
+	try {
+		const scheduler = createWeekdayReconciliationScheduler({
+			now: () => new Date("2026-08-24T11:00:00Z"),
+			setTimeout: () => 1,
+			clearTimeout: () => {},
+			knownOpenPullRequests: async () => {
+				throw Object.assign(new Error("secret=must-not-escape"), {
+					name: "ProviderTimeout",
+				});
+			},
+			enqueue: () => {},
+		});
+		scheduler.start();
+		for (let count = 0; count < 3; count++) await Promise.resolve();
+		scheduler.stop();
+	} finally {
+		console.error = originalError;
+	}
+	expect(logs).toEqual([
+		["weekday reconciliation scheduling failed", "ProviderTimeout"],
+	]);
+	expect(JSON.stringify(logs)).not.toContain("must-not-escape");
+});

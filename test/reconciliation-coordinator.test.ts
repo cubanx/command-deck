@@ -95,6 +95,39 @@ test("preserves queued work after a failed reconciliation", async () => {
 	}
 });
 
+test("logs sanitized diagnostics for failed targeted and broad reconciliation", async () => {
+	vi.useFakeTimers();
+	const originalError = console.error,
+		logs: unknown[][] = [];
+	console.error = (...args: unknown[]) => logs.push(args);
+	try {
+		const failure = Object.assign(new Error("token=must-not-escape"), {
+			name: "ProviderTimeout",
+		});
+		const coordinator = createReconciliationCoordinator({
+			reconcilePullRequest: async () => {
+				throw failure;
+			},
+			reconcileInstallations: async () => {
+				throw failure;
+			},
+		});
+		coordinator.enqueue(target(7));
+		vi.advanceTimersByTime(250);
+		await flush();
+		coordinator.reconcileInstallations();
+		await flush();
+	} finally {
+		console.error = originalError;
+		vi.useRealTimers();
+	}
+	expect(logs).toEqual([
+		["reconciliation failed", "ProviderTimeout"],
+		["reconciliation failed", "ProviderTimeout"],
+	]);
+	expect(JSON.stringify(logs)).not.toContain("must-not-escape");
+});
+
 test("stops pending debounce timers", () => {
 	vi.useFakeTimers();
 	try {

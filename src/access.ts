@@ -371,7 +371,9 @@ export async function dashboardForUser(
 					needsAttention(pr) ||
 					Boolean(
 						correlatedOpenSpecs.some(
-							(item) => Number(item.completed) < Number(item.total),
+							(item) =>
+								item.pre_merge_ready !== true &&
+								Number(item.completed) < Number(item.total),
 						),
 					),
 			};

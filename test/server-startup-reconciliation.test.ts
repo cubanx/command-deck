@@ -69,6 +69,69 @@ test("starts one non-blocking broad repair after the inbox drain", async () =>
 		app.stop();
 	}));
 
+test("queues the startup-wide repair behind an active scoped reconciliation", async () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		let releaseScoped!: () => void;
+		let scopedStarted!: () => void;
+		let startupCompleted!: () => void;
+		const scoped = new Promise<void>((resolve) => (releaseScoped = resolve));
+		const started = new Promise<void>((resolve) => (scopedStarted = resolve));
+		const completed = new Promise<void>(
+			(resolve) => (startupCompleted = resolve),
+		);
+		const calls: Array<string[] | undefined> = [];
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fixture" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async (...args: any[]) => {
+					calls.push(args[3]);
+					if (calls.length === 1) {
+						scopedStarted();
+						await scoped;
+					}
+					await args[6]?.({
+						installationId: "9",
+						startedAt: new Date(),
+						result: { kind: "unchanged" },
+					});
+					if (calls.length === 2) startupCompleted();
+					return [];
+				},
+			},
+		);
+		try {
+			const session = await createSession(db, "u");
+			const manual = app.fetch(
+				new Request("http://local/api/reconcile", {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${session.token}`,
+						"content-type": "application/json",
+					},
+					body: JSON.stringify({ installationId: "9" }),
+				}),
+			);
+			await started;
+			await app.drain();
+			expect(calls).toEqual([["9"]]);
+			releaseScoped();
+			expect((await manual).status).toBe(200);
+			await completed;
+			expect(calls).toEqual([["9"], undefined]);
+			expect(
+				await db.reconciliationRuns
+					.find({}, { projection: { _id: 0, trigger: 1 } })
+					.toArray(),
+			).toEqual([{ trigger: "manual" }, { trigger: "startup" }]);
+		} finally {
+			app.stop();
+		}
+	}));
+
 test("startup repair refreshes bound users only after repairing missed close and open projections", async () =>
 	withDatabase(async (db) => {
 		for (const [id, installationId] of [

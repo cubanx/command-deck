@@ -1,5 +1,7 @@
 import { openSpecGate } from "#/openspec-gate";
 
+import { activeOpenSpecGroup } from "#/openspec-tasks";
+
 type SortMode = "opened" | "closest" | "updated" | "progress" | "repository";
 type SortDirection = "asc" | "desc";
 type SortPreference = { mode: SortMode; direction: SortDirection };
@@ -764,16 +766,12 @@ export const parseTasks = (content: string) => {
 		});
 	}
 	const tasks = groups.flatMap((group) => group.tasks);
-	const activeGroup = groups.find(
-		(group) =>
-			!group.title.includes("[post-merge]") &&
-			group.tasks.some((task) => !task.completed),
-	);
+	const activeGroup = activeOpenSpecGroup(groups);
 	return {
 		completed: tasks.filter((task) => task.completed).length,
 		total: tasks.length,
 		pre_merge_ready: !activeGroup,
-		active_group: activeGroup ?? null,
+		active_group: activeGroup,
 	};
 };
 const checkoutDatabase = () =>

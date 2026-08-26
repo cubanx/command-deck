@@ -304,6 +304,41 @@ test("local demo projections are deterministic and isolated", () =>
 		});
 	}));
 
+test("dashboard ignores post-merge-only OpenSpec work for attention", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "1", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]?.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{
+						number: 1,
+						author_login: "sisko",
+						state: "open",
+						open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
+					},
+					{
+						number: 2,
+						author_login: "sisko",
+						state: "open",
+						open_specs: [{ completed: 1, total: 2 }],
+					},
+				],
+				openSpecs: [],
+				deployments: [],
+			});
+		});
+		const pullRequests = await dashboardForUser(db, "u");
+		expect(
+			pullRequests.pullRequests.find((pr) => pr.number === 1)?.needs_attention,
+		).toBe(false);
+		expect(
+			pullRequests.pullRequests.find((pr) => pr.number === 2)?.needs_attention,
+		).toBe(true);
+	}));
+
 test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or ambiguous links", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");

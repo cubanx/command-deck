@@ -1292,7 +1292,8 @@ const createTargetedCoordinator = (options: ReconciliationOptions) =>
 
 const createBroadReconciler = (options: ReconciliationOptions) => {
 	let reconciling: Promise<"success" | "failed"> | undefined;
-	return async (
+	let startupPending = false;
+	const reconcile = async (
 		userId?: string,
 		trigger: "scheduled" | "webhook" | "startup" | "manual" = "manual",
 		scopedInstallationIds?: string[],
@@ -1305,7 +1306,11 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 		const appId = config.githubAppId;
 		const privateKey = config.githubAppPrivateKey;
 		if (!appId || !privateKey) return "failed";
-		if (reconciling) return "running";
+		if (reconciling) {
+			if (trigger === "startup" && !userId && !scopedInstallationIds)
+				startupPending = true;
+			return "running";
+		}
 		const requestCounts = new Map<string, number>();
 		let activeInstallationId: string | undefined;
 		const countingFetch = (...input: Parameters<typeof fetch>) => {
@@ -1391,9 +1396,16 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			const status = await work;
 			return status;
 		} finally {
-			if (reconciling === work) reconciling = undefined;
+			if (reconciling === work) {
+				reconciling = undefined;
+				if (startupPending) {
+					startupPending = false;
+					void reconcile(undefined, "startup");
+				}
+			}
 		}
 	};
+	return reconcile;
 };
 
 const knownOpenPullRequests = async (db: Db, initialized: Promise<unknown>) => {

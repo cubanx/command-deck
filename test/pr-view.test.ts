@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { parseTasks as parseOpenSpecTasks } from "#/openspec";
 import type { BrowserDirectoryHandle } from "#/web/app";
 import {
 	appearanceFor,
@@ -942,6 +943,25 @@ test("local checkout parsing retains only verified repository and OpenSpec evide
 			"## Helm\n- [x] Set course\n## Observe [post-merge]\n- [ ] Watch",
 		),
 	).toMatchObject({ completed: 1, total: 2, pre_merge_ready: true });
+	const activeTasks =
+		"## Build\n- [x] Implement\n- [ ] Verify\n\n## Observe [post-merge]\n- [ ] Watch";
+	expect(parseTasks(activeTasks)).toMatchObject({
+		pre_merge_ready: false,
+		active_group: { title: "Build" },
+	});
+	expect(parseOpenSpecTasks(activeTasks)).toMatchObject({
+		preMergeReady: false,
+		activeGroup: { title: "Build" },
+	});
+	const postMergeOnlyTasks = "## Observe [post-merge]\n- [ ] Watch";
+	expect(parseTasks(postMergeOnlyTasks)).toMatchObject({
+		pre_merge_ready: true,
+		active_group: null,
+	});
+	expect(parseOpenSpecTasks(postMergeOnlyTasks)).toMatchObject({
+		preMergeReady: true,
+		activeGroup: null,
+	});
 	expect(await readRepositoryCheckout(repository, handle)).toBe("Resolved");
 	const pullRequest = {
 		installation_id: "12",

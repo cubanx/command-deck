@@ -137,7 +137,13 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		});
 		expect(
 			(await dashboardForUser(db, "u")).pullRequests[0]?.open_specs,
-		).toMatchObject([{ change_name: "alpha" }, { change_name: "zeta" }]);
+		).toMatchObject([
+			{
+				change_name: "alpha",
+				source_url: `https://github.com/ds9/ops/blob/${"a".repeat(40)}/openspec/changes/alpha/tasks.md`,
+			},
+			{ change_name: "zeta" },
+		]);
 		expect(
 			(await dashboardForUser(db, "u")).pullRequests[0]?.detected_open_specs,
 		).toEqual(["alpha", "zeta"]);
@@ -214,6 +220,119 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 			},
 		]);
 		expect(JSON.stringify(failures)).not.toContain("must-not-escape");
+	}));
+
+test("targeted repair requires terminal provider evidence for success", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [],
+			openSpecs: [],
+			deployments: [],
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		for (const [number, action, context, expected] of [
+			[
+				1,
+				{ status: "completed", conclusion: "failure" },
+				{ name: "Validate", status: "COMPLETED", conclusion: "FAILURE" },
+				"failure",
+			],
+			[
+				2,
+				{ status: "completed", conclusion: "success" },
+				{ name: "Validate", status: "COMPLETED", conclusion: "SUCCESS" },
+				"success",
+			],
+			[
+				3,
+				{ status: "queued", conclusion: null },
+				{ name: "Validate", status: "IN_PROGRESS", conclusion: null },
+				"pending",
+			],
+			[
+				4,
+				{ status: "completed", conclusion: null },
+				{ name: "Validate", status: "COMPLETED", conclusion: null },
+				"unknown",
+			],
+			[
+				5,
+				{ status: "completed", conclusion: "startup_failure" },
+				{ context: "Validate", state: "ERROR" },
+				"failure",
+			],
+			[
+				6,
+				{ status: "queued", conclusion: null },
+				{ context: "Validate", state: "EXPECTED" },
+				"pending",
+			],
+			[7, undefined, undefined, "unknown"],
+		] as const) {
+			const result = await reconcilePullRequest(db, {
+				installationId: "9",
+				repositoryId: "2",
+				number,
+				token: "token",
+				fetcher: async (url) => {
+					const value = String(url);
+					if (value.endsWith("/graphql"))
+						return Response.json({
+							data: {
+								repository: {
+									pullRequest: {
+										state: "OPEN",
+										merged: false,
+										isDraft: false,
+										createdAt: "2026-08-20T12:00:00Z",
+										updatedAt: "2026-08-24T12:00:00Z",
+										title: "Terminal evidence",
+										body: "",
+										url: `https://github.com/ds9/ops/pull/${number}`,
+										headRefName: `ops/${number}`,
+										headRefOid: "a".repeat(40),
+										mergeable: "MERGEABLE",
+										reviewDecision: null,
+										labels: { nodes: [], pageInfo: { hasNextPage: false } },
+										reviewRequests: { totalCount: 0 },
+										reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+										reviewThreads: {
+											nodes: [],
+											pageInfo: { hasNextPage: false },
+										},
+										statusCheckRollup: {
+											contexts: {
+												nodes: context ? [context] : [],
+												pageInfo: { hasNextPage: false },
+											},
+										},
+									},
+								},
+							},
+						});
+					if (value.includes("actions/runs"))
+						return Response.json({ workflow_runs: action ? [action] : [] });
+					if (value.includes(`/pulls/${number}/files`))
+						return Response.json([]);
+					throw new Error(`unexpected targeted request ${value}`);
+				},
+			});
+			expect(result.kind).toBe("changed");
+			const pullRequest = (
+				await db.users.findOne({ _id: "u" })
+			)?.installations[0]?.repositories[0]?.pullRequests.find(
+				(item) => item.number === number,
+			);
+			expect(pullRequest).toMatchObject({
+				workflow_state: expected,
+				checks_state: expected,
+			});
+		}
 	}));
 
 test("targeted repair fails closed when the preserved repository policy is stale", () =>
@@ -393,8 +512,22 @@ test("targeted repair paginates lifecycle and exact-head Actions evidence", () =
 
 test("installation bootstrap projects ruleset and classic required checks", () =>
 	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "9", "cubanx");
+		for (const [id, openedAt] of [
+			["u1", "2026-08-20T12:00:00Z"],
+			["u2", "2026-08-19T12:00:00Z"],
+		] as const) {
+			await upsertIdentity(db, id, "sisko");
+			await bindInstallation(db, id, "9", "cubanx");
+			const user = await db.users.findOne({ _id: id });
+			user?.installations[0]?.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [{ number: 7, opened_at: openedAt }],
+				openSpecs: [],
+				deployments: [],
+			});
+			await db.users.replaceOne({ _id: id }, user!);
+		}
 		const result = await bootstrapInstallation(
 			db,
 			"9",
@@ -431,7 +564,26 @@ test("installation bootstrap projects ruleset and classic required checks", () =
 							checks: [{ context: "Docker Build", app_id: 7 }],
 						},
 					});
-				if (value.includes("/pulls?")) return Response.json([]);
+				if (value.includes("/pulls?"))
+					return Response.json([
+						{
+							number: 7,
+							title: "Keep station online",
+							state: "open",
+							user: { login: "sisko" },
+							head: { ref: "ops/keep", sha: "a".repeat(40) },
+							updated_at: "2026-08-24T12:00:00Z",
+						},
+						{
+							number: 8,
+							title: "Open the wormhole",
+							state: "open",
+							user: { login: "sisko" },
+							head: { ref: "ops/wormhole", sha: "b".repeat(40) },
+							created_at: "2026-08-21T12:00:00Z",
+							updated_at: "2026-08-24T12:00:00Z",
+						},
+					]);
 				if (value.includes("/deployments")) return Response.json([]);
 				if (value.includes("/pulls/") && value.includes("/files"))
 					return Response.json([]);
@@ -441,7 +593,7 @@ test("installation bootstrap projects ruleset and classic required checks", () =
 		);
 		expect(result.kind).toBe("changed");
 		expect(
-			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+			(await db.users.findOne({ _id: "u1" }))?.installations[0]?.repositories[0]
 				?.policy,
 		).toMatchObject({
 			required_checks: expect.arrayContaining([
@@ -449,6 +601,20 @@ test("installation bootstrap projects ruleset and classic required checks", () =
 				{ context: "Docker Build", integration_id: "7" },
 			]),
 		});
+		for (const [id, openedAt] of [
+			["u1", "2026-08-20T12:00:00Z"],
+			["u2", "2026-08-19T12:00:00Z"],
+		] as const) {
+			const pullRequests =
+				(await db.users.findOne({ _id: id }))?.installations[0]?.repositories[0]
+					?.pullRequests ?? [];
+			expect(pullRequests.find((pr) => pr.number === 7)?.opened_at).toBe(
+				openedAt,
+			);
+			expect(pullRequests.find((pr) => pr.number === 8)?.opened_at).toBe(
+				"2026-08-21T12:00:00Z",
+			);
+		}
 	}));
 
 test("failed policy refresh preserves the prior policy as stale", () =>
@@ -1446,7 +1612,10 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 			expect.arrayContaining([
 				expect.objectContaining({
 					number: 8,
-					open_spec: expect.objectContaining({ source_commit: newerSha }),
+					open_spec: expect.objectContaining({
+						source_commit: newerSha,
+						source_url: `https://github.com/ds9/ops/blob/${newerSha}/openspec/changes/capture-wolf-359/tasks.md`,
+					}),
 				}),
 				expect.objectContaining({ number: 1, open_spec: null }),
 				expect.objectContaining({ number: 7, open_spec: null }),

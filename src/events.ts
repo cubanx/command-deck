@@ -147,6 +147,7 @@ type GitHubPayload = {
 		merge_commit_sha?: unknown;
 		merged_at?: unknown;
 		merged?: unknown;
+		created_at?: unknown;
 		updated_at?: unknown;
 	};
 	check_run?: {
@@ -308,6 +309,8 @@ const projectPullRequest = (
 		author_login: pr.user?.login,
 		state: pr.state,
 		draft: pr.draft ? 1 : 0,
+		opened_at:
+			typeof pr.created_at === "string" ? pr.created_at : previous?.opened_at,
 		head_ref: headRef,
 		head_sha:
 			typeof pr.head?.sha === "string" && /^[0-9a-f]{40}$/i.test(pr.head.sha)

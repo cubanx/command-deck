@@ -87,7 +87,14 @@ export type ReadResult =
 			repository?: string;
 			status?: number;
 	  };
-
+const mergePullRequestSnapshot = (
+	old: PullRequest | undefined,
+	next: PullRequest,
+): PullRequest => ({
+	...old,
+	...next,
+	opened_at: next.opened_at ?? old?.opened_at,
+});
 const projectedPullRequestCounts = (
 	previousRepositories: Repository[],
 	snapshots: Repository[],
@@ -105,7 +112,10 @@ const projectedPullRequestCounts = (
 				(item) => item.number === pr.number,
 			);
 			counts.prCount++;
-			if (JSON.stringify(old) === JSON.stringify({ ...old, ...pr }))
+			if (
+				JSON.stringify(old) ===
+				JSON.stringify(mergePullRequestSnapshot(old, pr))
+			)
 				counts.unchangedPrCount++;
 			else counts.changedPrCount++;
 		}
@@ -132,8 +142,36 @@ const providerFailedState = (value: unknown) =>
 		"canceled",
 		"failed",
 		"failure",
+		"startup_failure",
 		"timed_out",
+		"error",
 	].includes(String(value).toLowerCase());
+const providerAggregateState = (
+	items: unknown[],
+	stateFor: (item: unknown) => unknown,
+) => {
+	if (!items.length) return "unknown";
+	let pending = false;
+	let unknown = false;
+	for (const item of items) {
+		const state = String(stateFor(item) ?? "").toLowerCase();
+		if (providerFailedState(state)) return "failure";
+		if (["success", "neutral", "skipped"].includes(state)) continue;
+		if (
+			[
+				"queued",
+				"in_progress",
+				"pending",
+				"requested",
+				"waiting",
+				"expected",
+			].includes(state)
+		)
+			pending = true;
+		else unknown = true;
+	}
+	return pending ? "pending" : unknown ? "unknown" : "success";
+};
 const optionalString = (value: unknown) =>
 	typeof value === "string" ? value : undefined;
 const base64url = (value: string | Buffer) =>
@@ -523,12 +561,21 @@ type PullRequestOpenSpecs = {
 const openSpecProjection = (
 	evidence: PullRequestOpenSpecs | undefined,
 	sourceRef?: unknown,
+	sourceRepository?: unknown,
 ) => {
+	const repository = optionalString(sourceRepository);
 	const open_specs = evidence?.tasks.map((task) => ({
 		change_name: task.changeName,
 		...parseTasks(task.content),
 		source_commit: task.sha,
 		source_ref: optionalString(sourceRef),
+		...(repository
+			? {
+					source_url: safeUrl(
+						`https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${encodeURIComponent(task.sha)}/${task.path.split("/").map(encodeURIComponent).join("/")}`,
+					),
+				}
+			: {}),
 	}));
 	return {
 		open_specs,
@@ -1178,17 +1225,19 @@ const applyOpenPullRequest = async (
 		changes_requested: pullRequest.reviewDecision === "CHANGES_REQUESTED",
 		repository_policy_loaded: Boolean(policy && !policy.stale),
 		required_checks: requiredChecks,
-		workflow_state: actions.some((run: any) =>
-			providerFailedState(run.conclusion ?? run.status),
-		)
-			? "failure"
-			: "success",
-		checks_state: contexts.some((context: any) =>
-			providerFailedState(context?.conclusion ?? context?.state),
-		)
-			? "failure"
-			: "success",
-		...openSpecProjection(openSpecEvidence, pullRequest.headRefName),
+		workflow_state: providerAggregateState(actions, (run) => {
+			const value = run as Record<string, unknown>;
+			return value.conclusion ?? value.status;
+		}),
+		checks_state: providerAggregateState(contexts, (context) => {
+			const value = context as Record<string, unknown>;
+			return value.conclusion ?? value.state ?? value.status;
+		}),
+		...openSpecProjection(
+			openSpecEvidence,
+			pullRequest.headRefName,
+			repository.full_name,
+		),
 	};
 	let changed = false;
 	await Promise.all(
@@ -1502,6 +1551,7 @@ export async function bootstrapInstallation(
 							state?: unknown;
 							draft?: unknown;
 							head?: { ref?: unknown; sha?: unknown };
+							created_at?: unknown;
 							updated_at?: unknown;
 							body?: unknown;
 						};
@@ -1513,10 +1563,11 @@ export async function bootstrapInstallation(
 							author_login: pr.user?.login,
 							state: pr.state,
 							draft: pr.draft ? 1 : 0,
+							opened_at: optionalString(pr.created_at),
 							head_ref: pr.head?.ref,
 							head_sha: pr.head?.sha,
 							updated_at: pr.updated_at,
-							...openSpecProjection(evidence, pr.head?.ref),
+							...openSpecProjection(evidence, pr.head?.ref, repo.full_name),
 						};
 					})
 				: [],
@@ -1582,7 +1633,7 @@ export async function bootstrapInstallation(
 								const old = previous?.pullRequests.find(
 									(item) => item.number === pr.number,
 								);
-								return { ...old, ...pr };
+								return mergePullRequestSnapshot(old, pr);
 							}),
 						openSpecs: snapshot.openSpecs,
 						deployments: snapshot.deployments.slice(0, 20),

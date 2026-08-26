@@ -76,7 +76,11 @@ export function createReconciliationCoordinator({
 	reconcileInstallations,
 	recordRun,
 	debounceMs = 250,
-	onError = () => console.error("reconciliation failed"),
+	onError = (error) =>
+		console.error(
+			"reconciliation failed",
+			error instanceof Error ? error.name : "unknown",
+		),
 }: CoordinatorDependencies) {
 	const installations = new Map<string, InstallationWork>();
 	let broadRequested = false;

@@ -387,6 +387,7 @@ const body = JSON.stringify({
 		state: "open",
 		draft: true,
 		head: { ref: "ops/keep", sha: "a".repeat(40) },
+		created_at: "2026-01-01T00:00:00Z",
 		updated_at: "2026-01-01",
 	},
 });
@@ -411,7 +412,24 @@ test("GitHub verifies, dedupes, fans out, and clears successful deliveries", () 
 		expect(
 			(await db.users.findOne({ _id: "u1" }))?.installations[0]?.repositories[0]
 				?.pullRequests[0],
-		).toMatchObject({ title: "Keep station online", draft: 1 });
+		).toMatchObject({
+			title: "Keep station online",
+			draft: 1,
+			opened_at: "2026-01-01T00:00:00Z",
+		});
+		const withoutCreatedAt = JSON.parse(body);
+		delete withoutCreatedAt.pull_request.created_at;
+		await acceptGitHubDelivery(
+			db,
+			"d2",
+			"pull_request",
+			JSON.stringify(withoutCreatedAt),
+		);
+		await drainInbox(db);
+		expect(
+			(await db.users.findOne({ _id: "u1" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0]?.opened_at,
+		).toBe("2026-01-01T00:00:00Z");
 		expect(
 			(await db.inboxDeliveries.findOne({ _id: "github:d1" }))?.payload,
 		).toBeUndefined();

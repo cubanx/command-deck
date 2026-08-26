@@ -67,7 +67,12 @@ export function createWeekdayReconciliationScheduler({
 	const run = () =>
 		void knownOpenPullRequests()
 			.then((targets) => targets.forEach(enqueue))
-			.catch(() => console.error("weekday reconciliation scheduling failed"));
+			.catch((error) =>
+				console.error(
+					"weekday reconciliation scheduling failed",
+					error instanceof Error ? error.name : "unknown",
+				),
+			);
 	const schedule = () => {
 		if (stopped) return;
 		const current = now();

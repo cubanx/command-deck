@@ -1,6 +1,7 @@
 import type { Db } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
+import { activeOpenSpecGroup } from "#/openspec-tasks";
 
 export { type OpenSpecGate, openSpecGate } from "#/openspec-gate";
 
@@ -75,16 +76,12 @@ export function parseTasks(content: string) {
 		});
 	}
 	const tasks = groups.flatMap((group) => group.tasks);
-	const activeGroup = groups.find(
-		(group) =>
-			!group.title.includes("[post-merge]") &&
-			group.tasks.some((task) => !task.completed),
-	);
+	const activeGroup = activeOpenSpecGroup(groups);
 	return {
 		completed: tasks.filter((task) => task.completed).length,
 		total: tasks.length,
 		preMergeReady: !activeGroup,
-		activeGroup: activeGroup ?? null,
+		activeGroup,
 	};
 }
 export async function projectOpenSpec(
