@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 
 class FakeElement {
+	id = "";
 	dataset: Record<string, string> = {};
 	innerHTML = "";
 	style: Record<string, string> = {};
@@ -16,6 +17,7 @@ class FakeElement {
 
 	focus() {
 		this.focusCount += 1;
+		this.listeners.get("focus")?.(new Event("focus"));
 	}
 	setSelectionRange() {}
 	matches() {
@@ -35,7 +37,26 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	statusTrigger.dataset.statusDetail = "12:42:9";
 	const deploymentTrigger = new FakeElement();
 	deploymentTrigger.dataset.statusDetail = "deployments";
+	const reconcileAllMenu = new FakeElement();
+	const reconcilePrDefiant = new FakeElement();
+	reconcilePrDefiant.id = "reconcile-pr-12-42-9";
+	reconcilePrDefiant.dataset.reconcilePr = JSON.stringify({
+		installationId: "12",
+		repositoryId: "42",
+		number: 9,
+	});
+	const reconcilePrEnterprise = new FakeElement();
+	reconcilePrEnterprise.id = "reconcile-pr-13-43-10";
+	reconcilePrEnterprise.dataset.reconcilePr = JSON.stringify({
+		installationId: "13",
+		repositoryId: "43",
+		number: 10,
+	});
+	const reconcileInstallation = new FakeElement();
+	reconcileInstallation.id = "reconcile-installation-12";
+	reconcileInstallation.dataset.reconcileInstallation = "12";
 	const element = (selector: string) => {
+		if (selector === '[data-status-detail="12:42:9"]') return statusTrigger;
 		const existing = elements.get(selector);
 		if (existing) return existing;
 		const created = new FakeElement();
@@ -48,9 +69,15 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		querySelectorAll: (selector: string) =>
 			selector === "[data-repository]"
 				? [repositoryCheckbox]
-				: selector === "[data-status-detail]"
-					? [statusTrigger, deploymentTrigger]
-					: [],
+				: selector === "[data-reconcile-all]"
+					? [reconcileAllMenu]
+					: selector === "[data-reconcile-pr]"
+						? [reconcilePrDefiant, reconcilePrEnterprise]
+						: selector === "[data-reconcile-installation]"
+							? [reconcileInstallation]
+							: selector === "[data-status-detail]"
+								? [statusTrigger, deploymentTrigger]
+								: [],
 		getElementById: (id: string) => element(`#${id}`),
 		createElement: () => new FakeElement(),
 		addEventListener: (name: string, listener: (event: Event) => unknown) =>
@@ -102,6 +129,34 @@ test("the compiled browser runtime renders and reconciles with native controls",
 						],
 					},
 				},
+				open_specs: [
+					{
+						change_name: "prepare-defiant",
+						completed: 1,
+						total: 2,
+						source_url: "https://github.com/ds9/defiant/issues/9",
+						active_group: {
+							title: "Readiness",
+							tasks: [
+								{ text: "Calibrate the phaser array", completed: true },
+								{ text: "Run the readiness drill", completed: false },
+							],
+						},
+					},
+					{ change_name: "warp-core", completed: 2, total: 2 },
+				],
+			},
+			{
+				installation_id: "13",
+				repository_id: "43",
+				installation_pull_requests: "read",
+				full_name: "ds9/enterprise",
+				number: 10,
+				title: "Chart the Gamma Quadrant",
+				url: "https://github.com/ds9/enterprise/pull/10",
+				state: "open",
+				mergeable: "clean",
+				head_sha: "b".repeat(40),
 			},
 		],
 		deployments: [
@@ -110,7 +165,11 @@ test("the compiled browser runtime renders and reconciles with native controls",
 				full_name: "ds9/defiant",
 				ref: "main",
 				sha: "a".repeat(40),
-				state: "success",
+				state: "error",
+				updated_at: "2030-01-02T02:00:00Z",
+				pull_request_number: 9,
+				pull_request_title: "Prepare the Defiant",
+				pull_request_url: "https://github.com/ds9/defiant/pull/9",
 				target_url: "https://defiant.example/deployments/9",
 				log_url: "https://defiant.example/logs/9",
 			},
@@ -123,9 +182,20 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		],
 	};
 	const fetchCalls: string[] = [];
-	const fetch = async (input: string) => {
+	const fetchRequests: Array<{ input: string; init?: RequestInit }> = [];
+	let resolveReconciliation: ((response?: Response) => void) | undefined;
+	let deferReconciliation = false;
+	let refresh: (() => unknown) | undefined;
+	const fetch = async (input: string, init?: RequestInit) => {
 		fetchCalls.push(input);
-		return input === "/api/reconcile"
+		fetchRequests.push({ input, init });
+		if (deferReconciliation && input.startsWith("/api/reconcile"))
+			return await new Promise<Response>((resolve) => {
+				resolveReconciliation = (
+					response = new Response(JSON.stringify({ status: "success" })),
+				) => resolve(response);
+			});
+		return input === "/api/reconcile/pull-requests"
 			? new Response(JSON.stringify({ status: "success" }))
 			: new Response(JSON.stringify(snapshot));
 	};
@@ -146,19 +216,37 @@ test("the compiled browser runtime renders and reconciles with native controls",
 			configurable: true,
 			value: Notification,
 		},
+		confirm: { configurable: true, value: () => true },
 		fetch: { configurable: true, value: fetch },
 		EventSource: {
 			configurable: true,
 			value: class {
-				addEventListener() {}
+				addEventListener(name: string, listener: () => unknown) {
+					if (name === "refresh") refresh = listener;
+				}
 			},
 		},
 	});
 	const app = await import("#/web/app");
 	await new Promise((resolve) => setTimeout(resolve, 0));
+	const snapshotsBeforeRefresh = fetchCalls.filter(
+		(call) => call === "/api/snapshot",
+	).length;
+	refresh?.();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	expect(fetchCalls.filter((call) => call === "/api/snapshot").length).toBe(
+		snapshotsBeforeRefresh + 1,
+	);
+	await new Promise((resolve) => setTimeout(resolve, 25));
+	expect(fetchCalls.filter((call) => call === "/api/snapshot").length).toBe(
+		snapshotsBeforeRefresh + 1,
+	);
 	expect(element("#app").innerHTML).toContain("Prepare the Defiant");
 	expect(element("#app").innerHTML).toContain(
 		"OpenSpec · prepare-defiant · 1/2 · Readiness",
+	);
+	expect(element("#app").innerHTML).toContain(
+		"OpenSpec · warp-core · 2/2 · Complete",
 	);
 	expect(element("#app").innerHTML).toContain('<details class="openspec">');
 	expect(element("#app").innerHTML).toContain("Calibrate the phaser array");
@@ -166,7 +254,9 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(element("#app").innerHTML).toContain("Open tasks");
 	expect(element("#app").innerHTML).toContain('class="deployment-summary"');
 	expect(element("#app").innerHTML).toContain("Latest deployment");
-	expect(element("#app").innerHTML).toContain(
+	expect(element("#app").innerHTML).toContain("#9 · Prepare the Defiant");
+	expect(element("#app").innerHTML).toContain(">Failed<");
+	expect(element("#app").innerHTML).not.toContain(
 		`ds9/defiant · main · ${"a".repeat(40)}`,
 	);
 	expect(element("#app").innerHTML).not.toContain(" ·  · ");
@@ -174,6 +264,48 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		"GitHub deployments · last 48 hours",
 	);
 	expect(element("#app").innerHTML).not.toContain("deployment-9");
+	const summary = app.deploymentSummaryMarkup([
+		{
+			full_name: "ds9/defiant",
+			sha: "b".repeat(40),
+			state: "pending",
+			updated_at: "2030-01-02T03:00:00Z",
+		},
+		{
+			full_name: "ds9/defiant",
+			sha: "c".repeat(40),
+			state: "error",
+			updated_at: "2030-01-02T02:00:00Z",
+		},
+		{
+			full_name: "ds9/defiant",
+			sha: "e".repeat(40),
+			state: "success",
+			updated_at: "2030-01-02T01:00:00Z",
+		},
+	]);
+	expect(summary).toContain(
+		`href="https://github.com/ds9/defiant/commit/${"c".repeat(40)}"`,
+	);
+	expect(summary).toContain("c".repeat(7));
+	expect(summary).toContain(">Failed<");
+	expect(summary).not.toContain(">ds9/defiant<");
+	expect(
+		app.deploymentSummaryMarkup([
+			{
+				full_name: "ds9/defiant",
+				sha: "d".repeat(40),
+				state: "failure",
+				updated_at: "2030-01-02T04:00:00Z",
+			},
+		]),
+	).toContain(">Failed<");
+	expect(
+		app.deploymentSummaryMarkup([
+			{ state: "inactive", updated_at: "2030-01-02T03:00:00Z" },
+			{ state: "success", updated_at: "not a date" },
+		]),
+	).toContain("No completed deployment in the last 48 hours");
 	expect(element("#app").innerHTML).toContain("lifecycle-rail");
 	expect(element("#app").innerHTML).toContain("lifecycle-pills");
 	expect(element("#app").innerHTML).not.toContain(
@@ -193,6 +325,9 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(element("#app").innerHTML).not.toContain("Battle readiness");
 	statusTrigger.listeners.get("focus")?.(new Event("focus"));
 	expect(element('[data-status-detail="12:42:9"]').focusCount).toBe(1);
+	expect(element("#app").innerHTML).toContain(
+		"OpenSpec · warp-core · 2/2 · Complete",
+	);
 	statusTrigger.listeners.get("click")?.(new Event("click"));
 	expect(element('[data-status-detail="12:42:9"]').focusCount).toBe(2);
 	statusTrigger.listeners.get("click")?.(new Event("click"));
@@ -240,10 +375,59 @@ test("the compiled browser runtime renders and reconciles with native controls",
 	expect(element("#app").innerHTML).not.toContain(
 		'aria-label="Deployment detail"',
 	);
-	const reconcile = element("#reconcile").listeners.get("click");
+	const completeReconciliation = async (
+		request: unknown,
+		response?: Response,
+	) => {
+		resolveReconciliation?.(response);
+		await request;
+		deferReconciliation = false;
+		expect(element("#app").innerHTML).not.toContain('aria-busy="true"');
+	};
+	repositoryCheckbox.dataset.repository = "ds9/enterprise";
+	repositoryCheckbox.checked = true;
+	repositoryCheckbox.listeners.get("change")?.(new Event("change"));
+	deferReconciliation = true;
+	const targeted = reconcilePrDefiant.listeners.get("click")?.(
+		new Event("click"),
+	);
+	expect(element("#app").innerHTML).toContain(
+		'id="reconcile-pr-12-42-9" type="button" data-reconcile-pr=',
+	);
+	expect(element("#app").innerHTML).toContain("Reconciling…</button>");
+	expect(element("#app").innerHTML).toContain('aria-busy="true"');
+	expect(element("#app").innerHTML).toContain('class="reconciling"');
+	expect(element("#app").innerHTML).not.toContain("aria-pressed=");
+	expect(element("#app").innerHTML).not.toContain('id="reconcile-all"');
+	expect(element("#app").innerHTML).toContain('id="reconcile-all-menu"');
+	expect(element("#app").innerHTML).toContain(
+		"data-reconcile-pr='{&quot;installationId&quot;:&quot;13&quot;,&quot;repositoryId&quot;:&quot;43&quot;,&quot;number&quot;:10}' disabled>Reconcile PR</button>",
+	);
+	await completeReconciliation(targeted);
+	deferReconciliation = true;
+	const failedTargeted = reconcilePrDefiant.listeners.get("click")?.(
+		new Event("click"),
+	);
+	expect(element("#app").innerHTML).toContain('aria-busy="true"');
+	await completeReconciliation(
+		failedTargeted,
+		new Response(null, { status: 500 }),
+	);
+	expect(element("#app").innerHTML).toContain("Retry reconciliation</button>");
+	expect(element("#app").innerHTML).toContain(
+		"Reconciliation could not be completed. Retry.",
+	);
+	expect(element("#app").innerHTML).toContain('role="status"');
+	deferReconciliation = true;
+	const reconcile = reconcileAllMenu.listeners.get("click");
 	expect(reconcile).toBeTypeOf("function");
-	await reconcile?.(new Event("click"));
-	expect(fetchCalls).toContain("/api/reconcile");
+	const all = reconcile?.(new Event("click"));
+	expect(element("#app").innerHTML.match(/aria-busy="true"/g)).toHaveLength(3);
+	expect(element("#app").innerHTML).toContain(
+		'id="reconcile-all-menu" type="button" data-reconcile-all disabled aria-busy="true" class="reconciling">Reconciling…</button>',
+	);
+	await completeReconciliation(all);
+	expect(fetchCalls).toContain("/api/reconcile/pull-requests");
 	const request = <Result>(result: Result) => {
 		const value: {
 			result: Result;
@@ -297,6 +481,52 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		'<td aria-live="polite">Resolved</td>',
 	);
 	expect(element("#app").innerHTML).toContain("Change checkout");
+	deferReconciliation = true;
+	const installation = reconcileInstallation.listeners.get("click")?.(
+		new Event("click"),
+	);
+	expect(element("#app").innerHTML).toContain(
+		'id="reconcile-installation-12" type="button" data-reconcile-installation="12" disabled aria-busy="true" class="reconciling">Reconciling…</button>',
+	);
+	Object.defineProperty(globalThis, "location", {
+		configurable: true,
+		value: { pathname: "/" },
+	});
+	statusTrigger.listeners.get("click")?.(new Event("click"));
+	expect(element("#app").innerHTML).toContain(
+		'id="reconcile-pr-12-42-9" type="button" data-reconcile-pr=',
+	);
+	expect(element("#app").innerHTML).toContain(
+		'aria-busy="true" class="reconciling">Reconciling…</button>',
+	);
+	expect(element("#app").innerHTML).toContain(
+		"data-reconcile-pr='{&quot;installationId&quot;:&quot;13&quot;,&quot;repositoryId&quot;:&quot;43&quot;,&quot;number&quot;:10}' disabled>Reconcile PR</button>",
+	);
+	await completeReconciliation(installation);
+	snapshot.repositories = [];
+	await reconcileAllMenu.listeners.get("click")?.(new Event("click"));
+	Object.defineProperty(globalThis, "location", {
+		configurable: true,
+		value: { pathname: "/configuration" },
+	});
+	delete reconcileInstallation.dataset.reconcileInstallation;
+	reconcileInstallation.id = "reconcile-installation";
+	statusTrigger.listeners.get("click")?.(new Event("click"));
+	deferReconciliation = true;
+	const fallbackInstallation = reconcileInstallation.listeners.get("click")?.(
+		new Event("click"),
+	);
+	expect(fetchRequests.at(-1)).toEqual({
+		input: "/api/reconcile",
+		init: { method: "POST" },
+	});
+	Object.defineProperty(globalThis, "location", {
+		configurable: true,
+		value: { pathname: "/" },
+	});
+	statusTrigger.listeners.get("click")?.(new Event("click"));
+	expect(element("#app").innerHTML.match(/aria-busy="true"/g)).toHaveLength(2);
+	await completeReconciliation(fallbackInstallation);
 	const keydown = element("document").listeners.get("keydown");
 	keydown?.({
 		key: "/",

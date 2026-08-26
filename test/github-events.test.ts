@@ -1,7 +1,6 @@
 import { createHmac } from "node:crypto";
 import { expect, test } from "vitest";
 import { bindInstallation, upsertIdentity } from "#/access";
-import { mutateUser } from "#/db";
 import {
 	acceptGitHubDelivery,
 	drainInbox,
@@ -9,11 +8,11 @@ import {
 } from "#/events";
 import { withDatabase } from "./mongo-support";
 
-test("malformed signed webhook bodies are ignored without an inbox row", () =>
+test("malformed webhook bodies are rejected without an inbox row", () =>
 	withDatabase(async (db) => {
 		expect(
 			await acceptGitHubDelivery(db, "bad-json", "pull_request", "{"),
-		).toBe(false);
+		).toEqual({ kind: "malformed" });
 		expect(await db.inboxDeliveries.countDocuments({})).toBe(0);
 	}));
 
@@ -59,14 +58,13 @@ test("GitHub close delivery without installation account projects an existing PR
 				"pull_request",
 				payload,
 			),
-		).toBe(true);
+		).toEqual({ kind: "accepted" });
 		expect(
 			await db.inboxDeliveries.findOne({
 				_id: "github:b669cef0-9fc4-11f1-9853-5f3952ffcaf7",
 			}),
 		).toMatchObject({
 			payload,
-			resolvedAccount: "Crisp-Inc",
 		});
 		await drainInbox(db);
 		expect(
@@ -75,6 +73,7 @@ test("GitHub close delivery without installation account projects an existing PR
 			}),
 		).toMatchObject({
 			status: "done",
+			resolvedAccount: "crisp-inc",
 		});
 		expect(
 			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
@@ -82,43 +81,28 @@ test("GitHub close delivery without installation account projects an existing PR
 		).toEqual([]);
 	}));
 
-test("GitHub delivery without installation account requires one approved binding", () =>
+test("GitHub delivery without installation account remains durable", () =>
 	withDatabase(async (db) => {
 		const payload = JSON.stringify({ installation: { id: 153423118 } });
 		expect(
 			await acceptGitHubDelivery(db, "unbound", "pull_request", payload),
-		).toBe(false);
+		).toEqual({ kind: "accepted" });
 		await upsertIdentity(db, "u1", "sisko");
 		await upsertIdentity(db, "u2", "kira");
 		await bindInstallation(db, "u1", "153423118", "Crisp-Inc");
 		await bindInstallation(db, "u2", "153423118", "cubanx");
 		expect(
 			await acceptGitHubDelivery(db, "ambiguous", "pull_request", payload),
-		).toBe(false);
-		await upsertIdentity(db, "u3", "odo");
-		await bindInstallation(db, "u3", "153423119", "Crisp-Inc");
-		await mutateUser(db, "u3", (user) => {
-			user.installations.push({
-				installationId: "153423119",
-				accountLogin: "ferengi",
-				boundAt: new Date(),
-				repositories: [],
-			});
-		});
+		).toEqual({ kind: "accepted" });
 		expect(
 			await acceptGitHubDelivery(
 				db,
 				"unapproved-conflict",
 				"pull_request",
-				JSON.stringify({
-					installation: {
-						id: 153423119,
-						account: { login: "Crisp-Inc" },
-					},
-				}),
+				payload,
 			),
-		).toBe(false);
-		expect(await db.inboxDeliveries.countDocuments({})).toBe(0);
+		).toEqual({ kind: "accepted" });
+		expect(await db.inboxDeliveries.countDocuments({})).toBe(3);
 	}));
 
 test("GitHub delivery without installation account fans out a shared approved account", () =>
@@ -141,13 +125,228 @@ test("GitHub delivery without installation account fans out a shared approved ac
 		expect(githubSignatureValid(payload, sign(payload), "secret")).toBe(true);
 		expect(
 			await acceptGitHubDelivery(db, "shared-account", "pull_request", payload),
-		).toBe(true);
+		).toEqual({ kind: "accepted" });
 		await drainInbox(db);
 		for (const userId of ["u1", "u2"])
 			expect(
 				(await db.users.findOne({ _id: userId }))?.installations[0]
 					?.repositories[0]?.pullRequests,
 			).toMatchObject([{ number: 187 }]);
+	}));
+
+test("verified account-less deliveries wait for one binding and project once", () =>
+	withDatabase(async (db) => {
+		const accountless = JSON.stringify({
+			installation: { id: 9 },
+			repository: { id: 2, full_name: "ds9/ops" },
+			pull_request: {
+				number: 7,
+				title: "Restore power",
+				state: "open",
+				user: { login: "sisko" },
+			},
+		});
+		expect(
+			await acceptGitHubDelivery(
+				db,
+				"accountless",
+				"pull_request",
+				accountless,
+			),
+		).toEqual({ kind: "accepted" });
+		let now = new Date("2030-01-01T00:00:00Z");
+		const waits: number[] = [];
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			async (ms) => {
+				waits.push(ms);
+				now = new Date(now.getTime() + ms);
+			},
+			() => now,
+		);
+		expect(waits).toEqual([1000, 2000]);
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:accountless" }),
+		).toMatchObject({
+			status: "pending_verification",
+			payload: accountless,
+			verificationReason: "missing_binding",
+		});
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			async () => {},
+			() => new Date("2030-01-02T00:00:00Z"),
+		);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests,
+		).toHaveLength(1);
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:accountless" }),
+		).toMatchObject({
+			status: "done",
+			resolvedBy: "projection",
+		});
+	}));
+
+test("ambiguous and conflicting bindings retain verified payloads", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await upsertIdentity(db, "kira", "kira");
+		await bindInstallation(db, "sisko", "9", "cubanx");
+		await bindInstallation(db, "kira", "9", "hudson-law");
+		const payload = JSON.stringify({
+			installation: { id: 9 },
+			repository: { id: 2 },
+			pull_request: { number: 1 },
+		});
+		await acceptGitHubDelivery(db, "ambiguous", "pull_request", payload);
+		let now = new Date("2030-01-01T00:00:00Z");
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			async (ms) => {
+				now = new Date(now.getTime() + ms);
+			},
+			() => now,
+		);
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:ambiguous" }),
+		).toMatchObject({
+			status: "pending_verification",
+			verificationReason: "ambiguous_binding",
+			payload,
+		});
+		await db.users.updateOne(
+			{ _id: "kira" },
+			{ $set: { "installations.0.accountLogin": "cubanx" } },
+		);
+		await acceptGitHubDelivery(
+			db,
+			"conflict",
+			"pull_request",
+			payload.replace('"id":9', '"id":9,"account":{"login":"hudson-law"}'),
+		);
+		now = new Date("2030-01-02T00:00:00Z");
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			async (ms) => {
+				now = new Date(now.getTime() + ms);
+			},
+			() => now,
+		);
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:conflict" }),
+		).toMatchObject({
+			status: "pending_verification",
+			verificationReason: "conflicting_account",
+		});
+	}));
+
+test("temporary verification lookup failure retains and later projects exactly once", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const payload = JSON.stringify({
+			installation: { id: 9, account: { login: "cubanx" } },
+			repository: { id: 2 },
+			pull_request: {
+				number: 8,
+				title: "Restore comms",
+				state: "open",
+				user: { login: "sisko" },
+			},
+		});
+		await acceptGitHubDelivery(db, "temporary", "pull_request", payload);
+		const users = db.users as typeof db.users & { find: typeof db.users.find };
+		const originalFind = users.find;
+		users.find = (() => {
+			throw new Error("temporary lookup failure");
+		}) as typeof users.find;
+		let now = new Date("2030-01-01T00:00:00Z");
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			async (ms) => {
+				now = new Date(now.getTime() + ms);
+			},
+			() => now,
+		);
+		users.find = originalFind;
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:temporary" }),
+		).toMatchObject({
+			status: "pending_verification",
+			payload,
+			verificationReason: "verification_unavailable",
+		});
+		now = new Date("2030-01-02T00:00:00Z");
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			async (ms) => {
+				now = new Date(now.getTime() + ms);
+			},
+			() => now,
+		);
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			async () => {},
+			() => new Date("2030-01-03T00:00:00Z"),
+		);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests,
+		).toHaveLength(1);
+	}));
+
+test("complete reconciliation repairs only attributable pull request and deployment deliveries", () =>
+	withDatabase(async (db) => {
+		const { markDeliveriesRepairedByReconciliation } = await import("#/events");
+		for (const [deliveryId, eventName] of [
+			["pr", "pull_request"],
+			["deploy", "deployment"],
+			["review", "pull_request_review"],
+		] as const)
+			await acceptGitHubDelivery(
+				db,
+				deliveryId,
+				eventName,
+				JSON.stringify({
+					installation: { id: 9 },
+					repository: { id: 2 },
+				}),
+			);
+		expect(await markDeliveriesRepairedByReconciliation(db, "9", ["2"])).toBe(
+			2,
+		);
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:pr" }),
+		).toMatchObject({
+			status: "done",
+			resolvedBy: "reconciliation",
+		});
+		expect(
+			(await db.inboxDeliveries.findOne({ _id: "github:pr" }))?.payload,
+		).toBeUndefined();
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:review" }),
+		).toMatchObject({
+			status: "pending_verification",
+		});
 	}));
 
 test("webhook author matching is case-insensitive", () =>
@@ -188,6 +387,7 @@ const body = JSON.stringify({
 		state: "open",
 		draft: true,
 		head: { ref: "ops/keep", sha: "a".repeat(40) },
+		created_at: "2026-01-01T00:00:00Z",
 		updated_at: "2026-01-01",
 	},
 });
@@ -202,20 +402,189 @@ test("GitHub verifies, dedupes, fans out, and clears successful deliveries", () 
 		await bindInstallation(db, "u2", "9", "cubanx");
 		expect(githubSignatureValid(body, sign(body), "secret")).toBe(true);
 		expect(githubSignatureValid(body, sign(body), "wrong")).toBe(false);
-		expect(await acceptGitHubDelivery(db, "d1", "pull_request", body)).toBe(
-			true,
-		);
-		expect(await acceptGitHubDelivery(db, "d1", "pull_request", body)).toBe(
-			false,
-		);
+		expect(await acceptGitHubDelivery(db, "d1", "pull_request", body)).toEqual({
+			kind: "accepted",
+		});
+		expect(await acceptGitHubDelivery(db, "d1", "pull_request", body)).toEqual({
+			kind: "duplicate",
+		});
 		expect(await drainInbox(db)).toEqual(["u1", "u2"]);
 		expect(
 			(await db.users.findOne({ _id: "u1" }))?.installations[0]?.repositories[0]
 				?.pullRequests[0],
-		).toMatchObject({ title: "Keep station online", draft: 1 });
+		).toMatchObject({
+			title: "Keep station online",
+			draft: 1,
+			opened_at: "2026-01-01T00:00:00Z",
+		});
+		const withoutCreatedAt = JSON.parse(body);
+		delete withoutCreatedAt.pull_request.created_at;
+		await acceptGitHubDelivery(
+			db,
+			"d2",
+			"pull_request",
+			JSON.stringify(withoutCreatedAt),
+		);
+		await drainInbox(db);
+		expect(
+			(await db.users.findOne({ _id: "u1" }))?.installations[0]?.repositories[0]
+				?.pullRequests[0]?.opened_at,
+		).toBe("2026-01-01T00:00:00Z");
 		expect(
 			(await db.inboxDeliveries.findOne({ _id: "github:d1" }))?.payload,
 		).toBeUndefined();
+	}));
+
+test("lifecycle hints enqueue only tracked open pull requests", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const targets: Array<{
+			installationId: string;
+			repositoryId: string;
+			number: number;
+		}> = [];
+		const drain = () =>
+			drainInbox(db, undefined, undefined, undefined, undefined, (target) =>
+				targets.push(target),
+			);
+		for (const [deliveryId, eventName, payload] of [
+			[
+				"opened",
+				"pull_request",
+				{ action: "opened", pull_request: JSON.parse(body).pull_request },
+			],
+			[
+				"synchronize",
+				"pull_request",
+				{ action: "synchronize", pull_request: JSON.parse(body).pull_request },
+			],
+			[
+				"reopened",
+				"pull_request",
+				{ action: "reopened", pull_request: JSON.parse(body).pull_request },
+			],
+			[
+				"review",
+				"pull_request_review",
+				{ pull_request: { number: 7 }, review: { state: "approved" } },
+			],
+			[
+				"review-comment",
+				"pull_request_review_comment",
+				{ pull_request: { number: 7 } },
+			],
+			[
+				"review-thread",
+				"pull_request_review_thread",
+				{ pull_request: { number: 7 }, action: "resolved" },
+			],
+			[
+				"check",
+				"check_run",
+				{
+					check_run: {
+						pull_requests: [{ number: 91 }, { number: 7 }],
+						check_suite: { head_sha: "a".repeat(40) },
+					},
+				},
+			],
+			[
+				"suite",
+				"check_suite",
+				{
+					check_suite: {
+						pull_requests: [{ number: 91 }, { number: 7 }],
+						head_sha: "a".repeat(40),
+					},
+				},
+			],
+			[
+				"workflow",
+				"workflow_run",
+				{
+					workflow_run: {
+						pull_requests: [{ number: 91 }, { number: 7 }],
+						head_sha: "a".repeat(40),
+					},
+				},
+			],
+			["status", "status", { sha: "a".repeat(40) }],
+		] as const) {
+			await acceptGitHubDelivery(
+				db,
+				deliveryId,
+				eventName,
+				JSON.stringify({
+					installation: { id: 9, account: { login: "cubanx" } },
+					repository: { id: 2 },
+					...payload,
+				}),
+			);
+		}
+		await drain();
+		expect(targets).toEqual(
+			Array.from({ length: 10 }, () => ({
+				installationId: "9",
+				repositoryId: "2",
+				number: 7,
+			})),
+		);
+		await acceptGitHubDelivery(
+			db,
+			"unknown",
+			"check_run",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				check_run: {
+					pull_requests: [{ number: 99 }],
+					check_suite: { head_sha: "b".repeat(40) },
+				},
+			}),
+		);
+		await drain();
+		expect(targets).toHaveLength(10);
+		expect(
+			await db.inboxDeliveries.findOne({ _id: "github:unknown" }),
+		).toMatchObject({ resolvedBy: "recorded_noop" });
+	}));
+
+test("closed pull requests remove directly without enqueueing, and pending verification does not enqueue", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const targets: unknown[] = [];
+		const drain = () =>
+			drainInbox(db, undefined, undefined, undefined, undefined, (target) =>
+				targets.push(target),
+			);
+		await acceptGitHubDelivery(db, "open", "pull_request", body);
+		await drain();
+		await acceptGitHubDelivery(
+			db,
+			"closed-target",
+			"pull_request",
+			body.replace('"open"', '"closed"'),
+		);
+		await drain();
+		expect(targets).toHaveLength(1);
+		expect(
+			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
+				?.pullRequests,
+		).toHaveLength(0);
+		await acceptGitHubDelivery(
+			db,
+			"pending-target",
+			"pull_request",
+			JSON.stringify({
+				installation: { id: 44 },
+				repository: { id: 2 },
+				pull_request: { number: 7 },
+			}),
+		);
+		await drain();
+		expect(targets).toHaveLength(1);
 	}));
 
 test("closed pull requests remove their projection", () =>
@@ -305,7 +674,11 @@ test("webhook retries retain payload and bot plus OpenSpec updates preserve form
 		expect(waits).toEqual([1000, 2000]);
 		expect(
 			await db.inboxDeliveries.findOne({ _id: "github:push" }),
-		).toMatchObject({ status: "rejected", attempts: 3, payload: push });
+		).toMatchObject({
+			status: "pending_verification",
+			attempts: 3,
+			payload: push,
+		});
 	}));
 
 test("webhook branches reject whitespace, overlong, and dotdot refs", () =>

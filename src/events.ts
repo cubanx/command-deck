@@ -1,7 +1,11 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ReviewBotConfig } from "#/config";
 import type { Db } from "#/db";
-import { mutateUser } from "#/db";
+import {
+	correlateDeploymentPullRequest,
+	mutateUser,
+	retainRecentMergedPullRequests,
+} from "#/db";
 import { shouldApplyDeploymentStatus } from "#/deployment-status";
 import {
 	approvedInstallationAccount,
@@ -29,63 +33,26 @@ export async function acceptGitHubDelivery(
 	eventName: string,
 	body: string,
 ) {
-	let data: GitHubPayload;
 	try {
-		data = JSON.parse(body);
+		JSON.parse(body);
 	} catch {
-		return false;
+		return { kind: "malformed" } as const;
 	}
-	const installationId = id(data.installation?.id);
-	let account = data.installation?.account?.login;
-	if (!approvedInstallationAccount(account)) {
-		if (!installationId || account != null) return false;
-		const bindings = (
-			await db.users
-				.find({ "installations.installationId": installationId })
-				.toArray()
-		).flatMap((user) =>
-			user.installations.filter(
-				(item) =>
-					item.installationId === installationId &&
-					approvedInstallationAccount(item.accountLogin),
-			),
-		);
-		const identities = new Set(
-			bindings.map((binding) => normalizedLogin(binding.accountLogin)),
-		);
-		if (identities.size !== 1 || identities.has(undefined)) return false;
-		account = bindings[0]?.accountLogin;
-	} else if (installationId) {
-		const bindings = await db.users
-			.find({ "installations.installationId": installationId })
-			.toArray();
-		if (
-			bindings.some((user) =>
-				user.installations.some(
-					(item) =>
-						item.installationId === installationId &&
-						!sameLogin(item.accountLogin, account),
-				),
-			)
-		)
-			return false;
-	}
-	if (!approvedInstallationAccount(account)) return false;
 	try {
 		await db.inboxDeliveries.insertOne({
 			_id: `github:${deliveryId}`,
 			provider: "github",
 			deliveryId,
 			payload: body,
-			resolvedAccount: account,
 			eventName,
-			status: "pending",
+			status: "pending_verification",
 			attempts: 0,
 			receivedAt: new Date(),
 		});
-		return true;
+		return { kind: "accepted" } as const;
 	} catch (error) {
-		if ((error as { code?: number }).code === 11000) return false;
+		if ((error as { code?: number }).code === 11000)
+			return { kind: "duplicate" } as const;
 		throw error;
 	}
 }
@@ -160,6 +127,7 @@ type GitHubPayload = {
 	action?: string;
 	after?: string;
 	ref?: string;
+	sha?: unknown;
 	commits?: Array<{
 		added?: string[];
 		modified?: string[];
@@ -176,15 +144,22 @@ type GitHubPayload = {
 		draft?: unknown;
 		mergeable?: unknown;
 		head?: { ref?: unknown; sha?: unknown };
+		merge_commit_sha?: unknown;
+		merged_at?: unknown;
+		merged?: unknown;
+		created_at?: unknown;
 		updated_at?: unknown;
 	};
 	check_run?: {
 		conclusion?: unknown;
 		pull_requests?: Array<{ number?: unknown }>;
+		head_sha?: unknown;
+		check_suite?: { head_sha?: unknown };
 	};
 	check_suite?: {
 		conclusion?: unknown;
 		pull_requests?: Array<{ number?: unknown }>;
+		head_sha?: unknown;
 	};
 	workflow_run?: {
 		id?: unknown;
@@ -193,6 +168,7 @@ type GitHubPayload = {
 		conclusion?: unknown;
 		status?: unknown;
 		pull_requests?: Array<{ number?: unknown }>;
+		head_sha?: unknown;
 	};
 	review?: { state?: unknown };
 	issue?: { pull_request?: unknown; number?: unknown };
@@ -212,6 +188,14 @@ type GitHubPayload = {
 		target_url?: unknown;
 		log_url?: unknown;
 	};
+};
+
+export const githubPayloadInstallationId = (payload?: string) => {
+	try {
+		return id((JSON.parse(payload ?? "{}") as GitHubPayload).installation?.id);
+	} catch {
+		return undefined;
+	}
 };
 type TaskFetcher = (input: {
 	installationId: string;
@@ -241,6 +225,42 @@ const ensureRepository = (
 	return repository;
 };
 
+const retainMergedPullRequest = (
+	repository: import("./db").Repository,
+	pr: NonNullable<GitHubPayload["pull_request"]>,
+	previous: Record<string, unknown> | undefined,
+) => {
+	const headSha =
+		exactHeadSha(pr.head?.sha) ?? exactHeadSha(previous?.head_sha);
+	const mergeSha = exactHeadSha(pr.merge_commit_sha);
+	const mergedAt = typeof pr.merged_at === "string" ? pr.merged_at : undefined;
+	const number = Number(pr.number);
+	const title = typeof pr.title === "string" ? pr.title.trim() : "";
+	const url = safeUrl(pr.html_url);
+	if (
+		pr.merged === true &&
+		Number.isSafeInteger(number) &&
+		number > 0 &&
+		title &&
+		url &&
+		headSha &&
+		mergeSha &&
+		mergedAt &&
+		Number.isFinite(Date.parse(mergedAt))
+	)
+		repository.recentMergedPullRequests = retainRecentMergedPullRequests([
+			...(repository.recentMergedPullRequests ?? []),
+			{
+				number,
+				title,
+				url,
+				head_sha: headSha,
+				merge_sha: mergeSha,
+				merged_at: mergedAt,
+			},
+		]);
+};
+
 const projectPullRequest = (
 	repository: import("./db").Repository,
 	data: GitHubPayload,
@@ -251,15 +271,31 @@ const projectPullRequest = (
 	const index = repository.pullRequests.findIndex(
 		(item) => item.number === Number(pr.number),
 	);
+	const previous = index >= 0 ? repository.pullRequests[index] : undefined;
 	if (
 		data.action === "closed" ||
 		pr.state !== "open" ||
 		!sameLogin(pr.user?.login, userLogin)
 	) {
+		if (sameLogin(pr.user?.login, userLogin))
+			retainMergedPullRequest(repository, pr, previous);
 		if (index >= 0) repository.pullRequests.splice(index, 1);
+		if (repository.recentMergedPullRequests) {
+			const recent = retainRecentMergedPullRequests(
+				repository.recentMergedPullRequests,
+			);
+			if (recent.length) repository.recentMergedPullRequests = recent;
+			else delete repository.recentMergedPullRequests;
+		}
+		repository.deployments = repository.deployments.map((deployment) =>
+			correlateDeploymentPullRequest(
+				deployment,
+				repository.pullRequests,
+				repository.recentMergedPullRequests,
+			),
+		);
 		return false;
 	}
-	const previous = index >= 0 ? repository.pullRequests[index] : undefined;
 	const mergeabilityChanged =
 		Boolean(previous) &&
 		pr.mergeable != null &&
@@ -273,6 +309,8 @@ const projectPullRequest = (
 		author_login: pr.user?.login,
 		state: pr.state,
 		draft: pr.draft ? 1 : 0,
+		opened_at:
+			typeof pr.created_at === "string" ? pr.created_at : previous?.opened_at,
 		head_ref: headRef,
 		head_sha:
 			typeof pr.head?.sha === "string" && /^[0-9a-f]{40}$/i.test(pr.head.sha)
@@ -294,6 +332,68 @@ const signalPullRequestNumber = (data: GitHubPayload) =>
 			data.check_suite?.pull_requests?.[0]?.number ??
 			data.workflow_run?.pull_requests?.[0]?.number,
 	);
+
+export type ReconciliationTarget = {
+	installationId: string;
+	repositoryId: string;
+	number: number;
+};
+
+const exactHeadSha = (value: unknown) =>
+	typeof value === "string" && /^[0-9a-f]{40}$/i.test(value)
+		? value
+		: undefined;
+
+const lifecycleTargets = (
+	installationId: string,
+	repository: import("./db").Repository,
+	event: string,
+	data: GitHubPayload,
+): ReconciliationTarget[] => {
+	let numbers: number[] = [];
+	if (
+		event === "pull_request" ||
+		[
+			"pull_request_review",
+			"pull_request_review_comment",
+			"pull_request_review_thread",
+		].includes(event)
+	)
+		numbers = [Number(data.pull_request?.number)];
+	else if (["check_run", "check_suite", "workflow_run"].includes(event)) {
+		const source = data[event as "check_run" | "check_suite" | "workflow_run"];
+		const associations = Array.isArray(source?.pull_requests)
+			? source.pull_requests
+			: [];
+		numbers = associations
+			.map((item: { number?: unknown }) => Number(item.number))
+			.filter(Number.isInteger);
+		if (!numbers.length) {
+			const sha = exactHeadSha(
+				source?.head_sha ??
+					(source as { check_suite?: { head_sha?: unknown } })?.check_suite
+						?.head_sha,
+			);
+			if (sha)
+				numbers = repository.pullRequests
+					.filter((pr) => pr.head_sha === sha)
+					.map((pr) => Number(pr.number));
+		}
+	} else if (event === "status") {
+		const sha = exactHeadSha(data.sha);
+		if (sha)
+			numbers = repository.pullRequests
+				.filter((pr) => pr.head_sha === sha)
+				.map((pr) => Number(pr.number));
+	}
+	return repository.pullRequests
+		.filter((pr) => pr.state === "open" && numbers.includes(Number(pr.number)))
+		.map((pr) => ({
+			installationId,
+			repositoryId: repository.repositoryId,
+			number: Number(pr.number),
+		}));
+};
 
 const projectPullRequestSignal = (
 	repository: import("./db").Repository,
@@ -389,23 +489,28 @@ const projectDeployment = (
 		event === "deployment_status"
 			? String(data.deployment_status?.state ?? "pending").toLowerCase()
 			: String(prior.state ?? "pending");
-	const next = {
-		...prior,
-		id: deploymentId,
-		environment: data.deployment.environment ?? prior.environment,
-		ref: data.deployment.ref ?? prior.ref,
-		sha: data.deployment.sha ?? prior.sha,
-		state: nextState,
-		status_id: statusId ?? prior.status_id,
-		status_created_at: statusCreatedAt ?? prior.status_created_at,
-		target_url: safeUrl(data.deployment_status?.target_url) ?? prior.target_url,
-		log_url: safeUrl(data.deployment_status?.log_url) ?? prior.log_url,
-		updated_at:
-			statusCreatedAt ??
-			prior.updated_at ??
-			data.deployment.created_at ??
-			new Date().toISOString(),
-	};
+	const next = correlateDeploymentPullRequest(
+		{
+			...prior,
+			id: deploymentId,
+			environment: data.deployment.environment ?? prior.environment,
+			ref: data.deployment.ref ?? prior.ref,
+			sha: data.deployment.sha ?? prior.sha,
+			state: nextState,
+			status_id: statusId ?? prior.status_id,
+			status_created_at: statusCreatedAt ?? prior.status_created_at,
+			target_url:
+				safeUrl(data.deployment_status?.target_url) ?? prior.target_url,
+			log_url: safeUrl(data.deployment_status?.log_url) ?? prior.log_url,
+			updated_at:
+				statusCreatedAt ??
+				prior.updated_at ??
+				data.deployment.created_at ??
+				new Date().toISOString(),
+		},
+		repository.pullRequests,
+		repository.recentMergedPullRequests,
+	);
 	if (event !== "deployment" && !shouldApplyDeploymentStatus(next, prior))
 		return false;
 	if (index >= 0) repository.deployments[index] = next;
@@ -438,11 +543,16 @@ const applyGitHubEvent = (
 		!sameLogin(installation.accountLogin, account)
 	)
 		return { mergeabilityChanged: false, terminalTransition: false };
-	const repository = ensureRepository(
-		installation,
-		repositoryId,
-		data.repository?.full_name,
-	);
+	const repository =
+		event === "pull_request" ||
+		event === "deployment" ||
+		event === "deployment_status"
+			? ensureRepository(installation, repositoryId, data.repository?.full_name)
+			: installation.repositories.find(
+					(item) => item.repositoryId === repositoryId,
+				);
+	if (!repository)
+		return { mergeabilityChanged: false, terminalTransition: false };
 	if (event === "pull_request")
 		return {
 			mergeabilityChanged: projectPullRequest(
@@ -455,6 +565,8 @@ const applyGitHubEvent = (
 	if (
 		[
 			"pull_request_review",
+			"pull_request_review_comment",
+			"pull_request_review_thread",
 			"check_run",
 			"check_suite",
 			"workflow_run",
@@ -477,6 +589,7 @@ const projectPush = async (
 	account: string,
 	fetchTasks: TaskFetcher,
 ) => {
+	let changed = false;
 	const commits = Array.isArray(data.commits) ? data.commits : [];
 	const files = commits.flatMap((commit) => [
 		...(commit.added ?? []),
@@ -500,7 +613,7 @@ const projectPush = async (
 				});
 		if (!deleted && content === null)
 			throw new Error("OpenSpec artifact fetch failed");
-		const completed = await projectOpenSpec(db, {
+		const result = await projectOpenSpec(db, {
 			installationId,
 			accountLogin: account,
 			repositoryId,
@@ -510,7 +623,8 @@ const projectPush = async (
 			sha: data.after ?? "unknown",
 			sourceRef,
 		});
-		if (completed)
+		changed ||= result.changed;
+		if (result.completed)
 			await notifyBoundUsers(
 				db,
 				installationId,
@@ -520,6 +634,7 @@ const projectPush = async (
 				path.split("/")[2] ?? "OpenSpec",
 			);
 	}
+	return changed;
 };
 
 const notifyReviewRequest = async (
@@ -646,13 +761,32 @@ async function projectGitHub(
 	reviewBot?: ReviewBotConfig,
 ) {
 	const data = JSON.parse(raw) as GitHubPayload;
+	if (
+		![
+			"pull_request",
+			"pull_request_review",
+			"pull_request_review_comment",
+			"pull_request_review_thread",
+			"check_run",
+			"check_suite",
+			"workflow_run",
+			"status",
+			"issue_comment",
+			"deployment",
+			"deployment_status",
+			"push",
+		].includes(event)
+	)
+		return { status: "ignored" as const, targets: [] };
 	const installationId = id(data.installation?.id);
 	const repositoryId = id(data.repository?.id);
 	const account = data.installation?.account?.login ?? resolvedAccount;
 	if (!installationId || !repositoryId || !approvedInstallationAccount(account))
-		return "ignored";
+		return { status: "ignored" as const, targets: [] };
 	let terminalTransition = false;
+	let changed = false;
 	const mergeabilityUsers = new Set<string>();
+	const targets = new Map<string, ReconciliationTarget>();
 	const users = await db.users
 		.find(
 			{ "installations.installationId": installationId },
@@ -661,6 +795,7 @@ async function projectGitHub(
 		.toArray();
 	for (const user of users)
 		await mutateUser(db, user._id, (aggregate) => {
+			const before = JSON.stringify(aggregate);
 			const result = applyGitHubEvent(
 				aggregate,
 				installationId,
@@ -672,9 +807,17 @@ async function projectGitHub(
 			);
 			terminalTransition ||= result.terminalTransition;
 			if (result.mergeabilityChanged) mergeabilityUsers.add(aggregate._id);
+			changed ||= before !== JSON.stringify(aggregate);
+			const repository = aggregate.installations
+				.find((item) => item.installationId === installationId)
+				?.repositories.find((item) => item.repositoryId === repositoryId);
+			for (const target of repository
+				? lifecycleTargets(installationId, repository, event, data)
+				: [])
+				targets.set(`${target.repositoryId}:${target.number}`, target);
 		});
 	if (event === "push" && fetchTasks)
-		await projectPush(
+		changed ||= await projectPush(
 			db,
 			data,
 			installationId,
@@ -692,7 +835,133 @@ async function projectGitHub(
 		terminalTransition,
 		mergeabilityUsers,
 	);
-	return "done";
+	const lifecycleHint = [
+		"pull_request_review",
+		"pull_request_review_comment",
+		"pull_request_review_thread",
+		"check_run",
+		"check_suite",
+		"workflow_run",
+		"status",
+	].includes(event);
+	return {
+		status:
+			lifecycleHint && !targets.size ? ("ignored" as const) : ("done" as const),
+		changed,
+		targets: [...targets.values()],
+	};
+}
+
+type Verification =
+	| {
+			kind: "ready";
+			raw: string;
+			account: string;
+			installationId: string;
+	  }
+	| {
+			kind: "pending";
+			reason:
+				| "missing_binding"
+				| "ambiguous_binding"
+				| "conflicting_account"
+				| "verification_unavailable";
+	  };
+
+const verifyGitHubDelivery = async (
+	db: Db,
+	raw: string,
+): Promise<Verification> => {
+	let data: GitHubPayload;
+	try {
+		data = JSON.parse(raw);
+	} catch {
+		return { kind: "pending", reason: "verification_unavailable" };
+	}
+	const installationId = id(data.installation?.id);
+	const repositoryId = id(data.repository?.id);
+	if (!installationId || !repositoryId)
+		return { kind: "pending", reason: "missing_binding" };
+	try {
+		const users = await db.users
+			.find(
+				{ "installations.installationId": installationId },
+				{ projection: { installations: 1 } },
+			)
+			.toArray();
+		const accounts = [
+			...new Set(
+				users.flatMap((user) =>
+					user.installations
+						.filter(
+							(item) =>
+								item.installationId === installationId &&
+								approvedInstallationAccount(item.accountLogin),
+						)
+						.map((item) => normalizedLogin(item.accountLogin))
+						.filter((account): account is string => Boolean(account)),
+				),
+			),
+		];
+		if (!accounts.length) return { kind: "pending", reason: "missing_binding" };
+		if (accounts.length !== 1)
+			return { kind: "pending", reason: "ambiguous_binding" };
+		const account = data.installation?.account?.login;
+		if (account && !sameLogin(account, accounts[0]))
+			return { kind: "pending", reason: "conflicting_account" };
+		data.installation ??= {};
+		data.installation.account = {
+			...(data.installation.account ?? {}),
+			login: accounts[0],
+		};
+		return {
+			kind: "ready",
+			raw: JSON.stringify(data),
+			account: accounts[0],
+			installationId,
+		};
+	} catch {
+		return { kind: "pending", reason: "verification_unavailable" };
+	}
+};
+
+export async function markDeliveriesRepairedByReconciliation(
+	db: Db,
+	installationId: string,
+	repositoryIds: Iterable<string>,
+	now = () => new Date(),
+) {
+	const covered = new Set(repositoryIds);
+	const rows = await db.inboxDeliveries
+		.find({ provider: "github", status: "pending_verification" })
+		.toArray();
+	const ids = rows.flatMap((row) => {
+		if (githubPayloadInstallationId(row.payload) !== installationId) return [];
+		try {
+			const data = JSON.parse(row.payload ?? "{}") as GitHubPayload;
+			return ["pull_request", "deployment", "deployment_status"].includes(
+				row.eventName,
+			) && covered.has(id(data.repository?.id) ?? "")
+				? [row._id]
+				: [];
+		} catch {
+			return [];
+		}
+	});
+	if (!ids.length) return 0;
+	await db.inboxDeliveries.updateMany(
+		{ _id: { $in: ids } },
+		{
+			$set: {
+				status: "done",
+				processedAt: now(),
+				resolvedAt: now(),
+				resolvedBy: "reconciliation",
+			},
+			$unset: { payload: "", nextAttemptAt: "" },
+		},
+	);
+	return ids.length;
 }
 export async function drainInbox(
 	db: Db,
@@ -705,6 +974,7 @@ export async function drainInbox(
 	reviewBot?: ReviewBotConfig,
 	sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
 	now = () => new Date(),
+	enqueueTarget?: (target: ReconciliationTarget) => void,
 ) {
 	const affected = new Set<string>();
 	while (true) {
@@ -731,18 +1001,43 @@ export async function drainInbox(
 					);
 					continue;
 				}
-				const status = await projectGitHub(
+				const verification = await verifyGitHubDelivery(db, row.payload ?? "");
+				if (verification.kind === "pending") {
+					const attemptedAt = now();
+					const attempts = row.attempts + 1;
+					await db.inboxDeliveries.updateOne(
+						{ _id: row._id },
+						{
+							$set: {
+								status: "pending_verification",
+								attempts,
+								verificationReason: verification.reason,
+								verificationFirstAttemptAt:
+									row.verificationFirstAttemptAt ?? attemptedAt,
+								verificationLastAttemptAt: attemptedAt,
+								nextAttemptAt: new Date(
+									attemptedAt.getTime() +
+										(attempts <= 2 ? 1000 * 2 ** (attempts - 1) : 60_000),
+								),
+							},
+						},
+					);
+					continue;
+				}
+				await db.inboxDeliveries.updateOne(
+					{ _id: row._id },
+					{ $set: { resolvedAccount: verification.account } },
+				);
+				const projection = await projectGitHub(
 					db,
 					row.eventName,
-					row.payload ?? "",
-					row.resolvedAccount,
+					verification.raw,
+					verification.account,
 					fetchTasks,
 					reviewBot,
 				);
-				const installationId = id(
-					JSON.parse(row.payload ?? "{}").installation?.id,
-				);
-				if (installationId)
+				const installationId = verification.installationId;
+				if (projection.changed && installationId)
 					(
 						await db.users
 							.find(
@@ -757,15 +1052,51 @@ export async function drainInbox(
 					{ _id: row._id },
 					{
 						$set: {
-							status: status === "ignored" ? "ignored" : "done",
+							status: projection.status === "ignored" ? "ignored" : "done",
 							processedAt: now(),
+							resolvedAt: now(),
+							resolvedBy:
+								projection.status === "ignored"
+									? "recorded_noop"
+									: "projection",
 						},
 						$unset: { payload: "", error: "", nextAttemptAt: "" },
 					},
 				);
+				for (const target of projection.targets)
+					try {
+						enqueueTarget?.(target);
+					} catch (error) {
+						console.error(
+							"targeted reconciliation enqueue failed",
+							error instanceof Error ? error.message : "unknown error",
+						);
+					}
 			} catch (error) {
-				const attempts = row.attempts + 1,
-					terminal = attempts >= 3;
+				const attempts = row.attempts + 1;
+				if (row.provider === "github") {
+					const attemptedAt = now();
+					await db.inboxDeliveries.updateOne(
+						{ _id: row._id },
+						{
+							$set: {
+								status: "pending_verification",
+								attempts,
+								error: "processing failed",
+								verificationReason: "verification_unavailable",
+								verificationFirstAttemptAt:
+									row.verificationFirstAttemptAt ?? attemptedAt,
+								verificationLastAttemptAt: attemptedAt,
+								nextAttemptAt: new Date(
+									attemptedAt.getTime() +
+										(attempts <= 2 ? 1000 * 2 ** (attempts - 1) : 60_000),
+								),
+							},
+						},
+					);
+					continue;
+				}
+				const terminal = attempts >= 3;
 				await db.inboxDeliveries.updateOne(
 					{ _id: row._id },
 					{
@@ -796,7 +1127,11 @@ export async function drainInbox(
 			.sort({ nextAttemptAt: 1 })
 			.limit(1)
 			.next();
-		if (!next?.nextAttemptAt) break;
+		if (
+			!next?.nextAttemptAt ||
+			(next.status === "pending_verification" && next.attempts >= 3)
+		)
+			break;
 		await sleep(Math.max(0, next.nextAttemptAt.getTime() - now().getTime()));
 	}
 	return [...affected];

@@ -65,6 +65,53 @@ test("merge eligibility fails closed for every mutable gate", () => {
 		expect(mergeEligibility({ ...eligible, [key]: value })).toMatchObject({
 			ok: false,
 		});
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [
+				{ completed: 2, total: 2 },
+				{ completed: 1, total: 2 },
+			],
+		}),
+	).toMatchObject({ ok: false });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_spec: null,
+			open_specs: [],
+			labels: [],
+		}),
+	).toMatchObject({ ok: false });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_spec: null,
+			open_specs: [],
+			labels: ["openspec-not-required"],
+		}),
+	).toEqual({ ok: true });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [],
+			open_spec_declaration: "absent",
+			detected_open_specs: ["capture-wolf-359"],
+		}),
+	).toEqual({ ok: false, reason: "Confirm OpenSpec association." });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [],
+			open_spec_declaration: "empty",
+			labels: ["openspec-not-required"],
+		}),
+	).toEqual({ ok: true });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
+		}),
+	).toEqual({ ok: true });
 });
 
 test("merge intents are opaque and outcomes remain sanitized", () => {
@@ -323,11 +370,13 @@ test("default merge provider permits only explicit clear policy evidence", async
 			stage: "authorized",
 			expiresAt: new Date(),
 		});
-		expect(mergeEligibility(inspected)).toEqual({ ok: true });
+		expect(
+			mergeEligibility({ ...inspected, labels: ["openspec-not-required"] }),
+		).toEqual({ ok: true });
 		protectionStatus = 200;
 		expect(
-			mergeEligibility(
-				await provider.inspect({
+			mergeEligibility({
+				...(await provider.inspect({
 					_id: "intent",
 					userId: "sisko",
 					sessionId: "session",
@@ -339,8 +388,9 @@ test("default merge provider permits only explicit clear policy evidence", async
 					headSha: "a".repeat(40),
 					stage: "authorized",
 					expiresAt: new Date(),
-				}),
-			),
+				})),
+				labels: ["openspec-not-required"],
+			}),
 		).toEqual({ ok: true });
 		protectionStatus = 403;
 		expect(

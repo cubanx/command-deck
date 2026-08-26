@@ -304,6 +304,41 @@ test("local demo projections are deterministic and isolated", () =>
 		});
 	}));
 
+test("dashboard ignores post-merge-only OpenSpec work for attention", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "1", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]?.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{
+						number: 1,
+						author_login: "sisko",
+						state: "open",
+						open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
+					},
+					{
+						number: 2,
+						author_login: "sisko",
+						state: "open",
+						open_specs: [{ completed: 1, total: 2 }],
+					},
+				],
+				openSpecs: [],
+				deployments: [],
+			});
+		});
+		const pullRequests = await dashboardForUser(db, "u");
+		expect(
+			pullRequests.pullRequests.find((pr) => pr.number === 1)?.needs_attention,
+		).toBe(false);
+		expect(
+			pullRequests.pullRequests.find((pr) => pr.number === 2)?.needs_attention,
+		).toBe(true);
+	}));
+
 test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or ambiguous links", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
@@ -325,6 +360,7 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					url: "javascript:alert(1)",
 					head_sha: sha,
 					head_ref: "shared",
+					open_specs: [{ change_name: "sha-match", completed: 2, total: 2 }],
 				},
 				{
 					number: 2,
@@ -333,6 +369,7 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					state: "open",
 					updated_at: "2030-01-03",
 					head_ref: "unique",
+					open_specs: [{ change_name: "branch-match", completed: 2, total: 2 }],
 				},
 				{
 					number: 3,
@@ -394,18 +431,85 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 		);
 		expect(pullRequests.get(1)).toMatchObject({
 			url: "https://github.com/ds9/ops/pull/1",
-			open_spec: null,
+			open_spec: { change_name: "sha-match" },
 		});
 		expect(pullRequests.get(2)?.open_spec).toMatchObject({
 			change_name: "branch-match",
 		});
 		expect(pullRequests.get(3)?.open_spec).toBeNull();
 		expect(pullRequests.get(4)?.open_spec).toBeNull();
+		expect(pullRequests.get(1)?.open_specs).toMatchObject([
+			{ change_name: "sha-match" },
+		]);
 		expect(dashboard.deployments.map((deployment) => deployment.id)).toEqual([
 			"pending",
 			"failure",
 			"success",
 		]);
+	}));
+
+test("dashboard keeps every exact-head OpenSpec in deterministic order and falls back to a unique branch", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "1", "cubanx");
+		const sha = "a".repeat(40);
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]?.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{
+						number: 1,
+						author_login: "sisko",
+						state: "open",
+						head_sha: sha,
+						head_ref: "feature/shared",
+						open_specs: [
+							{
+								change_name: "zeta",
+								completed: 1,
+								total: 1,
+								source_commit: sha,
+							},
+							{
+								change_name: "alpha",
+								completed: 1,
+								total: 1,
+								source_commit: sha,
+							},
+							{
+								change_name: "alpha",
+								completed: 1,
+								total: 1,
+								source_commit: sha,
+							},
+						],
+					},
+					{
+						number: 2,
+						author_login: "sisko",
+						state: "open",
+						head_ref: "feature/unique",
+						open_specs: [{ change_name: "branch", completed: 1, total: 1 }],
+					},
+				],
+				openSpecs: [],
+				deployments: [],
+			});
+		});
+		const pulls = await dashboardForUser(db, "u");
+		const exact = pulls.pullRequests.find((pr) => pr.number === 1)!;
+		expect(
+			(exact.open_specs as Array<Record<string, unknown>>).map(
+				(spec) => spec.change_name,
+			),
+		).toEqual(["alpha", "zeta"]);
+		expect((exact.open_spec as Record<string, unknown>)?.change_name).toBe(
+			"alpha",
+		);
+		expect(
+			pulls.pullRequests.find((pr) => pr.number === 2)?.open_specs,
+		).toMatchObject([{ change_name: "branch" }]);
 	}));
 
 test("operational collection identities and binding seeds are idempotent", () =>

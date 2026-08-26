@@ -36,6 +36,7 @@ const seedMergePullRequest = async (db: Parameters<typeof mutateUser>[0]) => {
 						author_login: "kira",
 						state: "open",
 						draft: false,
+						labels: ["openspec-not-required"],
 						head_sha: "a".repeat(40),
 						mergeable: "clean",
 					},
@@ -187,6 +188,395 @@ test("GitHub webhook route rejects invalid HMAC and durably deduplicates valid d
 		).toBe(1);
 	}));
 
+test("GitHub webhook route rejects correctly signed malformed JSON without an inbox row", () =>
+	withDatabase(async (db) => {
+		const app = createApp(db, { ...testConfig, githubWebhookSecret: "secret" });
+		const body = "{";
+		const signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;
+		expect(
+			(
+				await app.fetch(
+					new Request("http://local/webhooks/github", {
+						method: "POST",
+						headers: {
+							"x-github-delivery": "bad-json",
+							"x-github-event": "ping",
+							"x-hub-signature-256": signature,
+						},
+						body,
+					}),
+				)
+			).status,
+		).toBe(400);
+		expect(await db.inboxDeliveries.countDocuments({})).toBe(0);
+	}));
+
+test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]!.repositories = [
+				{
+					repositoryId: "2",
+					full_name: "ds9/ops",
+					openSpecs: [],
+					deployments: [],
+					pullRequests: [
+						{
+							number: 7,
+							title: "Hold the wormhole",
+							author_login: "sisko",
+							state: "open",
+							draft: false,
+							head_sha: "a".repeat(40),
+							mergeable: "unknown",
+						},
+					],
+				},
+			];
+		});
+		const calls: number[] = [];
+		const app = createApp(
+			db,
+			{ ...testConfig, githubWebhookSecret: "secret" },
+			undefined,
+			{
+				reconcilePullRequest: async (_db, target) => {
+					calls.push(target.number);
+					return { kind: "unchanged" };
+				},
+			},
+		);
+		const session = await createSession(db, "u");
+		const stream = await app.fetch(
+			new Request("http://local/events", {
+				headers: { cookie: `dcc_session=${session.token}` },
+			}),
+		);
+		const reader = stream.body?.getReader();
+		if (!reader) throw new Error("event stream body missing");
+		await reader.read();
+		const body = JSON.stringify({
+			installation: { id: 9, account: { login: "cubanx" } },
+			repository: { id: 2 },
+			pull_request: { number: 7 },
+			review: { state: "approved" },
+		});
+		const signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;
+		expect(
+			await app.fetch(
+				new Request("http://local/webhooks/github", {
+					method: "POST",
+					headers: {
+						"x-github-delivery": "targeted-refresh",
+						"x-github-event": "pull_request_review",
+						"x-hub-signature-256": signature,
+					},
+					body,
+				}),
+			),
+		).toMatchObject({ status: 202 });
+		await app.drain();
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(calls).toEqual([7]);
+		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+			"event: refresh",
+		);
+		expect(
+			await app.fetch(
+				new Request("http://local/webhooks/github", {
+					method: "POST",
+					headers: {
+						"x-github-delivery": "targeted-refresh-noop",
+						"x-github-event": "pull_request_review",
+						"x-hub-signature-256": signature,
+					},
+					body,
+				}),
+			),
+		).toMatchObject({ status: 202 });
+		await app.drain();
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(
+			await Promise.race([
+				reader.read(),
+				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
+			]),
+		).toBeUndefined();
+		await reader.cancel();
+		app.stop?.();
+	}));
+
+test("installation repair refreshes only bound streams after a changed bootstrap", () =>
+	withDatabase(async (db) => {
+		for (const [id, installationId] of [
+			["u", "9"],
+			["shared", "9"],
+			["foreign", "10"],
+		] as const) {
+			await upsertIdentity(db, id, id);
+			await bindInstallation(db, id, installationId, "cubanx");
+		}
+		let outcome: "changed" | "unchanged" | "error" = "changed";
+		const app = createApp(db, testConfig, undefined, {
+			reconcileInstallations: async () => [],
+			bootstrapInstallation: async (database, installationId) => {
+				if (outcome === "error")
+					return {
+						kind: "error",
+						stale: true,
+						message: "reconciliation failed",
+					};
+				if (outcome === "changed")
+					await mutateUser(database, "u", (user) => {
+						user.installations.find(
+							(item) => item.installationId === installationId,
+						)!.repositories = [
+							{
+								repositoryId: "2",
+								full_name: "ds9/ops",
+								pullRequests: [],
+								openSpecs: [],
+								deployments: [],
+							},
+						];
+					});
+				return outcome === "changed"
+					? { kind: "changed", body: [{ id: 2 }] }
+					: { kind: "unchanged" };
+			},
+		});
+		const stream = async (id: string) => {
+			const session = await createSession(db, id);
+			const response = await app.fetch(
+				new Request("http://local/events", {
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			const reader = response.body?.getReader();
+			if (!reader) throw new Error("event stream body missing");
+			await reader.read();
+			return { reader, session };
+		};
+		const primary = await stream("u"),
+			shared = await stream("shared"),
+			foreign = await stream("foreign");
+		const repair = () =>
+			app.fetch(
+				new Request("http://local/api/installations/9/repair", {
+					method: "POST",
+					headers: { cookie: `dcc_session=${primary.session.token}` },
+				}),
+			);
+		const none = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
+			Promise.race([
+				reader.read(),
+				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
+			]);
+		try {
+			expect((await repair()).status).toBe(200);
+			expect(
+				(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories,
+			).toHaveLength(1);
+			for (const item of [primary, shared])
+				expect(
+					new TextDecoder().decode((await item.reader.read()).value),
+				).toContain("event: refresh");
+			outcome = "unchanged";
+			await repair();
+			expect(await none(primary.reader)).toBeUndefined();
+			expect(await none(shared.reader)).toBeUndefined();
+			outcome = "error";
+			const failed = await repair();
+			expect(failed.status).toBe(200);
+			expect(await none(primary.reader)).toBeUndefined();
+			expect(await none(shared.reader)).toBeUndefined();
+			expect(await none(foreign.reader)).toBeUndefined();
+			expect(await failed.text()).toContain("reconciliation failed");
+		} finally {
+			await Promise.all([
+				primary.reader.cancel(),
+				shared.reader.cancel(),
+				foreign.reader.cancel(),
+			]);
+			app.stop();
+		}
+	}));
+
+test("changed repairs refresh every bound stream after persistence and suppress no-op, ignored, and failed refreshes", () =>
+	withDatabase(async (db) => {
+		for (const [id, login, installationId] of [
+			["u", "sisko", "9"],
+			["shared", "bashir", "9"],
+			["foreign", "garak", "10"],
+		] as const) {
+			await upsertIdentity(db, id, login);
+			await bindInstallation(db, id, installationId, "cubanx");
+			await mutateUser(db, id, (user) => {
+				user.installations[0]!.repositories = [
+					{
+						repositoryId: "2",
+						full_name: "ds9/ops",
+						openSpecs: [],
+						deployments: [],
+						pullRequests: [
+							{
+								number: 7,
+								title: "Hold the wormhole",
+								author_login: login,
+								state: "open",
+								draft: false,
+								mergeable: "unknown",
+							},
+						],
+					},
+				];
+			});
+		}
+		let outcome: "changed" | "openspec" | "closed" | "unchanged" | "error" =
+			"changed";
+		const app = createApp(
+			db,
+			{ ...testConfig, githubWebhookSecret: "secret" },
+			undefined,
+			{
+				reconcilePullRequest: async (database, target) => {
+					if (outcome === "error")
+						return {
+							kind: "error",
+							stale: true,
+							message: "provider unavailable",
+						};
+					if (
+						outcome === "changed" ||
+						outcome === "openspec" ||
+						outcome === "closed"
+					)
+						await Promise.all(
+							["u", "shared"].map((id) =>
+								mutateUser(database, id, (user) => {
+									const pullRequests =
+										user.installations[0]!.repositories[0]!.pullRequests;
+									if (outcome === "closed") pullRequests.splice(0);
+									else if (outcome === "openspec")
+										user.installations[0]!.repositories[0]!.openSpecs.push({
+											change_name: "repair-wolf-359",
+											completed: 0,
+											total: 1,
+											pre_merge_ready: false,
+											source_commit: "a".repeat(40),
+											active_group: null,
+											updated_at: "2030-01-01T00:00:00Z",
+										});
+									else pullRequests[0]!.title = "Repair the wormhole";
+								}),
+							),
+						);
+					return outcome === "changed" ||
+						outcome === "openspec" ||
+						outcome === "closed"
+						? { kind: "changed", body: { number: target.number } }
+						: { kind: "unchanged" };
+				},
+			},
+		);
+		const streamFor = async (id: string) => {
+			const session = await createSession(db, id);
+			const stream = await app.fetch(
+				new Request("http://local/events", {
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			const reader = stream.body?.getReader();
+			if (!reader) throw new Error("event stream body missing");
+			await reader.read();
+			return { reader, session };
+		};
+		const primary = await streamFor("u");
+		const shared = await streamFor("shared");
+		const foreign = await streamFor("foreign");
+		const repair = () =>
+			app.fetch(
+				new Request("http://local/api/reconcile/pull-request", {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${primary.session.token}`,
+						"content-type": "application/json",
+					},
+					body: JSON.stringify({
+						installationId: "9",
+						repositoryId: "2",
+						number: 7,
+					}),
+				}),
+			);
+		try {
+			expect((await repair()).status).toBe(200);
+			expect(
+				(await db.users.findOne({ _id: "u" }))?.installations[0]
+					?.repositories[0]?.pullRequests[0]?.title,
+			).toBe("Repair the wormhole");
+			for (const stream of [primary, shared])
+				expect(
+					new TextDecoder().decode((await stream.reader.read()).value),
+				).toContain("event: refresh");
+			const openSpec = await streamFor("u");
+			outcome = "openspec";
+			expect((await repair()).status).toBe(200);
+			expect(
+				(await db.users.findOne({ _id: "u" }))?.installations[0]
+					?.repositories[0]?.openSpecs,
+			).toMatchObject([{ change_name: "repair-wolf-359" }]);
+			expect(
+				new TextDecoder().decode((await openSpec.reader.read()).value),
+			).toContain("event: refresh");
+			expect(
+				new TextDecoder().decode((await primary.reader.read()).value),
+			).toContain("event: refresh");
+			await openSpec.reader.cancel();
+			outcome = "unchanged";
+			expect((await repair()).status).toBe(200);
+			const ignored = JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+			});
+			const signature = `sha256=${createHmac("sha256", "secret").update(ignored).digest("hex")}`;
+			expect(
+				(
+					await app.fetch(
+						new Request("http://local/webhooks/github", {
+							method: "POST",
+							headers: {
+								"x-github-delivery": "ignored-refresh",
+								"x-github-event": "ping",
+								"x-hub-signature-256": signature,
+							},
+							body: ignored,
+						}),
+					)
+				).status,
+			).toBe(202);
+			await app.drain();
+			const noEvent = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
+				Promise.race([
+					reader.read(),
+					new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
+				]);
+			expect(await noEvent(primary.reader)).toBeUndefined();
+			outcome = "error";
+			expect((await repair()).status).toBe(502);
+			expect(await noEvent(foreign.reader)).toBeUndefined();
+		} finally {
+			await Promise.all([
+				primary.reader.cancel(),
+				shared.reader.cancel(),
+				foreign.reader.cancel(),
+			]);
+			app.stop();
+		}
+	}));
+
 test("dashboard shell uses compact OpenSpec disclosure and an accessible PR section name", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
@@ -225,7 +615,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain('id="pr-direction"');
 		expect(javascript).toContain("Lifecycle stage");
 		expect(javascript).toContain("Needs attention");
-		expect(javascript).toContain("Newest first");
+		expect(javascript).toContain("Opened");
 		expect(javascript).toContain("Closest to merge");
 		expect(javascript).not.toContain("Codex activity (unavailable)");
 		expect(javascript).not.toContain("codex-activity-status");
@@ -328,7 +718,9 @@ test("avatar navigation opens one dedicated configuration page", () =>
 		expect(css).toContain("align-items: flex-start");
 		expect(css).toContain("flex-wrap: nowrap");
 		expect(javascript).toContain("value[0].toUpperCase()");
-		expect(javascript).toContain("Reconcile now");
+		expect(javascript).toContain("Reconcile PR");
+		expect(javascript).toContain("Reconcile all PRs");
+		expect(javascript).toContain("Reconcile installation");
 		expect(javascript).toContain("localStorage");
 		expect(javascript).toContain("matchMedia");
 		expect(javascript).toContain("indexedDB");
@@ -389,6 +781,116 @@ test("reconcile route requires an authenticated user with an approved bound inst
 		).toBe(404);
 	}));
 
+test("manual PR reconciliation is scoped to known open PRs and all-known repair stays targeted", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "kira");
+		await upsertIdentity(db, "foreign", "garak");
+		await bindInstallation(db, "u", "12", "cubanx");
+		await bindInstallation(db, "foreign", "13", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]!.repositories = [
+				{
+					repositoryId: "42",
+					full_name: "cubanx/defiant",
+					openSpecs: [],
+					deployments: [],
+					pullRequests: [
+						{
+							number: 7,
+							title: "Repair the Defiant",
+							author_login: "kira",
+							state: "open",
+							draft: false,
+							mergeable: "unknown",
+						},
+					],
+				},
+			];
+		});
+		const calls: Array<{
+			installationId: string;
+			repositoryId: string;
+			number: number;
+		}> = [];
+		let fail = false;
+		const app = createApp(db, testConfig, undefined, {
+			reconcilePullRequest: async (_db, target) => {
+				calls.push(target);
+				return fail
+					? { kind: "error", message: "repair failed", stale: true }
+					: { kind: "unchanged" };
+			},
+		});
+		const session = await createSession(db, "u");
+		const post = (path: string, body?: unknown) =>
+			app.fetch(
+				new Request(`http://local${path}`, {
+					method: "POST",
+					headers: {
+						cookie: `dcc_session=${session.token}`,
+						...(body === undefined
+							? {}
+							: { "content-type": "application/json" }),
+					},
+					body: body === undefined ? undefined : JSON.stringify(body),
+				}),
+			);
+		expect(
+			(
+				await post("/api/reconcile/pull-request", {
+					installationId: "12",
+					repositoryId: "42",
+					number: 7,
+				})
+			).status,
+		).toBe(200);
+		expect(await (await post("/api/reconcile/pull-requests")).json()).toEqual({
+			status: "success",
+			count: 1,
+			successfulCount: 1,
+			failedCount: 0,
+			estimatedProviderRequests: 4,
+		});
+		expect(
+			calls.map(({ installationId, repositoryId, number }) => ({
+				installationId,
+				repositoryId,
+				number,
+			})),
+		).toEqual([
+			{ installationId: "12", repositoryId: "42", number: 7 },
+			{ installationId: "12", repositoryId: "42", number: 7 },
+		]);
+		fail = true;
+		const partial = await post("/api/reconcile/pull-requests");
+		expect(partial.status).toBe(502);
+		expect(await partial.json()).toEqual({
+			status: "partial_failure",
+			count: 1,
+			successfulCount: 0,
+			failedCount: 1,
+			estimatedProviderRequests: 4,
+		});
+		expect(
+			(
+				await post("/api/reconcile/pull-request", {
+					installationId: "13",
+					repositoryId: "42",
+					number: 7,
+				})
+			).status,
+		).toBe(404);
+		expect(
+			(
+				await post("/api/reconcile/pull-request", {
+					installationId: "12",
+					repositoryId: "42",
+					number: 99,
+				})
+			).status,
+		).toBe(404);
+	}));
+
 test("manual reconciliation scopes work to the signed-in user, refreshes, and sanitizes failures", () =>
 	withDatabase(async (db) => {
 		const { privateKey } = await crypto.subtle.generateKey(
@@ -430,7 +932,6 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			fetchTarget.fetch = async (input) => {
 				const url = String(input);
 				if (url.includes("access_tokens")) {
-					if (fail) throw new Error("raw provider diagnostic");
 					tokenIds.push(url.match(/installations\/(\d+)/)?.[1] ?? "");
 					return Response.json({ token: "installation-token" });
 				}
@@ -442,11 +943,20 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 						resolve();
 					});
 				}
+				if (url.endsWith("/repos/cubanx/defiant"))
+					return Response.json({ default_branch: "main" });
+				if (url.includes("/rules/branches/")) return Response.json([]);
+				if (url.includes("/branches/main/protection"))
+					return Response.json({}, { status: 404 });
 				if (url.includes("installation/repositories"))
 					return Response.json({
 						repositories: [{ id: 2, full_name: "cubanx/defiant" }],
 					});
-				if (url.includes("/pulls"))
+				if (url.includes("/pulls/1/files"))
+					return Response.json([
+						{ filename: "openspec/changes/repair-defiant/tasks.md" },
+					]);
+				if (url.includes("/pulls?"))
 					return Response.json([
 						{
 							number: 1,
@@ -454,6 +964,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 							user: { login: "kira" },
 							state: "open",
 							head: { sha: "a".repeat(40) },
+							body: "## OpenSpecs\n- repair-defiant",
 						},
 					]);
 				if (url.includes("/deployments")) return Response.json([]);
@@ -473,8 +984,6 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 						);
 					return new Response("## 1. Repair the defiant");
 				}
-				if (url.includes("contents/openspec/changes"))
-					return Response.json([{ name: "repair-defiant", type: "dir" }]);
 				throw new Error(`unexpected ${url}`);
 			};
 		});
@@ -534,9 +1043,9 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			expect(reconciliationLog).toEqual([
 				"installation reconciliation failed",
 				"12",
-				"reconciliation",
-				"Error",
-				"reconciliation failed",
+				"openspec",
+				"ReadResult",
+				"GitHub OpenSpec artifact fetch failed",
 			]);
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
@@ -545,7 +1054,8 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
 			expect(failedEvidence).toMatchObject({
 				outcome: "failure",
-				operation: "reconciliation",
+				operation: "openspec",
+				summary: "GitHub OpenSpec artifact fetch failed",
 			});
 			expect(JSON.stringify(failedEvidence)).not.toContain(
 				"fixture-token-value",
@@ -806,7 +1316,17 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 		await mutateUser(db, "u", (user) => {
 			const repository = user.installations[0]?.repositories[0];
 			if (!repository) throw new Error("merge repository missing");
-			repository.openSpecs = [
+			const pullRequest = repository.pullRequests[0];
+			if (!pullRequest) throw new Error("merge pull request missing");
+			pullRequest.labels = [];
+			pullRequest.open_spec_declaration = "declared";
+			const openSpecs = [
+				{
+					change_name: "ready-to-merge",
+					completed: 2,
+					total: 2,
+					source_commit: "a".repeat(40),
+				},
 				{
 					change_name: "hold-the-line",
 					completed: 1,
@@ -814,6 +1334,8 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 					source_commit: "a".repeat(40),
 				},
 			];
+			pullRequest.open_specs = openSpecs;
+			pullRequest.open_spec = openSpecs[0];
 		});
 		expect((await post(incomplete)).status).toBe(409);
 		expect(mutations).toBe(0);
@@ -1233,6 +1755,11 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 						resolve(Response.json({ account: { login: "Crisp-Inc" } })),
 					);
 				});
+			if (url.endsWith("/repos/Crisp-Inc/defiant"))
+				return Response.json({ default_branch: "main" });
+			if (url.includes("/rules/branches/main")) return Response.json([]);
+			if (url.includes("/branches/main/protection"))
+				return new Response(null, { status: 404 });
 			if (url.includes("installation/repositories"))
 				return Response.json({
 					repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }],
@@ -1316,6 +1843,16 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			githubAppId: "1",
 			githubAppPrivateKey: pem,
 		});
+		await upsertIdentity(db, "9", "kira");
+		const existingSession = await createSession(db, "9");
+		const existingStream = await app.fetch(
+			new Request("http://local/events", {
+				headers: { cookie: `dcc_session=${existingSession.token}` },
+			}),
+		);
+		const existingReader = existingStream.body?.getReader();
+		if (!existingReader) throw new Error("event stream body missing");
+		await existingReader.read();
 		const original = globalThis.fetch,
 			originalError = console.error,
 			logs: unknown[][] = [];
@@ -1359,6 +1896,11 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				}
 				return Response.json({ account: { login: "Crisp-Inc" } });
 			}
+			if (url.endsWith("/repos/Crisp-Inc/defiant"))
+				return Response.json({ default_branch: "main" });
+			if (url.includes("/rules/branches/main")) return Response.json([]);
+			if (url.includes("/branches/main/protection"))
+				return new Response(null, { status: 404 });
 			if (url.includes("installation/repositories"))
 				return Response.json({
 					repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }],
@@ -1378,6 +1920,9 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					)
 				).status,
 			).toBe(302);
+			expect(
+				new TextDecoder().decode((await existingReader.read()).value),
+			).toContain("event: refresh");
 			for (let attempts = 0; !logs.length && attempts < 50; attempts++)
 				await new Promise((resolve) => setTimeout(resolve));
 			expect(
@@ -1431,6 +1976,8 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			console.error = originalError;
 			process.off("unhandledRejection", onUnhandledRejection);
 			users.replaceOne = originalReplace;
+			await existingReader.cancel();
+			app.stop();
 		}
 	}));
 

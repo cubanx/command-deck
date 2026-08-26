@@ -17,9 +17,9 @@ last_updated: 2026-08-13
 
 1. Install Bun.
 2. Run `bun install --frozen-lockfile`.
-3. Run `bun run dev` for the credential-free loopback demo.
+3. Run `bun run dev` for real local data through Varlock, or `bun run dev:demo` for credential-free loopback fixtures.
 
-Use `bun run start` only with the documented application environment. Never place secret values in this repository.
+`bun run dev` loads the approved 1Password Environment through Varlock and derives loopback `PUBLIC_URL` from `PORT` when absent. Never place secret values in this repository.
 
 ## Validation
 

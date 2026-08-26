@@ -11,7 +11,6 @@ export type Config = {
 	githubAppPrivateKey?: string;
 	githubWebhookSecret?: string;
 	reviewBot?: ReviewBotConfig;
-	reconcileIntervalMs?: number;
 	production: boolean;
 	publicUrl?: string;
 	oauthCallbackUrl?: string;
@@ -124,9 +123,15 @@ const productionUrls = (
 	};
 };
 
-const localUrls = (env: Record<string, string | undefined>) => {
+const localUrls = (env: Record<string, string | undefined>, port: number) => {
 	const value = env.PUBLIC_URL?.trim();
-	if (!value) return {};
+	if (!value) {
+		const origin = new URL(`http://127.0.0.1:${port}`);
+		return {
+			publicUrl: origin.origin,
+			oauthCallbackUrl: new URL("/auth/github/callback", origin).toString(),
+		};
+	}
 	let origin: URL;
 	try {
 		origin = new URL(value);
@@ -158,12 +163,6 @@ export function loadConfig(
 		(value) => value >= 1 && value <= 65535,
 		"PORT must be a valid TCP port",
 	);
-	const reconcileIntervalMs = integer(
-		env.RECONCILE_INTERVAL_MS,
-		21_600_000,
-		(value) => value >= 60_000,
-		"RECONCILE_INTERVAL_MS must be at least 60000",
-	);
 	const localDemo = localDemoConfig(env);
 	const production =
 		env.NODE_ENV === "production" || Boolean(env.RAILWAY_ENVIRONMENT_NAME);
@@ -178,7 +177,9 @@ export function loadConfig(
 		throw new Error("MONGODB_DATABASE is invalid");
 	if (production && mongoDatabase !== "command-center-ai-production")
 		throw new Error("MONGODB_DATABASE must be command-center-ai-production");
-	const urls = production ? productionUrls(env, production) : localUrls(env);
+	const urls = production
+		? productionUrls(env, production)
+		: localUrls(env, port);
 	return {
 		port,
 		hostname: localDemo ? "127.0.0.1" : undefined,
@@ -195,6 +196,5 @@ export function loadConfig(
 		githubAppPrivateKey: env.GITHUB_APP_PRIVATE_KEY,
 		githubWebhookSecret: env.GITHUB_WEBHOOK_SECRET,
 		reviewBot: reviewBotConfig(env),
-		reconcileIntervalMs,
 	};
 }

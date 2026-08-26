@@ -17,7 +17,9 @@ import { databaseReady, initializeDatabase, openDatabase } from "#/db";
 import {
 	acceptGitHubDelivery,
 	drainInbox,
+	githubPayloadInstallationId,
 	githubSignatureValid,
+	markDeliveriesRepairedByReconciliation,
 } from "#/events";
 import {
 	approvedInstallationIdsForUser,
@@ -33,6 +35,7 @@ import {
 	persistReconciliationFailure,
 	type ReadResult,
 	reconcileInstallations,
+	reconcilePullRequest,
 } from "#/github";
 import { approvedInstallationAccount } from "#/installations";
 import {
@@ -44,7 +47,63 @@ import {
 	mergeIntentFor,
 	mergeIntentHash,
 } from "#/merge";
+import {
+	countedFetch,
+	createReconciliationCoordinator,
+} from "#/reconciliation-coordinator";
+import { createWeekdayReconciliationScheduler } from "#/reconciliation-scheduler";
 import { buildBrowserScript } from "#/web/build";
+
+type AppDependencies = {
+	bootstrapInstallation?: typeof bootstrapInstallation;
+	reconcileInstallations?: typeof reconcileInstallations;
+	reconcilePullRequest?: typeof reconcilePullRequest;
+};
+
+const lifecycleChangedFields = (
+	before: Record<string, unknown> | undefined,
+	after: unknown,
+) => {
+	if (!after || typeof after !== "object") return [];
+	return [
+		["state", "state"],
+		["draft", "draft"],
+		["head_sha", "head"],
+		["mergeable", "mergeability"],
+		["unresolved_review_threads", "review_threads"],
+		["changes_requested", "reviews"],
+		["required_checks", "required_checks"],
+		["workflow_state", "actions"],
+		["checks_state", "checks"],
+		["labels", "labels"],
+	].flatMap(([field, category]) =>
+		JSON.stringify(before?.[field]) ===
+		JSON.stringify((after as Record<string, unknown>)[field])
+			? []
+			: [category],
+	);
+};
+
+const directReconciliationCounts = (result: ReadResult) => {
+	if (result.kind !== "changed")
+		return { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	const { prCount, changedPrCount, unchangedPrCount } = result;
+	if (
+		typeof prCount !== "number" ||
+		typeof changedPrCount !== "number" ||
+		typeof unchangedPrCount !== "number"
+	)
+		return { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	return Number.isSafeInteger(prCount) &&
+		Number.isSafeInteger(changedPrCount) &&
+		Number.isSafeInteger(unchangedPrCount) &&
+		prCount >= 0 &&
+		changedPrCount >= 0 &&
+		unchangedPrCount >= 0 &&
+		changedPrCount + unchangedPrCount === prCount
+		? { prCount, changedPrCount, unchangedPrCount }
+		: { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+};
 
 const cookie = (request: Request) =>
 	request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];
@@ -71,10 +130,18 @@ type AppContext = {
 	authenticated(request: Request): Promise<SessionIdentity | null>;
 	reconcile(
 		userId?: string,
+		trigger?: "scheduled" | "webhook" | "startup" | "manual",
+		installationIds?: string[],
 	): Promise<"success" | "running" | "failed" | "missing">;
+	reconcilePullRequest(target: {
+		installationId: string;
+		repositoryId: string;
+		number: number;
+	}): Promise<"success" | "failed">;
 	scheduleDrain(): Promise<void>;
 	refresh(userId: string): void;
 	mergeProvider?: MergeProvider;
+	bootstrapInstallation?: typeof bootstrapInstallation;
 };
 
 const freshShellHeaders = { "cache-control": "no-cache" };
@@ -475,26 +542,37 @@ const verifyInstallation = async (
 
 const queueBootstrap = (context: AppContext, installationId: string) => {
 	const { githubAppId, githubAppPrivateKey } = context.config;
-	if (!githubAppId || !githubAppPrivateKey) return;
+	if (!context.bootstrapInstallation && (!githubAppId || !githubAppPrivateKey))
+		return;
 	queueMicrotask(() => {
 		void (async () => {
 			let result: ReadResult,
 				classification = "ReadResult";
 			try {
-				const appJwt = githubAppJwt(
-					githubAppId,
-					githubAppPrivateKey.replace(/\\n/g, "\n"),
-				);
-				const token = await installationToken(appJwt, installationId);
-				result = await bootstrapInstallation(
-					context.db,
-					installationId,
-					token,
-					fetch,
-					appJwt,
-					undefined,
-					logGitHubRequestFailure,
-				);
+				if (context.bootstrapInstallation)
+					result = await context.bootstrapInstallation(
+						context.db,
+						installationId,
+						"",
+						fetch,
+						"",
+					);
+				else {
+					const appJwt = githubAppJwt(
+						githubAppId!,
+						githubAppPrivateKey!.replace(/\\n/g, "\n"),
+					);
+					const token = await installationToken(appJwt, installationId);
+					result = await bootstrapInstallation(
+						context.db,
+						installationId,
+						token,
+						fetch,
+						appJwt,
+						undefined,
+						logGitHubRequestFailure,
+					);
+				}
 			} catch (error) {
 				result = normalizedReconciliationFailure();
 				classification = error instanceof Error ? "Error" : "unknown";
@@ -520,6 +598,16 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 					result,
 					classification,
 				);
+			} else {
+				if (result.kind === "changed")
+					for (const user of await context.db.users
+						.find(
+							{ "installations.installationId": installationId },
+							{ projection: { _id: 1 } },
+						)
+						.toArray())
+						context.refresh(user._id);
+				await context.scheduleDrain();
 			}
 		})();
 	});
@@ -591,6 +679,7 @@ const oauthCallback = async (
 			))
 		)
 			return new Response("unapproved installation", { status: 403 });
+		context.refresh(userId);
 		queueBootstrap(context, installationId);
 	}
 	const session = await createSession(context.db, userId);
@@ -705,6 +794,8 @@ const mergeCallback = async (
 	try {
 		authoritative = {
 			...(await provider.inspect(intent)),
+			labels: projected.labels,
+			open_specs: projected.open_specs,
 			open_spec: projected.open_spec,
 		};
 	} catch (error) {
@@ -777,13 +868,11 @@ const webhookRoute = async (
 		)
 	)
 		return new Response("invalid GitHub webhook", { status: 401 });
-	const inserted = await acceptGitHubDelivery(
-		context.db,
-		delivery,
-		event,
-		body,
-	);
-	if (inserted) queueMicrotask(() => void context.scheduleDrain());
+	const intake = await acceptGitHubDelivery(context.db, delivery, event, body);
+	if (intake.kind === "malformed")
+		return new Response("invalid GitHub webhook body", { status: 400 });
+	if (intake.kind === "accepted")
+		queueMicrotask(() => void context.scheduleDrain());
 	return new Response(null, { status: 202 });
 };
 
@@ -812,23 +901,40 @@ const repairRoute = async (
 	)
 		return new Response("not found", { status: 404 });
 	const { githubAppId, githubAppPrivateKey } = context.config;
-	if (!githubAppId || !githubAppPrivateKey)
+	if (!context.bootstrapInstallation && (!githubAppId || !githubAppPrivateKey))
 		return new Response("GitHub App is not configured", { status: 503 });
 	try {
-		const appJwt = githubAppJwt(
-			githubAppId,
-			githubAppPrivateKey.replace(/\\n/g, "\n"),
-		);
-		const token = await installationToken(appJwt, installationId);
-		const result = await bootstrapInstallation(
-			context.db,
-			installationId,
-			token,
-			fetch,
-			appJwt,
-		);
+		const appJwt = context.bootstrapInstallation
+			? ""
+			: githubAppJwt(githubAppId!, githubAppPrivateKey!.replace(/\\n/g, "\n"));
+		const token = context.bootstrapInstallation
+			? ""
+			: await installationToken(appJwt, installationId);
+		const result = await (
+			context.bootstrapInstallation ?? bootstrapInstallation
+		)(context.db, installationId, token, fetch, appJwt);
 		if (result.kind === "error")
 			await persistReconciliationFailure(context.db, installationId, result);
+		else {
+			await markDeliveriesRepairedByReconciliation(
+				context.db,
+				installationId,
+				result.kind === "changed" && Array.isArray(result.body)
+					? result.body.map((repository: { id?: unknown }) =>
+							String(repository.id ?? ""),
+						)
+					: [],
+			);
+			if (result.kind === "changed")
+				for (const affected of await context.db.users
+					.find(
+						{ "installations.installationId": installationId },
+						{ projection: { _id: 1 } },
+					)
+					.toArray())
+					context.refresh(affected._id);
+			void context.scheduleDrain();
+		}
 		return Response.json(result);
 	} catch (error) {
 		const result = normalizedReconciliationFailure();
@@ -848,14 +954,107 @@ const reconcileRoute = async (
 	request: Request,
 	path: string,
 ) => {
-	if (path !== "/api/reconcile" || request.method !== "POST") return undefined;
+	if (request.method !== "POST") return undefined;
 	const user = await context.authenticated(request);
 	if (!user) return new Response("unauthenticated", { status: 401 });
-	const status = await context.reconcile(user.id);
-	if (status === "missing") return new Response("not found", { status: 404 });
+	if (path === "/api/reconcile") {
+		const body = await boundedBody(request, 4_000);
+		let installationIds: string[] | undefined;
+		if (body) {
+			try {
+				const installationId = String(JSON.parse(body).installationId ?? "");
+				if (!installationId)
+					return new Response("invalid reconciliation request", {
+						status: 400,
+					});
+				if (
+					!(await approvedInstallationIdsForUser(context.db, user.id)).includes(
+						installationId,
+					)
+				)
+					return new Response("not found", { status: 404 });
+				installationIds = [installationId];
+			} catch {
+				return new Response("invalid reconciliation request", { status: 400 });
+			}
+		}
+		const status = await context.reconcile(user.id, "manual", installationIds);
+		if (status === "missing") return new Response("not found", { status: 404 });
+		return Response.json(
+			{ status },
+			{ status: status === "failed" ? 502 : status === "running" ? 202 : 200 },
+		);
+	}
+	if (
+		!["/api/reconcile/pull-request", "/api/reconcile/pull-requests"].includes(
+			path,
+		)
+	)
+		return undefined;
+	if (!(await approvedInstallationIdsForUser(context.db, user.id)).length)
+		return new Response("not found", { status: 404 });
+	const targets = (await dashboardForUser(context.db, user.id)).pullRequests
+		.filter((pullRequest) => pullRequest.state === "open")
+		.map((pullRequest) => ({
+			installationId: String(pullRequest.installation_id),
+			repositoryId: String(pullRequest.repository_id),
+			number: Number(pullRequest.number),
+		}));
+	if (path === "/api/reconcile/pull-request") {
+		const body = await boundedBody(request, 4_000);
+		if (!body)
+			return new Response("invalid reconciliation request", { status: 400 });
+		let target: {
+			installationId: string;
+			repositoryId: string;
+			number: number;
+		};
+		try {
+			const parsed = JSON.parse(body);
+			target = {
+				installationId: String(parsed.installationId),
+				repositoryId: String(parsed.repositoryId),
+				number: Number(parsed.number),
+			};
+		} catch {
+			return new Response("invalid reconciliation request", { status: 400 });
+		}
+		if (
+			!targets.some(
+				(item) =>
+					item.installationId === target.installationId &&
+					item.repositoryId === target.repositoryId &&
+					item.number === target.number,
+			)
+		)
+			return new Response("not found", { status: 404 });
+		const status = await context.reconcilePullRequest(target);
+		return Response.json(
+			{ status },
+			{ status: status === "success" ? 200 : 502 },
+		);
+	}
+	const unique = [
+		...new Map(
+			targets.map((target) => [
+				`${target.installationId}:${target.repositoryId}:${target.number}`,
+				target,
+			]),
+		).values(),
+	];
+	const results = await Promise.all(
+		unique.map((target) => context.reconcilePullRequest(target)),
+	);
+	const failedCount = results.filter((result) => result === "failed").length;
 	return Response.json(
-		{ status },
-		{ status: status === "failed" ? 502 : status === "running" ? 202 : 200 },
+		{
+			status: failedCount ? "partial_failure" : "success",
+			count: unique.length,
+			successfulCount: unique.length - failedCount,
+			failedCount,
+			estimatedProviderRequests: unique.length * 4,
+		},
+		{ status: failedCount ? 502 : 200 },
 	);
 };
 
@@ -969,6 +1168,8 @@ const mergeConfirmRoute = async (
 				if (!projected) return {};
 				return {
 					...(await provider.inspect(intent)),
+					labels: projected.labels,
+					open_specs: projected.open_specs,
 					open_spec: projected.open_spec,
 				};
 			},
@@ -1009,10 +1210,269 @@ const handleRequest = async (context: AppContext, request: Request) => {
 	);
 };
 
+type PullRequestTarget = {
+	installationId: string;
+	repositoryId: string;
+	number: number;
+};
+type ReconciliationOptions = {
+	db: Db;
+	config: Config;
+	dependencies: AppDependencies;
+	reconcileAll: typeof reconcileInstallations;
+	reconcileTarget: typeof reconcilePullRequest;
+	refresh(userId: string): void;
+};
+
+const reconcileTargetedPullRequest = async (
+	options: ReconciliationOptions,
+	target: PullRequestTarget,
+) => {
+	const { db, config, dependencies, reconcileTarget, refresh } = options;
+	const counted = countedFetch(fetch);
+	const before = (
+		await db.users.findOne(
+			{ "installations.installationId": target.installationId },
+			{ projection: { installations: 1 } },
+		)
+	)?.installations
+		.find((item) => item.installationId === target.installationId)
+		?.repositories.find((item) => item.repositoryId === target.repositoryId)
+		?.pullRequests.find((item) => Number(item.number) === target.number);
+	const result = dependencies.reconcilePullRequest
+		? await reconcileTarget(db, {
+				...target,
+				token: "",
+				fetcher: counted.fetcher,
+			})
+		: await (async () => {
+				const appId = config.githubAppId;
+				const privateKey = config.githubAppPrivateKey;
+				if (!appId || !privateKey)
+					throw new Error("GitHub App is not configured");
+				const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
+				return reconcileTarget(db, {
+					...target,
+					token: await installationToken(
+						appJwt,
+						target.installationId,
+						counted.fetcher,
+					),
+					fetcher: counted.fetcher,
+					reportFailure: logGitHubRequestFailure,
+				});
+			})();
+	if (result.kind === "changed")
+		for (const user of await db.users
+			.find(
+				{ "installations.installationId": target.installationId },
+				{ projection: { _id: 1 } },
+			)
+			.toArray())
+			refresh(user._id);
+	return {
+		...result,
+		providerRequestCount: counted.count(),
+		changedFieldCategories:
+			result.kind === "changed"
+				? lifecycleChangedFields(before, result.body)
+				: [],
+	};
+};
+
+const createTargetedCoordinator = (options: ReconciliationOptions) =>
+	createReconciliationCoordinator({
+		reconcilePullRequest: (target) =>
+			reconcileTargetedPullRequest(options, target),
+		reconcileInstallations: async () => {},
+		recordRun: async (run) => {
+			await options.db.reconciliationRuns.insertOne(run);
+		},
+	});
+
+const createBroadReconciler = (options: ReconciliationOptions) => {
+	let reconciling: Promise<"success" | "failed"> | undefined;
+	let startupPending = false;
+	const reconcile = async (
+		userId?: string,
+		trigger: "scheduled" | "webhook" | "startup" | "manual" = "manual",
+		scopedInstallationIds?: string[],
+	): Promise<"success" | "running" | "failed" | "missing"> => {
+		const { db, config, reconcileAll, refresh } = options;
+		const installationIds =
+			scopedInstallationIds ??
+			(userId ? await approvedInstallationIdsForUser(db, userId) : undefined);
+		if (userId && !installationIds?.length) return "missing";
+		const appId = config.githubAppId;
+		const privateKey = config.githubAppPrivateKey;
+		if (!appId || !privateKey) return "failed";
+		if (reconciling) {
+			if (trigger === "startup" && !userId && !scopedInstallationIds)
+				startupPending = true;
+			return "running";
+		}
+		const requestCounts = new Map<string, number>();
+		let activeInstallationId: string | undefined;
+		const countingFetch = (...input: Parameters<typeof fetch>) => {
+			if (activeInstallationId)
+				requestCounts.set(
+					activeInstallationId,
+					(requestCounts.get(activeInstallationId) ?? 0) + 1,
+				);
+			return fetch(...input);
+		};
+		const work = reconcileAll(
+			db,
+			async (id) => {
+				activeInstallationId = id;
+				const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
+				return {
+					token: await installationToken(appJwt, id, countingFetch),
+					appJwt,
+				};
+			},
+			countingFetch,
+			installationIds,
+			undefined,
+			logGitHubRequestFailure,
+			async ({ installationId, startedAt, result }) => {
+				const counts = directReconciliationCounts(result);
+				if (result.kind === "changed")
+					for (const user of await db.users
+						.find(
+							{ "installations.installationId": installationId },
+							{ projection: { _id: 1 } },
+						)
+						.toArray())
+						refresh(user._id);
+				const completedAt = new Date();
+				const repairedDeliveryCount =
+					result.kind !== "changed" || !Array.isArray(result.body)
+						? 0
+						: await markDeliveriesRepairedByReconciliation(
+								db,
+								installationId,
+								result.body.map((repository: { id?: unknown }) =>
+									String(repository.id ?? ""),
+								),
+							);
+				const unresolvedDeliveryCount = (
+					await db.inboxDeliveries
+						.find(
+							{ provider: "github", status: "pending_verification" },
+							{ projection: { payload: 1 } },
+						)
+						.toArray()
+				).filter(
+					(delivery) =>
+						githubPayloadInstallationId(delivery.payload) === installationId,
+				).length;
+				await db.reconciliationRuns.insertOne({
+					installationId,
+					trigger,
+					startedAt,
+					completedAt,
+					durationMs: completedAt.getTime() - startedAt.getTime(),
+					prCount: counts.prCount,
+					providerRequestCount: requestCounts.get(installationId) ?? 0,
+					changedPrCount: counts.changedPrCount,
+					unchangedPrCount: counts.unchangedPrCount,
+					changedFieldCategories:
+						result.kind === "changed" ? ["installation"] : [],
+					failureCount: result.kind === "error" ? 1 : 0,
+					unresolvedDeliveryCount,
+					repairedDeliveryCount,
+					outcome: result.kind === "error" ? "failure" : "success",
+				});
+			},
+		)
+			.then(() => "success" as const)
+			.catch((error) => {
+				console.error("reconciliation failed", error);
+				return "failed" as const;
+			});
+		reconciling = work;
+		try {
+			const status = await work;
+			return status;
+		} finally {
+			if (reconciling === work) {
+				reconciling = undefined;
+				if (startupPending) {
+					startupPending = false;
+					void reconcile(undefined, "startup");
+				}
+			}
+		}
+	};
+	return reconcile;
+};
+
+const knownOpenPullRequests = async (db: Db, initialized: Promise<unknown>) => {
+	await initialized;
+	return (
+		await db.users.find({}, { projection: { installations: 1 } }).toArray()
+	).flatMap((user) =>
+		user.installations.flatMap((installation) =>
+			approvedInstallationAccount(installation.accountLogin)
+				? installation.repositories.flatMap((repository) =>
+						repository.pullRequests
+							.filter((pullRequest) => pullRequest.state === "open")
+							.map((pullRequest) => ({
+								installationId: installation.installationId,
+								repositoryId: repository.repositoryId,
+								number: Number(pullRequest.number),
+							})),
+					)
+				: [],
+		),
+	);
+};
+
+const createScheduleDrain = (options: {
+	db: Db;
+	initialized: Promise<unknown>;
+	githubTasks: Parameters<typeof drainInbox>[1];
+	reviewBot: Config["reviewBot"];
+	targetedCoordinator: ReturnType<typeof createTargetedCoordinator>;
+	reconcile: ReturnType<typeof createBroadReconciler>;
+	refresh(userId: string): void;
+}) => {
+	let draining = Promise.resolve();
+	let startupReconciled = false;
+	return () => {
+		draining = draining
+			.then(async () => {
+				await options.initialized;
+				const users = await drainInbox(
+					options.db,
+					options.githubTasks,
+					options.reviewBot,
+					undefined,
+					undefined,
+					(target) => options.targetedCoordinator.enqueue(target, "webhook"),
+				);
+				for (const user of users) options.refresh(user);
+				if (!startupReconciled) {
+					startupReconciled = true;
+					void options.reconcile(undefined, "startup");
+				}
+			})
+			.catch((error) =>
+				console.error(
+					"webhook drain failed",
+					error instanceof Error ? error.message : "unknown error",
+				),
+			);
+		return draining;
+	};
+};
+
 export function createApp(
 	db: Db,
 	config: Config,
 	mergeProvider?: AppContext["mergeProvider"],
+	dependencies: AppDependencies = {},
 ) {
 	const initialized = initializeDatabase(db).then(() =>
 		config.localDemo ? seedLocalDemo(db) : undefined,
@@ -1026,8 +1486,10 @@ export function createApp(
 		for (const controller of streams.get(userId) ?? [])
 			controller.enqueue(encoder.encode("event: refresh\\ndata: {}\\n\\n"));
 	};
-	let draining = Promise.resolve();
-	let reconciling: Promise<"success" | "failed"> | undefined;
+	const reconcileAll =
+		dependencies.reconcileInstallations ?? reconcileInstallations;
+	const reconcileTarget =
+		dependencies.reconcilePullRequest ?? reconcilePullRequest;
 	const githubTasks = async (input: {
 		installationId: string;
 		repositoryId: string;
@@ -1058,6 +1520,16 @@ export function createApp(
 		});
 		return null;
 	};
+	const reconciliationOptions = {
+		db,
+		config,
+		dependencies,
+		reconcileAll,
+		reconcileTarget,
+		refresh,
+	};
+	const targetedCoordinator = createTargetedCoordinator(reconciliationOptions);
+	const reconcile = createBroadReconciler(reconciliationOptions);
 	const context = {
 		db,
 		config,
@@ -1065,67 +1537,40 @@ export function createApp(
 		streams,
 		encoder,
 		mergeProvider: mergeProvider ?? defaultMergeProvider(config),
+		bootstrapInstallation: dependencies.bootstrapInstallation,
 		refresh,
 		authenticated: async (request: Request) => {
 			if (config.localDemo) return LOCAL_DEMO_USER;
 			const token = cookie(request);
 			return token ? sessionUser(db, token) : null;
 		},
-		reconcile: async (userId?: string) => {
-			const installationIds = userId
-				? await approvedInstallationIdsForUser(db, userId)
-				: undefined;
-			if (userId && !installationIds?.length) return "missing";
-			const appId = config.githubAppId,
-				privateKey = config.githubAppPrivateKey;
-			if (!appId || !privateKey) return "failed";
-			if (reconciling) return "running";
-			const work = reconcileInstallations(
-				db,
-				async (id) => {
-					const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
-					return { token: await installationToken(appJwt, id), appJwt };
-				},
-				fetch,
-				installationIds,
-				undefined,
-				logGitHubRequestFailure,
-			)
-				.then(() => "success" as const)
-				.catch((error) => {
-					console.error("reconciliation failed", error);
-					return "failed" as const;
-				});
-			reconciling = work;
-			try {
-				const status = await work;
-				if (status === "success" && userId) refresh(userId);
-				return status;
-			} finally {
-				if (reconciling === work) reconciling = undefined;
-			}
-		},
+		reconcile,
+		reconcilePullRequest: (target) =>
+			targetedCoordinator.enqueue(target, "manual"),
 		scheduleDrain: async () => {},
 	} satisfies AppContext;
-	context.scheduleDrain = () => {
-		draining = draining
-			.then(async () => {
-				await initialized;
-				const users = await drainInbox(db, githubTasks, config.reviewBot);
-				for (const user of users) refresh(user);
-			})
-			.catch((error) =>
-				console.error(
-					"webhook drain failed",
-					error instanceof Error ? error.message : "unknown error",
-				),
-			);
-		return draining;
-	};
+	context.scheduleDrain = createScheduleDrain({
+		db,
+		initialized,
+		githubTasks,
+		reviewBot: config.reviewBot,
+		targetedCoordinator,
+		reconcile,
+		refresh,
+	});
+	const scheduler = createWeekdayReconciliationScheduler({
+		knownOpenPullRequests: () => knownOpenPullRequests(db, initialized),
+		enqueue: targetedCoordinator.enqueue,
+	});
+	if (config.githubAppId && config.githubAppPrivateKey) scheduler.start();
 	return {
 		drain: context.scheduleDrain,
 		reconcile: () => context.reconcile(),
 		fetch: (request: Request) => handleRequest(context, request),
+		stop() {
+			scheduler.stop();
+			targetedCoordinator.stop();
+		},
 	};
 }
 if (import.meta.main) {
@@ -1143,8 +1588,6 @@ if (import.meta.main) {
 				fetch: app.fetch,
 			});
 			void app.drain();
-			if (config.githubAppId && config.githubAppPrivateKey)
-				setInterval(() => void app.reconcile(), config.reconcileIntervalMs);
 		})
 		.catch((error) => {
 			console.error(

@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { parseTasks as parseOpenSpecTasks } from "#/openspec";
 import type { BrowserDirectoryHandle } from "#/web/app";
 import {
 	appearanceFor,
@@ -11,8 +12,10 @@ import {
 	derivePullRequests,
 	exactCheckoutDirectory,
 	fuzzyScore,
+	lifecycleFor,
 	loadFailureFor,
 	localSpecFor,
+	localSpecsFor,
 	mergeControlFor,
 	mergeMarkup,
 	pageFor,
@@ -52,6 +55,7 @@ const items = [
 			head_ref: "defiant/ready",
 			draft: 1,
 			mergeable: "clean",
+			labels: ["openspec-not-required"],
 		},
 		spec: { change_name: "upgrade-defiant" },
 	},
@@ -63,6 +67,7 @@ const items = [
 			head_ref: "reports/main",
 			draft: 0,
 			mergeable: "unknown",
+			labels: ["openspec-not-required"],
 		},
 		spec: null,
 	},
@@ -74,6 +79,7 @@ const items = [
 			head_ref: "docking/controls",
 			draft: 1,
 			mergeable: false,
+			labels: ["openspec-not-required"],
 		},
 		spec: null,
 	},
@@ -85,6 +91,13 @@ const items = [
 			head_ref: "defiant/telemetry",
 			draft: 0,
 			mergeable: true,
+			labels: ["openspec-not-required"],
+			review_activity: true,
+			completed_review_count: 1,
+			unresolved_review_threads: 0,
+			changes_requested: false,
+			repository_policy_loaded: true,
+			required_checks: [],
 		},
 		spec: null,
 	},
@@ -93,19 +106,270 @@ const items = [
 type ViewItem = { pr: Record<string, unknown> };
 const numbers = (views: ViewItem[]) => views.map(({ pr }) => Number(pr.number));
 
+const lifecycleReady = {
+	labels: ["openspec-not-required"],
+	review_activity: true,
+	completed_review_count: 1,
+	unresolved_review_threads: 0,
+	changes_requested: false,
+	repository_policy_loaded: true,
+	required_checks: [],
+	mergeable: "clean",
+};
+
+test("reduces lifecycle evidence with explicit precedence and named blockers", () => {
+	const cases = [
+		[{ state: "closed" }, undefined, "closed", []],
+		[{ ...lifecycleReady, draft: true }, undefined, "draft", ["Draft"]],
+		[{}, undefined, "openspec", ["No OpenSpec found"]],
+		[
+			{ ...lifecycleReady },
+			{ completed: 1, total: 2, pre_merge_ready: false },
+			"openspec",
+			["OpenSpec incomplete"],
+		],
+		[
+			{ ...lifecycleReady, review_activity: false, completed_review_count: 0 },
+			undefined,
+			"ready",
+			[],
+		],
+		[
+			{ ...lifecycleReady, unresolved_review_threads: 1 },
+			undefined,
+			"reviewing",
+			["Unresolved review threads"],
+		],
+		[
+			{ ...lifecycleReady, unresolved_review_threads: undefined },
+			undefined,
+			"reviewing",
+			["Review threads unavailable"],
+		],
+		[
+			{
+				...lifecycleReady,
+				review_requested: true,
+				completed_review_count: 0,
+				review_activity: false,
+			},
+			undefined,
+			"reviewing",
+			["Review pending"],
+		],
+		[
+			{ ...lifecycleReady, changes_requested: true },
+			undefined,
+			"reviewing",
+			["Changes requested"],
+		],
+		[
+			{ ...lifecycleReady, changes_requested: undefined },
+			undefined,
+			"reviewing",
+			["Review state unavailable"],
+		],
+		[
+			{ ...lifecycleReady, mergeable: "unknown" },
+			undefined,
+			"reviewing",
+			["Mergeability unknown"],
+		],
+		[
+			{
+				...lifecycleReady,
+				head_sha: "a",
+				required_checks: [{ head_sha: "a", conclusion: "skipped" }],
+			},
+			undefined,
+			"mergeable",
+			[],
+		],
+		[
+			{ ...lifecycleReady, repository_policy_loaded: false },
+			undefined,
+			"reviewing",
+			["Repository policy unavailable"],
+		],
+		[
+			{
+				...lifecycleReady,
+				required_checks: [{ head_sha: "a", conclusion: "failure" }],
+				head_sha: "a",
+			},
+			undefined,
+			"reviewing",
+			["Required checks incomplete"],
+		],
+		[lifecycleReady, undefined, "mergeable", []],
+	] as const;
+	for (const [pr, spec, stage, blockers] of cases)
+		expect(lifecycleFor(pr, spec)).toEqual({ stage, blockers });
+	expect(
+		lifecycleFor({
+			...lifecycleReady,
+			completed_review_count: 0,
+			bot_review_state: "COMMENTED",
+		}),
+	).toMatchObject({ stage: "mergeable" });
+	expect(
+		lifecycleFor({
+			...lifecycleReady,
+			head_sha: "a",
+			required_checks: [{ head_sha: "a", conclusion: "success" }],
+			checks_state: "failure",
+			workflow_state: "failure",
+		}),
+	).toMatchObject({ stage: "mergeable" });
+	const descriptiveOnly = lifecycleFor(lifecycleReady);
+	expect(descriptiveOnly.stage).toBe("mergeable");
+	expect(
+		mergeMarkup({
+			...lifecycleReady,
+			installation_pull_requests: "read",
+			state: "open",
+		}),
+	).toBe("");
+	expect(lifecycleFor({ ...lifecycleReady, head_sha: "new" })).toMatchObject({
+		stage: "mergeable",
+	});
+	expect(
+		mergeMarkup({
+			...lifecycleReady,
+			installation_pull_requests: "write",
+			state: "open",
+			draft: false,
+			mergeable: "clean",
+		}),
+	).toContain(">Merge</button>");
+});
+
+test("requires declaration confirmation for changed OpenSpec candidates", () => {
+	expect(
+		lifecycleFor({
+			...lifecycleReady,
+			open_spec_declaration: "absent",
+			detected_open_specs: ["capture-wolf-359"],
+		}),
+	).toEqual({ stage: "openspec", blockers: ["Confirm OpenSpec association"] });
+	expect(
+		lifecycleFor({
+			...lifecycleReady,
+			open_spec_declaration: "empty",
+			labels: ["openspec-not-required"],
+		}),
+	).toMatchObject({ stage: "mergeable" });
+	expect(
+		pullRequestStatusMarkup({
+			pr: {
+				...lifecycleReady,
+				number: 7,
+				open_spec_declaration: "declared",
+				detected_open_specs: ["extra<spec>"],
+			},
+			spec: null,
+			bucket: "mergeable",
+			blockers: [],
+			score: 0,
+			progress: null,
+		}),
+	).toContain('aria-label="Detected OpenSpec candidates"');
+	expect(
+		pullRequestStatusMarkup({
+			pr: {
+				...lifecycleReady,
+				number: 7,
+				open_spec_declaration: "declared",
+				detected_open_specs: ["zeta", "extra<spec>"],
+			},
+			spec: null,
+			bucket: "mergeable",
+			blockers: [],
+			score: 0,
+			progress: null,
+		}),
+	).toContain("<ul><li>zeta</li><li>extra&lt;spec&gt;</li></ul>");
+});
+
+test("uses five lifecycle stages and global opened ordering", () => {
+	const rendered = pullRequestStatusMarkup({
+		pr: { ...lifecycleReady, number: 7 },
+		bucket: "reviewing",
+		blockers: ["Required checks incomplete"],
+		progress: null,
+		score: 0,
+	});
+	for (const stage of [
+		"Draft",
+		"OpenSpec ready",
+		"Ready for review",
+		"Reviewing",
+		"Mergeable",
+	])
+		expect(rendered).toContain(stage);
+	const ordered = derivePullRequests([
+		{ pr: { ...lifecycleReady, number: 3, full_name: "ds9/zeta" } },
+		{
+			pr: {
+				...lifecycleReady,
+				number: 2,
+				full_name: "ds9/alpha",
+				opened_at: "2026-01-02T00:00:00Z",
+			},
+		},
+		{
+			pr: {
+				...lifecycleReady,
+				number: 1,
+				full_name: "ds9/beta",
+				opened_at: "2026-01-01T00:00:00Z",
+			},
+		},
+	]);
+	expect(numbers(ordered)).toEqual([2, 1, 3]);
+	expect(
+		derivePullRequests(
+			[
+				{ pr: { ...lifecycleReady, number: 2, full_name: "ds9/zeta" } },
+				{
+					pr: {
+						...lifecycleReady,
+						number: 1,
+						full_name: "ds9/alpha",
+						opened_at: "2026-01-01T00:00:00Z",
+					},
+				},
+				{
+					pr: {
+						...lifecycleReady,
+						number: 2,
+						full_name: "ds9/alpha",
+						opened_at: "2026-01-01T00:00:00Z",
+					},
+				},
+			],
+			{ sort: { mode: "opened", direction: "desc" } },
+		).map(({ pr }) => `${pr.full_name}:${pr.number}`),
+	).toEqual(["ds9/alpha:1", "ds9/alpha:2", "ds9/zeta:2"]);
+	expect(sortPreference('{"mode":"number","direction":"desc"}')).toEqual({
+		mode: "closest",
+		direction: "asc",
+	});
+});
+
 test("status buckets remain exclusive while closest-to-merge uses independent blockers", () => {
 	expect(bucketFor(items[0].pr)).toBe("draft");
 	expect(bucketFor(items[1].pr)).toBe("ready");
 	expect(bucketFor(items[2].pr)).toBe("draft");
-	expect(numbers(derivePullRequests(items, {}))).toEqual([9, 11, 12, 10]);
+	expect(numbers(derivePullRequests(items, {}))).toEqual([9, 11, 10, 12]);
 });
 
 test("lifecycle precedence reflects current projected evidence, including regressions", () => {
-	const pr = { draft: false, mergeable: true };
+	const pr = { ...lifecycleReady, draft: false, mergeable: true };
 	expect(bucketFor(pr)).toBe("mergeable");
 	pr.mergeable = false;
-	expect(bucketFor(pr)).toBe("ready");
-	expect(bucketFor({ draft: true, mergeable: "clean" })).toBe("draft");
+	expect(bucketFor(pr)).toBe("reviewing");
+	expect(bucketFor({ ...lifecycleReady, draft: true })).toBe("draft");
 });
 
 test("status presentation has one warning, no positive pills, and preserves projected detail", () => {
@@ -201,14 +465,20 @@ test("hover detail waits briefly, stays open on leave, and is replaced by anothe
 
 test("stage and attention filters compose independently", () => {
 	const filtered = [
-		{ pr: { number: 3, full_name: "ds9/ops", draft: true }, spec: null },
-		{ pr: { number: 2, full_name: "ds9/ops", mergeable: true }, spec: null },
+		{
+			pr: { ...lifecycleReady, number: 3, full_name: "ds9/ops", draft: true },
+			spec: null,
+		},
+		{ pr: { ...lifecycleReady, number: 2, full_name: "ds9/ops" }, spec: null },
 		{
 			pr: {
+				...lifecycleReady,
 				number: 1,
 				full_name: "ds9/ops",
-				mergeable: false,
 				workflow_state: "failure",
+				review_activity: false,
+				completed_review_count: 0,
+				needs_attention: true,
 			},
 			spec: null,
 		},
@@ -259,14 +529,21 @@ test("stage and attention filters compose independently", () => {
 test("demo lifecycle states render as Draft, Ready for review, and Mergeable", () => {
 	const demo = derivePullRequests(
 		[
-			{ pr: { number: 1, draft: true, mergeable: "unknown" } },
-			{ pr: { number: 2, draft: false, mergeable: "unknown" } },
-			{ pr: { number: 3, draft: false, mergeable: "clean" } },
+			{ pr: { ...lifecycleReady, number: 1, draft: true } },
+			{
+				pr: {
+					number: 2,
+					labels: ["openspec-not-required"],
+					review_activity: false,
+					completed_review_count: 0,
+				},
+			},
+			{ pr: { ...lifecycleReady, number: 3 } },
 			{
 				pr: {
 					number: 4,
 					draft: false,
-					mergeable: "unknown",
+					...lifecycleReady,
 					review_state: "changes_requested",
 				},
 			},
@@ -274,7 +551,7 @@ test("demo lifecycle states render as Draft, Ready for review, and Mergeable", (
 				pr: {
 					number: 5,
 					draft: false,
-					mergeable: "clean",
+					...lifecycleReady,
 					workflow_state: "failure",
 				},
 			},
@@ -290,16 +567,25 @@ test("demo lifecycle states render as Draft, Ready for review, and Mergeable", (
 	);
 });
 
-test("closest-to-merge counts each unresolved gate once and shows exact labels", () => {
+test("closest-to-merge retains named lifecycle blockers", () => {
 	const complete = { change_name: "complete", completed: 3, total: 3 };
 	const cases = [
-		[{ draft: true }, "Draft"],
-		[{ review_state: "changes_requested" }, "Changes requested"],
-		[{ workflow_state: "failure" }, "Actions failed"],
-		[{ checks_state: "timed_out" }, "Checks failed"],
-		[{ mergeable: "conflicting" }, "Mergeability blocked"],
+		[{ ...lifecycleReady, draft: true }, "Draft"],
 		[
-			{},
+			{
+				...lifecycleReady,
+				changes_requested: true,
+				review_state: "changes_requested",
+			},
+			"Changes requested",
+		],
+		[
+			{ ...lifecycleReady, unresolved_review_threads: 1 },
+			"Unresolved review threads",
+		],
+		[{ ...lifecycleReady, mergeable: "conflicting" }, "Mergeability blocked"],
+		[
+			{ ...lifecycleReady },
 			"OpenSpec incomplete",
 			{ change_name: "incomplete", completed: 1, total: 3 },
 		],
@@ -308,14 +594,56 @@ test("closest-to-merge counts each unresolved gate once and shows exact labels",
 		expect(blockersFor(pr, spec)).toEqual([label]);
 	expect(
 		blockersFor(
-			{
-				draft: true,
-				review_state: "changes_requested",
-				workflow_state: "failed",
-				checks_state: "cancelled",
-				mergeable: false,
-			},
+			{ ...lifecycleReady, draft: true },
 			{ change_name: "incomplete", completed: 1, total: 3 },
+		),
+	).toHaveLength(1);
+});
+
+test("closest-to-merge counts each unresolved gate once and shows exact labels", () => {
+	const complete = { change_name: "complete", completed: 3, total: 3 };
+	const cases = [
+		[{ ...lifecycleReady, completed_review_count: 0 }, "Review pending"],
+		[
+			{
+				...lifecycleReady,
+				changes_requested: true,
+				review_state: "changes_requested",
+			},
+			"Changes requested",
+		],
+		[
+			{ ...lifecycleReady, unresolved_review_threads: 1 },
+			"Unresolved review threads",
+		],
+		[
+			{ ...lifecycleReady, repository_policy_loaded: false },
+			"Repository policy unavailable",
+		],
+		[
+			{
+				...lifecycleReady,
+				required_checks: [{ head_sha: "stale", conclusion: "failure" }],
+			},
+			"Required checks incomplete",
+		],
+		[{ ...lifecycleReady, mergeable: "conflicting" }, "Mergeability blocked"],
+	] as const;
+	for (const [pr, label, spec = complete] of cases)
+		expect(blockersFor(pr, spec)).toEqual([label]);
+	expect(
+		blockersFor(
+			{
+				...lifecycleReady,
+				completed_review_count: 0,
+				changes_requested: true,
+				review_state: "changes_requested",
+				unresolved_review_threads: 1,
+				repository_policy_loaded: false,
+				required_checks: [{ head_sha: "stale", conclusion: "failure" }],
+				mergeable: "conflicting",
+			},
+			complete,
 		),
 	).toHaveLength(6);
 });
@@ -323,18 +651,24 @@ test("closest-to-merge counts each unresolved gate once and shows exact labels",
 test("closest-to-merge keeps incomplete OpenSpec blockers visible before progress and PR ties", () => {
 	const ordered = derivePullRequests(
 		[
-			{ pr: { number: 1, full_name: "ds9/ops" }, spec: null },
 			{
-				pr: { number: 2, full_name: "ds9/ops" },
+				pr: { ...lifecycleReady, number: 1, full_name: "ds9/ops" },
+				spec: null,
+			},
+			{
+				pr: { ...lifecycleReady, number: 2, full_name: "ds9/ops" },
 				spec: { completed: 1, total: 2 },
 			},
 			{
-				pr: { number: 3, full_name: "ds9/ops" },
+				pr: { ...lifecycleReady, number: 3, full_name: "ds9/ops" },
 				spec: { completed: 3, total: 4 },
 			},
-			{ pr: { number: 4, full_name: "ds9/ops" }, spec: null },
+			{
+				pr: { ...lifecycleReady, number: 4, full_name: "ds9/ops" },
+				spec: null,
+			},
 		],
-		{},
+		{ sort: { mode: "closest", direction: "asc" } },
 	);
 	expect(numbers(ordered)).toEqual([1, 4, 3, 2]);
 });
@@ -406,16 +740,27 @@ test("failed Actions and Checks are composable filters using projected aggregate
 		},
 	];
 	expect(
-		numbers(derivePullRequests(filtered, { failedActions: true })),
-	).toEqual([4, 2]);
-	expect(numbers(derivePullRequests(filtered, { failedChecks: true }))).toEqual(
-		[3, 2],
-	);
+		numbers(
+			derivePullRequests(filtered, {
+				failedActions: true,
+				sort: { mode: "closest", direction: "asc" },
+			}),
+		),
+	).toEqual([2, 4]);
+	expect(
+		numbers(
+			derivePullRequests(filtered, {
+				failedChecks: true,
+				sort: { mode: "closest", direction: "asc" },
+			}),
+		),
+	).toEqual([2, 3]);
 	expect(
 		numbers(
 			derivePullRequests(filtered, {
 				failedActions: true,
 				failedChecks: true,
+				sort: { mode: "closest", direction: "asc" },
 			}),
 		),
 	).toEqual([2]);
@@ -499,6 +844,7 @@ test("local checkout keys, permissions, and remotes fail closed", () => {
 test("merge controls expose one named state instead of an opaque boolean chain", () => {
 	for (const mergeable of [true, "true", "clean"]) {
 		const pullRequest = {
+			...lifecycleReady,
 			installation_pull_requests: "write",
 			state: "open",
 			draft: false,
@@ -592,7 +938,30 @@ test("local checkout parsing retains only verified repository and OpenSpec evide
 			source_ref: "prepare-defiant",
 		}),
 	]);
-	expect(parseTasks("## Helm\n- [x] Set course").completed).toBe(1);
+	expect(
+		parseTasks(
+			"## Helm\n- [x] Set course\n## Observe [post-merge]\n- [ ] Watch",
+		),
+	).toMatchObject({ completed: 1, total: 2, pre_merge_ready: true });
+	const activeTasks =
+		"## Build\n- [x] Implement\n- [ ] Verify\n\n## Observe [post-merge]\n- [ ] Watch";
+	expect(parseTasks(activeTasks)).toMatchObject({
+		pre_merge_ready: false,
+		active_group: { title: "Build" },
+	});
+	expect(parseOpenSpecTasks(activeTasks)).toMatchObject({
+		preMergeReady: false,
+		activeGroup: { title: "Build" },
+	});
+	const postMergeOnlyTasks = "## Observe [post-merge]\n- [ ] Watch";
+	expect(parseTasks(postMergeOnlyTasks)).toMatchObject({
+		pre_merge_ready: true,
+		active_group: null,
+	});
+	expect(parseOpenSpecTasks(postMergeOnlyTasks)).toMatchObject({
+		preMergeReady: true,
+		activeGroup: null,
+	});
 	expect(await readRepositoryCheckout(repository, handle)).toBe("Resolved");
 	const pullRequest = {
 		installation_id: "12",
@@ -695,10 +1064,56 @@ test("local OpenSpec evidence is scoped to repository identity before branch mat
 	).toMatchObject({ repository_id: "one" });
 });
 
+test("local OpenSpec evidence keeps all exact matches and suppresses branch fallback", () => {
+	const pr = {
+		installation_id: "i",
+		repository_id: "one",
+		head_sha: "a".repeat(40),
+		head_ref: "feature/shared",
+	};
+	expect(
+		localSpecsFor(
+			pr,
+			[pr],
+			[
+				{
+					installation_id: "i",
+					repository_id: "one",
+					change_name: "zeta",
+					source_commit: pr.head_sha,
+				},
+				{
+					installation_id: "i",
+					repository_id: "one",
+					change_name: "alpha",
+					source_commit: pr.head_sha,
+				},
+				{
+					installation_id: "i",
+					repository_id: "one",
+					change_name: "branch",
+					source_ref: pr.head_ref,
+				},
+			],
+		),
+	).toMatchObject([{ change_name: "alpha" }, { change_name: "zeta" }]);
+	expect(
+		blockersFor({
+			...lifecycleReady,
+			open_specs: [
+				{ completed: 1, total: 1 },
+				{ completed: 1, total: 2 },
+			],
+		}),
+	).toEqual(["OpenSpec incomplete"]);
+});
+
 test("sort modes use deterministic direction, null-last fallbacks, and safe preferences", () => {
+	expect(sortPreference(null)).toEqual({ mode: "closest", direction: "asc" });
 	const sortable = [
 		{
 			pr: {
+				...lifecycleReady,
 				number: 4,
 				full_name: "ds9/zeta",
 				updated_at: "2026-01-04T00:00:00Z",
@@ -707,14 +1122,18 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 		},
 		{
 			pr: {
+				...lifecycleReady,
 				number: 3,
 				full_name: "ds9/alpha",
 				updated_at: "2026-01-03T00:00:00Z",
 			},
 			spec: { completed: 3, total: 4 },
 		},
-		{ pr: { number: 2, full_name: "ds9/beta" }, spec: null },
-		{ pr: { number: 1, full_name: "ds9/alpha" }, spec: null },
+		{ pr: { ...lifecycleReady, number: 2, full_name: "ds9/beta" }, spec: null },
+		{
+			pr: { ...lifecycleReady, number: 1, full_name: "ds9/alpha" },
+			spec: null,
+		},
 	];
 	expect(
 		numbers(
@@ -734,20 +1153,6 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 		numbers(
 			derivePullRequests(sortable, {
 				sort: { mode: "closest", direction: "desc" },
-			}),
-		),
-	).toEqual([3, 4, 1, 2]);
-	expect(
-		numbers(
-			derivePullRequests(sortable, {
-				sort: { mode: "number", direction: "asc" },
-			}),
-		),
-	).toEqual([1, 2, 3, 4]);
-	expect(
-		numbers(
-			derivePullRequests(sortable, {
-				sort: { mode: "number", direction: "desc" },
 			}),
 		),
 	).toEqual([4, 3, 2, 1]);
@@ -780,8 +1185,8 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 		),
 	).toEqual([4, 2, 1, 3]);
 	expect(sortPreference('{"mode":"number","direction":"desc"}')).toEqual({
-		mode: "number",
-		direction: "desc",
+		mode: "closest",
+		direction: "asc",
 	});
 	expect(sortPreference("not JSON")).toEqual({
 		mode: "closest",
@@ -809,4 +1214,21 @@ test("sort modes use deterministic direction, null-last fallbacks, and safe pref
 			{},
 		).map(({ pr }) => pr.full_name),
 	).toEqual(["ds9/alpha", "ds9/zeta"]);
+});
+
+test("closest-to-merge ranks lifecycle stage before blockers", () => {
+	const sorted = derivePullRequests(
+		[
+			{
+				pr: { ...lifecycleReady, number: 1, full_name: "ds9/ops", draft: true },
+				spec: null,
+			},
+			{
+				pr: { ...lifecycleReady, number: 2, full_name: "ds9/ops" },
+				spec: null,
+			},
+		],
+		{ sort: { mode: "closest", direction: "asc" } },
+	);
+	expect(sorted.map((item) => item.pr.number)).toEqual([2, 1]);
 });
