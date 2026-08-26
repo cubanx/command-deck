@@ -4,6 +4,7 @@ import type {
 	MergedPullRequestEvidence,
 	PullRequest,
 	ReconciliationEvidence,
+	Repository,
 } from "#/db";
 import {
 	appendReconciliationEvidence,
@@ -59,7 +60,13 @@ export type GitHubRequestFailureReporter = (
 	failure: GitHubRequestFailure,
 ) => void | Promise<void>;
 export type ReadResult =
-	| { kind: "changed"; body: unknown }
+	| {
+			kind: "changed";
+			body: unknown;
+			prCount?: number;
+			changedPrCount?: number;
+			unchangedPrCount?: number;
+	  }
 	| { kind: "unchanged" }
 	| {
 			kind: "error";
@@ -70,6 +77,32 @@ export type ReadResult =
 			repository?: string;
 			status?: number;
 	  };
+
+const projectedPullRequestCounts = (
+	previousRepositories: Repository[],
+	snapshots: Repository[],
+	login: string | undefined,
+) => {
+	const counts = { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	for (const snapshot of snapshots) {
+		const previous = previousRepositories.find(
+			(repository) => repository.repositoryId === snapshot.repositoryId,
+		);
+		for (const pr of snapshot.pullRequests.filter((pr) =>
+			sameLogin(pr.author_login, login),
+		)) {
+			const old = previous?.pullRequests.find(
+				(item) => item.number === pr.number,
+			);
+			counts.prCount++;
+			if (JSON.stringify(old) === JSON.stringify({ ...old, ...pr }))
+				counts.unchangedPrCount++;
+			else counts.changedPrCount++;
+		}
+	}
+	return counts;
+};
+
 type OpenSpecTask = {
 	repositoryId: string;
 	path: string;
@@ -1194,7 +1227,7 @@ export async function bootstrapInstallation(
 	const bound = await db.users
 		.find(
 			{ "installations.installationId": installationId },
-			{ projection: { _id: 1, installations: 1 } },
+			{ projection: { _id: 1, github: 1, installations: 1 } },
 		)
 		.toArray();
 	if (
@@ -1252,15 +1285,7 @@ export async function bootstrapInstallation(
 	);
 	if (repos.kind !== "changed") return repos;
 	const repositories = repos.body as Array<{ id: number; full_name: string }>;
-	const snapshots = [] as Array<{
-		repositoryId: string;
-		full_name: string;
-		pullRequests: PullRequest[];
-		openSpecs: Record<string, unknown>[];
-		deployments: Record<string, unknown>[];
-		recentMergedPullRequests?: MergedPullRequestEvidence[];
-		policy?: { refreshed_at: string; required_checks: unknown[] };
-	}>;
+	const snapshots: Repository[] = [];
 	const openSpecTasks: OpenSpecTask[] = [];
 	for (const repo of repositories) {
 		const existingRepository = bound
@@ -1365,9 +1390,19 @@ export async function bootstrapInstallation(
 		});
 	}
 	const pullRequestsPermission = installationBody.permissions?.pull_requests;
-	await Promise.all(
-		bound.map((user) =>
-			mutateUser(db, user._id, (aggregate) => {
+	const perUserCounts = await Promise.all(
+		bound.map(async (user) => {
+			let attemptCounts = {
+				prCount: 0,
+				changedPrCount: 0,
+				unchangedPrCount: 0,
+			};
+			await mutateUser(db, user._id, (aggregate) => {
+				attemptCounts = {
+					prCount: 0,
+					changedPrCount: 0,
+					unchangedPrCount: 0,
+				};
 				const installation = aggregate.installations.find(
 					(item) => item.installationId === installationId,
 				);
@@ -1378,6 +1413,11 @@ export async function bootstrapInstallation(
 							!sameLogin(installation.accountLogin, account)))
 				)
 					return;
+				attemptCounts = projectedPullRequestCounts(
+					installation.repositories,
+					snapshots,
+					aggregate.github.login,
+				);
 				if (!installation.accountLogin) installation.accountLogin = account;
 				installation.permissions = {
 					pull_requests:
@@ -1416,8 +1456,17 @@ export async function bootstrapInstallation(
 					operation: "reconciliation",
 					summary: "Reconciliation completed",
 				});
-			}),
-		),
+			});
+			return attemptCounts;
+		}),
+	);
+	const prCounts = perUserCounts.reduce(
+		(total, counts) => ({
+			prCount: total.prCount + counts.prCount,
+			changedPrCount: total.changedPrCount + counts.changedPrCount,
+			unchangedPrCount: total.unchangedPrCount + counts.unchangedPrCount,
+		}),
+		{ prCount: 0, changedPrCount: 0, unchangedPrCount: 0 },
 	);
 	for (const task of openSpecTasks)
 		await projectOpenSpec(db, {
@@ -1425,7 +1474,7 @@ export async function bootstrapInstallation(
 			accountLogin: account,
 			...task,
 		});
-	return repos;
+	return { ...repos, ...prCounts };
 }
 export async function bootstrapDeployments(
 	db: Db,
@@ -1505,6 +1554,7 @@ export async function reconcileInstallations(
 	reportTaskFetchFailure?: GitHubRequestFailureReporter,
 	onResult?: (item: {
 		installationId: string;
+		startedAt: Date;
 		result: ReadResult;
 	}) => Promise<void>,
 ) {
@@ -1529,6 +1579,7 @@ export async function reconcileInstallations(
 			].sort();
 	const results: Array<{ installationId: string; result: ReadResult }> = [];
 	for (const installationId of ids) {
+		const startedAt = new Date();
 		let result: ReadResult;
 		try {
 			const { token, appJwt } = await credentialsFor(installationId);
@@ -1551,7 +1602,7 @@ export async function reconcileInstallations(
 			);
 		}
 		results.push({ installationId, result });
-		await onResult?.({ installationId, result });
+		await onResult?.({ installationId, startedAt, result });
 		if (result.kind === "error") {
 			logReconciliationFailure(
 				"installation reconciliation failed",

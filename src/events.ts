@@ -188,6 +188,14 @@ type GitHubPayload = {
 		log_url?: unknown;
 	};
 };
+
+export const githubPayloadInstallationId = (payload?: string) => {
+	try {
+		return id((JSON.parse(payload ?? "{}") as GitHubPayload).installation?.id);
+	} catch {
+		return undefined;
+	}
+};
 type TaskFetcher = (input: {
 	installationId: string;
 	repositoryId: string;
@@ -925,13 +933,12 @@ export async function markDeliveriesRepairedByReconciliation(
 		.find({ provider: "github", status: "pending_verification" })
 		.toArray();
 	const ids = rows.flatMap((row) => {
+		if (githubPayloadInstallationId(row.payload) !== installationId) return [];
 		try {
 			const data = JSON.parse(row.payload ?? "{}") as GitHubPayload;
-			return String(data.installation?.id ?? "") === installationId &&
-				["pull_request", "deployment", "deployment_status"].includes(
-					row.eventName,
-				) &&
-				covered.has(id(data.repository?.id) ?? "")
+			return ["pull_request", "deployment", "deployment_status"].includes(
+				row.eventName,
+			) && covered.has(id(data.repository?.id) ?? "")
 				? [row._id]
 				: [];
 		} catch {

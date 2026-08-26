@@ -17,6 +17,7 @@ import { databaseReady, initializeDatabase, openDatabase } from "#/db";
 import {
 	acceptGitHubDelivery,
 	drainInbox,
+	githubPayloadInstallationId,
 	githubSignatureValid,
 	markDeliveriesRepairedByReconciliation,
 } from "#/events";
@@ -81,6 +82,27 @@ const lifecycleChangedFields = (
 			? []
 			: [category],
 	);
+};
+
+const directReconciliationCounts = (result: ReadResult) => {
+	if (result.kind !== "changed")
+		return { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	const { prCount, changedPrCount, unchangedPrCount } = result;
+	if (
+		typeof prCount !== "number" ||
+		typeof changedPrCount !== "number" ||
+		typeof unchangedPrCount !== "number"
+	)
+		return { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	return Number.isSafeInteger(prCount) &&
+		Number.isSafeInteger(changedPrCount) &&
+		Number.isSafeInteger(unchangedPrCount) &&
+		prCount >= 0 &&
+		changedPrCount >= 0 &&
+		unchangedPrCount >= 0 &&
+		changedPrCount + unchangedPrCount === prCount
+		? { prCount, changedPrCount, unchangedPrCount }
+		: { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
 };
 
 const cookie = (request: Request) =>
@@ -1284,7 +1306,6 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 		if (!appId || !privateKey) return "failed";
 		if (reconciling) return "running";
 		const requestCounts = new Map<string, number>();
-		const affectedUsers = new Set<string>();
 		let activeInstallationId: string | undefined;
 		const countingFetch = (...input: Parameters<typeof fetch>) => {
 			if (activeInstallationId)
@@ -1294,7 +1315,6 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 				);
 			return fetch(...input);
 		};
-		const startedAt = new Date();
 		const work = reconcileAll(
 			db,
 			async (id) => {
@@ -1309,7 +1329,8 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			installationIds,
 			undefined,
 			logGitHubRequestFailure,
-			async ({ installationId, result }) => {
+			async ({ installationId, startedAt, result }) => {
+				const counts = directReconciliationCounts(result);
 				if (result.kind === "changed")
 					for (const user of await db.users
 						.find(
@@ -1317,7 +1338,7 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 							{ projection: { _id: 1 } },
 						)
 						.toArray())
-						affectedUsers.add(user._id);
+						refresh(user._id);
 				const completedAt = new Date();
 				const repairedDeliveryCount =
 					result.kind !== "changed" || !Array.isArray(result.body)
@@ -1329,22 +1350,27 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 									String(repository.id ?? ""),
 								),
 							);
-				const unresolvedDeliveryCount = await db.inboxDeliveries.countDocuments(
-					{
-						provider: "github",
-						status: "pending_verification",
-					},
-				);
+				const unresolvedDeliveryCount = (
+					await db.inboxDeliveries
+						.find(
+							{ provider: "github", status: "pending_verification" },
+							{ projection: { payload: 1 } },
+						)
+						.toArray()
+				).filter(
+					(delivery) =>
+						githubPayloadInstallationId(delivery.payload) === installationId,
+				).length;
 				await db.reconciliationRuns.insertOne({
 					installationId,
 					trigger,
 					startedAt,
 					completedAt,
-					durationMs: 0,
-					prCount: 0,
+					durationMs: completedAt.getTime() - startedAt.getTime(),
+					prCount: counts.prCount,
 					providerRequestCount: requestCounts.get(installationId) ?? 0,
-					changedPrCount: result.kind === "changed" ? 1 : 0,
-					unchangedPrCount: result.kind === "unchanged" ? 1 : 0,
+					changedPrCount: counts.changedPrCount,
+					unchangedPrCount: counts.unchangedPrCount,
 					changedFieldCategories:
 						result.kind === "changed" ? ["installation"] : [],
 					failureCount: result.kind === "error" ? 1 : 0,
@@ -1362,8 +1388,6 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 		reconciling = work;
 		try {
 			const status = await work;
-			if (status === "success")
-				for (const userId of affectedUsers) refresh(userId);
 			return status;
 		} finally {
 			if (reconciling === work) reconciling = undefined;

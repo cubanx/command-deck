@@ -821,6 +821,158 @@ test("complete reconciliation is user-scoped and preserves webhook fields", () =
 		).toEqual([2]);
 	}));
 
+test("installation bootstrap reports direct projected PR reconciliation counts", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			openSpecs: [],
+			deployments: [],
+			pullRequests: [
+				{
+					number: 7,
+					title: "The same old song",
+					author_login: "sisko",
+					state: "open",
+					draft: 0,
+				},
+				{
+					number: 8,
+					title: "Before the Dominion War",
+					author_login: "sisko",
+					state: "open",
+					draft: 0,
+				},
+			],
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+
+		const result = await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/app/installations/"))
+					return Response.json({ account: { login: "cubanx" } });
+				if (value.includes("installation/repositories"))
+					return Response.json({
+						repositories: [{ id: 2, full_name: "ds9/ops" }],
+					});
+				if (value.includes("/pulls?"))
+					return Response.json([
+						{
+							number: 7,
+							title: "A changed song",
+							user: { login: "sisko" },
+							state: "open",
+						},
+						{
+							number: 8,
+							title: "Before the Dominion War",
+							user: { login: "sisko" },
+							state: "open",
+						},
+					]);
+				return Response.json([]);
+			},
+			"app-jwt",
+		);
+
+		expect(result).toMatchObject({
+			kind: "changed",
+			prCount: 2,
+			changedPrCount: 1,
+			unchangedPrCount: 1,
+		});
+	}));
+
+test("installation bootstrap does not double count after a user CAS retry", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		const user = await db.users.findOne({ _id: "u" });
+		user?.installations[0]?.repositories.push({
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			openSpecs: [],
+			deployments: [],
+			pullRequests: [
+				{
+					number: 7,
+					title: "Prior",
+					author_login: "sisko",
+					state: "open",
+					draft: 0,
+				},
+				{
+					number: 8,
+					title: "Same",
+					author_login: "sisko",
+					state: "open",
+					draft: 0,
+				},
+			],
+		});
+		await db.users.replaceOne({ _id: "u" }, user!);
+		const replace = vi
+			.spyOn(db.users, "replaceOne")
+			.mockImplementationOnce(async () => {
+				await db.users.updateOne(
+					{ _id: "u" },
+					{
+						$set: {
+							"installations.0.repositories.0.pullRequests.1.title":
+								"Intervening write",
+						},
+						$inc: { revision: 1 },
+					},
+				);
+				return { modifiedCount: 0 } as never;
+			});
+		const result = await bootstrapInstallation(
+			db,
+			"9",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/app/installations/"))
+					return Response.json({ account: { login: "cubanx" } });
+				if (value.includes("installation/repositories"))
+					return Response.json({
+						repositories: [{ id: 2, full_name: "ds9/ops" }],
+					});
+				if (value.includes("/pulls?"))
+					return Response.json([
+						{
+							number: 7,
+							title: "Changed",
+							user: { login: "sisko" },
+							state: "open",
+						},
+						{
+							number: 8,
+							title: "Same",
+							user: { login: "sisko" },
+							state: "open",
+						},
+					]);
+				return Response.json([]);
+			},
+			"app-jwt",
+		);
+		expect(replace).toHaveBeenCalledTimes(2);
+		expect(result).toMatchObject({
+			kind: "changed",
+			prCount: 2,
+			changedPrCount: 2,
+			unchangedPrCount: 0,
+		});
+	}));
+
 test("cached paginated next link survives a Link-less 304", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");

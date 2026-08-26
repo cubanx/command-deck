@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { bindInstallation, createSession, upsertIdentity } from "#/access";
 import { mutateUser } from "#/db";
 import { acceptGitHubDelivery } from "#/events";
@@ -35,7 +35,8 @@ test("starts one non-blocking broad repair after the inbox drain", async () =>
 									: { kind: "unchanged" as const },
 						},
 					];
-					for (const row of rows) await args[6]?.(row);
+					for (const row of rows)
+						await args[6]?.({ ...row, startedAt: new Date() });
 					return rows;
 				},
 			},
@@ -52,7 +53,7 @@ test("starts one non-blocking broad repair after the inbox drain", async () =>
 			expect.objectContaining({
 				installationId: "9",
 				trigger: "startup",
-				unchangedPrCount: 1,
+				unchangedPrCount: 0,
 			}),
 		]);
 		await app.reconcile();
@@ -126,6 +127,7 @@ test("startup repair refreshes bound users only after repairing missed close and
 					);
 					await args[6]?.({
 						installationId: "9",
+						startedAt: new Date(),
 						result: { kind: "changed", body: [{ id: 2 }] },
 					});
 					finished?.();
@@ -193,6 +195,7 @@ test("startup reconciliation records only aggregate repaired delivery telemetry"
 				reconcileInstallations: async (...args: any[]) => {
 					await args[6]?.({
 						installationId: "9",
+						startedAt: new Date(),
 						result: { kind: "changed", body: [{ id: 2 }] },
 					});
 					return [];
@@ -212,4 +215,180 @@ test("startup reconciliation records only aggregate repaired delivery telemetry"
 				?.resolvedBy,
 		).toBe("reconciliation");
 		app.stop();
+	}));
+
+test("broad reconciliation refreshes each changed installation before a later failure", async () =>
+	withDatabase(async (db) => {
+		for (const [id, installationId] of [
+			["changed", "9"],
+			["unchanged", "10"],
+		] as const) {
+			await upsertIdentity(db, id, id);
+			await bindInstallation(db, id, installationId, "cubanx");
+		}
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fixture" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async (...args: any[]) => {
+					await args[6]?.({
+						installationId: "9",
+						startedAt: new Date(),
+						result: { kind: "changed", body: [] },
+					});
+					await args[6]?.({
+						installationId: "10",
+						startedAt: new Date(),
+						result: {
+							kind: "error",
+							stale: true,
+							message: "safe failure",
+						},
+					});
+					throw new Error("safe failure");
+				},
+			},
+		);
+		const streamFor = async (id: string) => {
+			const session = await createSession(db, id);
+			const stream = await app.fetch(
+				new Request("http://local/events", {
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			const reader = stream.body?.getReader();
+			if (!reader) throw new Error("event stream body missing");
+			await reader.read();
+			return reader;
+		};
+		const changed = await streamFor("changed");
+		const unchanged = await streamFor("unchanged");
+		try {
+			expect(await app.reconcile()).toBe("failed");
+			expect(new TextDecoder().decode((await changed.read()).value)).toContain(
+				"event: refresh",
+			);
+			expect(
+				await Promise.race([
+					unchanged.read(),
+					new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
+				]),
+			).toBeUndefined();
+		} finally {
+			await Promise.all([changed.cancel(), unchanged.cancel()]);
+			app.stop();
+		}
+	}));
+
+test("broad reconciliation persists direct counts, duration, and installation-scoped pending deliveries", async () =>
+	withDatabase(async (db) => {
+		for (const [deliveryId, payload] of [
+			["a", { installation: { id: 9 } }],
+			["b", { installation: { id: 10 } }],
+			["missing", {}],
+		] as const)
+			await acceptGitHubDelivery(
+				db,
+				deliveryId,
+				"push",
+				JSON.stringify(payload),
+			);
+		await db.inboxDeliveries.insertOne({
+			_id: "github:bad",
+			provider: "github",
+			deliveryId: "bad",
+			status: "pending_verification",
+			eventName: "push",
+			payload: "not-json",
+			receivedAt: new Date(),
+			attempts: 0,
+		});
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fixture" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async (...args: any[]) => {
+					for (const installationId of ["9", "10"])
+						await args[6]?.({
+							installationId,
+							startedAt: new Date(),
+							result: {
+								kind: "changed",
+								body: [],
+								prCount: 2,
+								changedPrCount: 1,
+								unchangedPrCount: 1,
+							},
+						});
+					return [];
+				},
+			},
+		);
+		try {
+			expect(await app.reconcile()).toBe("success");
+			const runs = await db.reconciliationRuns
+				.find({ trigger: "manual" })
+				.sort({ installationId: 1 })
+				.toArray();
+			expect(runs).toHaveLength(2);
+			for (const run of runs) {
+				expect(run).toMatchObject({
+					prCount: 2,
+					changedPrCount: 1,
+					unchangedPrCount: 1,
+					unresolvedDeliveryCount: 1,
+				});
+				expect(run.durationMs).toBe(
+					run.completedAt.getTime() - run.startedAt.getTime(),
+				);
+				expect(run.changedPrCount + run.unchangedPrCount).toBe(run.prCount);
+			}
+		} finally {
+			app.stop();
+		}
+	}));
+
+test("broad reconciliation records each installation's own elapsed duration", async () =>
+	withDatabase(async (db) => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fixture" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async (...args: any[]) => {
+					await args[6]?.({
+						installationId: "9",
+						startedAt: new Date(),
+						result: { kind: "unchanged" },
+					});
+					vi.advanceTimersByTime(5_000);
+					const startedAt = new Date();
+					vi.advanceTimersByTime(1_000);
+					await args[6]?.({
+						installationId: "10",
+						startedAt,
+						result: { kind: "unchanged" },
+					});
+					return [];
+				},
+			},
+		);
+		try {
+			expect(await app.reconcile()).toBe("success");
+			const second = await db.reconciliationRuns.findOne({
+				installationId: "10",
+			});
+			if (!second) throw new Error("second reconciliation run missing");
+			expect(second.durationMs).toBe(1_000);
+			expect(second?.durationMs).toBe(
+				second.completedAt.getTime() - second.startedAt.getTime(),
+			);
+		} finally {
+			app.stop();
+			vi.useRealTimers();
+		}
 	}));
