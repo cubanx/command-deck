@@ -23,12 +23,12 @@
 		"#/*": "./src/*"
 	},
 	"scripts": {
-		"build:web": "bun src/web/build.ts",
+		"build:web": "bun src/web/frontend-build.ts",
 		"format": "biome format --write .",
 		"lint": "biome lint .",
 		"check": "biome check .",
-		"dev": "DCC_LOCAL_DEMO=0 NODE_ENV=development bunx varlock run -- bun --watch src/server.ts",
-		"dev:demo": "NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
+		"dev": "bun run build:web && DCC_LOCAL_DEMO=0 NODE_ENV=development bunx varlock run -- bun --watch src/server.ts",
+		"dev:demo": "bun run build:web && NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
 		"start": "bun src/server.ts",
 		"test": "bun run build:web && vitest run",
 		"test:e2e": "playwright test",

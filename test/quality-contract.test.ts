@@ -19,7 +19,15 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(workflow).toContain("bun run test:e2e");
 	expect(workflow.slice(workflow.indexOf("  docker-build:"))).not.toContain("needs:");
 	const dockerfile = text("Dockerfile");
+	expect(dockerfile).toContain("FROM oven/bun:1.3.11 AS frontend-build");
+	expect(dockerfile).toContain("RUN bun install --frozen-lockfile");
+	expect(dockerfile).toContain("RUN bun run build:web");
+	expect(dockerfile).toContain("COPY --from=frontend-build --chown=bun:bun /app/dist ./dist");
+	expect(dockerfile).toContain("bun install --frozen-lockfile --production");
+	expect(text(".dockerignore")).toContain("dist");
 	expect(dockerfile).toContain("COPY --chown=bun:bun tsconfig.json ./");
+	expect(text("src/server.ts")).not.toContain("frontend-build");
+	expect(text("src/web/frontend-assets.ts")).not.toContain('from "vite"');
 	expect(workflow).toContain("docker run --rm command-center-ai:quality bun -e 'await import(\"./src/server.ts\")'");
 	expect(JSON.parse(text("src/web/manifest.webmanifest"))).toMatchObject({
 		name: "Command Deck.ai",
@@ -27,7 +35,7 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 		display: "standalone",
 	});
 	expect(text("src/web/index.html")).toContain('<link rel="manifest" href="/manifest.webmanifest">');
-	expect(text("src/web/app.ts")).not.toContain("navigator.serviceWorker.register");
+	expect(text("src/web/client.tsx")).not.toContain("navigator.serviceWorker.register");
 	const worker = text("src/web/sw.js");
 	expect(worker).toContain("self.skipWaiting()");
 	expect(worker).toContain('self.addEventListener("activate"');
@@ -53,6 +61,12 @@ test("local validation loads, scans, and injects Varlock while CI remains creden
 		"bun scripts/scan-credential-uris.ts && bunx varlock load --agent && bunx varlock scan --path .env.scan && bunx varlock run -- bun scripts/validate-all.ts",
 	);
 	expect(workflow).not.toMatch(/varlock|OP_SERVICE_ACCOUNT_TOKEN|1password/i);
+});
+
+test("development startup builds the ignored frontend assets before starting the Vite-free server", () => {
+	const packageJson = JSON.parse(text("package.json")) as { scripts: Record<string, string> };
+	expect(packageJson.scripts.dev).toContain("bun run build:web &&");
+	expect(packageJson.scripts["dev:demo"]).toContain("bun run build:web &&");
 });
 
 test("Railway deploys only when runtime inputs change", () => {

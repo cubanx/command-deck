@@ -397,8 +397,13 @@ test("filters, orders, clears, and persists the operational card view", () => {
 		expect(articleTitles()).toEqual(expected);
 		fireEvent.click(screen.getByRole("checkbox", { name }));
 	}
-	fireEvent.change(screen.getByRole("combobox", { name: "Repository" }), { target: { value: "ds9/kira" } });
+	const repository = screen.getByRole("combobox", { name: "Repository" });
+	fireEvent.click(repository);
+	for (const name of ["ds9/dukat", "ds9/odo", "ds9/quark", "ds9/sisko"])
+		fireEvent.click(screen.getByRole("option", { name }));
 	expect(articleTitles()).toEqual(["Kira ready"]);
+	fireEvent.click(screen.getByRole("option", { name: "ds9/sisko" }));
+	expect(articleTitles()).toEqual(["Sisko mergeable", "Kira ready"]);
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 	const sort = screen.getByRole("combobox", { name: "Sort pull requests" });
 	const direction = screen.getByRole("combobox", { name: "Sort direction" });

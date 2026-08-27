@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
-
-import { buildBrowserScript } from "../src/web/build";
+import { buildFrontendAssets } from "../src/web/frontend-build";
 
 const encoder = new TextEncoder();
 const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
@@ -114,21 +113,24 @@ const page = (body: string) =>
 const asset = (name: string) =>
 	readFile(new URL(`../assets/${name}`, import.meta.url));
 
-const browserScript = buildBrowserScript();
+const frontend = buildFrontendAssets();
+const mimeFor = (path: string) =>
+	path.endsWith(".css") ? "text/css; charset=utf-8" : path.endsWith(".js") ? "text/javascript; charset=utf-8" : "application/octet-stream";
 
 const staticResponse = async (path: string) => {
-	if (path === "/")
-		return new Response(await readFile(new URL("../src/web/index.html", import.meta.url)), {
+	if (path === "/" || path === "/configuration") {
+		const { manifest } = await frontend;
+		const entry = manifest["src/web/client.tsx"];
+		if (!entry) return new Response("Missing frontend entry", { status: 500 });
+		const shell = (await readFile(new URL("../src/web/index.html", import.meta.url), "utf8"))
+			.replace("<!-- frontend-css -->", (entry.css ?? []).map((file) => `<link rel="stylesheet" href="/${file}">`).join(""))
+			.replace("<!-- frontend-js -->", `<script type="module" src="/${entry.file}"></script>`);
+		return new Response(shell, {
 			headers: { "content-type": "text/html; charset=utf-8" },
 		});
-	if (path === "/app.css")
-		return new Response(await readFile(new URL("../src/web/app.css", import.meta.url)), {
-			headers: { "content-type": "text/css; charset=utf-8" },
-		});
-	if (path === "/app.js")
-		return new Response(await browserScript, {
-			headers: { "content-type": "text/javascript; charset=utf-8" },
-		});
+	}
+	const assetFile = (await frontend).files.get(path.slice(1));
+	if (assetFile) return new Response(assetFile, { headers: { "content-type": mimeFor(path) } });
 	const file = path.slice(1);
 	if (["avatar-fixture.svg", "icon-adaptive.svg"].includes(file))
 		return new Response(await asset(file), {

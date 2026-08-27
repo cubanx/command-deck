@@ -49,7 +49,7 @@ import {
 } from "#/merge";
 import { countedFetch, createReconciliationCoordinator } from "#/reconciliation-coordinator";
 import { createWeekdayReconciliationScheduler } from "#/reconciliation-scheduler";
-import { buildBrowserScript } from "#/web/build";
+import { loadFrontendAssets } from "#/web/frontend-assets";
 
 type AppDependencies = {
 	bootstrapInstallation?: typeof bootstrapInstallation;
@@ -94,7 +94,6 @@ const directReconciliationCounts = (result: ReadResult) => {
 const cookie = (request: Request) => request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];
 const webAsset = (name: string) => readFileSync(new URL(`./web/${name}`, import.meta.url), "utf8");
 const html = webAsset("index.html");
-const css = webAsset("app.css");
 const retirementWorker = webAsset("sw.js");
 
 type SessionIdentity = { id: string; login?: string };
@@ -127,9 +126,6 @@ type AppContext = {
 
 const freshShellHeaders = { "cache-control": "no-cache" };
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
-	["/", [html, "text/html; charset=utf-8", freshShellHeaders]],
-	["/configuration", [html, "text/html; charset=utf-8", freshShellHeaders]],
-	["/app.css", [css, "text/css", freshShellHeaders]],
 	["/manifest.webmanifest", [webAsset("manifest.webmanifest"), "application/manifest+json"]],
 ]);
 const iconAssets = new Map<string, [string, string]>([
@@ -143,7 +139,27 @@ const iconAssets = new Map<string, [string, string]>([
 	["/icon-maskable-512.png", ["icon-maskable-512.png", "image/png"]],
 ]);
 
+let frontendAssets: ReturnType<typeof loadFrontendAssets> | undefined;
+const builtFrontend = () => (frontendAssets ??= loadFrontendAssets());
+const mimeFor = (path: string) =>
+	path.endsWith(".css") ? "text/css" : path.endsWith(".js") ? "text/javascript" : "application/octet-stream";
+const frontendShell = async () => {
+	const { manifest } = await builtFrontend();
+	const entry = manifest["src/web/client.tsx"];
+	if (!entry) throw new TypeError("Frontend manifest has no client entry");
+	return html
+		.replace(
+			"<!-- frontend-css -->",
+			(entry.css ?? []).map((file) => `<link rel="stylesheet" href="/${file}">`).join(""),
+		)
+		.replace("<!-- frontend-js -->", `<script type="module" src="/${entry.file}"></script>`);
+};
+
 const publicResponse = async (path: string) => {
+	if (path === "/" || path === "/configuration")
+		return new Response(await frontendShell(), {
+			headers: { "content-type": "text/html; charset=utf-8", ...freshShellHeaders },
+		});
 	if (path === "/sw.js")
 		return new Response(retirementWorker, {
 			headers: {
@@ -151,19 +167,20 @@ const publicResponse = async (path: string) => {
 				"cache-control": "no-cache",
 			},
 		});
-	if (path === "/app.js")
-		return new Response(await buildBrowserScript(), {
-			headers: { "content-type": "text/javascript", ...freshShellHeaders },
-		});
 	const text = textAssets.get(path);
 	if (text)
 		return new Response(text[0], {
 			headers: { "content-type": text[1], ...text[2] },
 		});
 	const icon = iconAssets.get(path);
-	return icon
-		? new Response(readFileSync(new URL(`../assets/${icon[0]}`, import.meta.url)), {
-				headers: { "content-type": icon[1] },
+	if (icon)
+		return new Response(readFileSync(new URL(`../assets/${icon[0]}`, import.meta.url)), {
+			headers: { "content-type": icon[1] },
+		});
+	const asset = builtFrontend().asset(path.slice(1));
+	return asset
+		? new Response(asset, {
+				headers: { "content-type": mimeFor(path), "cache-control": "public, max-age=31536000, immutable" },
 			})
 		: undefined;
 };
@@ -924,7 +941,12 @@ const mergeConfirmRoute = async (context: AppContext, request: Request, path: st
 const handleRequest = async (context: AppContext, request: Request) => {
 	const url = new URL(request.url);
 	const path = url.pathname;
-	const publicAsset = await publicResponse(path);
+	let publicAsset: Response | undefined;
+	try {
+		publicAsset = await publicResponse(path);
+	} catch {
+		return new Response("frontend assets unavailable", { status: 503 });
+	}
 	if (publicAsset) return publicAsset;
 	if (path === "/health") return Response.json({ ok: true });
 	if (path === "/ready") return readyResponse(context);

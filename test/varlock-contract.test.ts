@@ -67,8 +67,8 @@ test("Varlock schema loads the approved local Environment through its official p
 	expect(schema).not.toContain("allowAppAuth");
 	const manifest = text("package.json");
 	expect(JSON.parse(manifest).scripts).toMatchObject({
-		dev: "DCC_LOCAL_DEMO=0 NODE_ENV=development bunx varlock run -- bun --watch src/server.ts",
-		"dev:demo": "NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
+		dev: "bun run build:web && DCC_LOCAL_DEMO=0 NODE_ENV=development bunx varlock run -- bun --watch src/server.ts",
+		"dev:demo": "bun run build:web && NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
 	});
 	expect(JSON.parse(manifest)).toMatchObject({
 		devDependencies: {

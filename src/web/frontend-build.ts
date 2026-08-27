@@ -1,7 +1,7 @@
 import { build } from "vite";
 
-type FrontendManifest = Record<string, { file: string; css?: string[] }>;
-type BuildOutput = { type: string; fileName: string; source?: string | Uint8Array };
+export type FrontendManifest = Record<string, { file: string; css?: string[] }>;
+export type BuildOutput = { type: string; fileName: string; source?: string | Uint8Array; code?: string };
 
 export const frontendManifestFor = (output: BuildOutput[]): FrontendManifest => {
 	const manifest = output.find((asset) => asset.type === "asset" && asset.fileName.endsWith("manifest.json"));
@@ -12,18 +12,35 @@ export const frontendManifestFor = (output: BuildOutput[]): FrontendManifest => 
 	return parsed as FrontendManifest;
 };
 
-export const buildFrontend = async () => {
+export const buildFrontend = async ({ write = false } = {}) => {
 	const result = await build({
 		build: {
 			manifest: true,
-			write: false,
+			write,
 			rollupOptions: {
 				input: new URL("./client.tsx", import.meta.url).pathname,
 			},
 		},
 	});
 
+	if (write) return [];
 	if (Array.isArray(result)) return result.flatMap(({ output }) => output);
 	if ("output" in result) return result.output;
 	throw new Error("Frontend build did not produce assets");
 };
+
+export const buildFrontendAssets = async () => {
+	const output = await buildFrontend();
+	const manifest = frontendManifestFor(output);
+	const files = new Map(
+		output.flatMap((asset) => {
+			const content = asset.type === "asset" ? asset.source : asset.code;
+			return content === undefined
+				? []
+				: [[asset.fileName, typeof content === "string" ? content : new TextDecoder().decode(content)] as const];
+		}),
+	);
+	return { files, manifest, output };
+};
+
+if (import.meta.main) await buildFrontend({ write: true });
