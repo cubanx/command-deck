@@ -11,9 +11,12 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	const workflow = text(".github/workflows/ci-quality.yml");
 	const ciCommands = [...workflow.matchAll(/- run: (bun run [^\n]+)/g)].map(([, command]) => command);
 	expect(commands.commands).toEqual(["bun run check", "bun run typecheck", "bun run build:web", "bun run check:crap"]);
-	expect(ciCommands.sort()).toEqual([...commands.commands].sort());
+	expect(ciCommands.sort()).toEqual([...commands.commands, "bun run test:e2e"].sort());
 	expect(workflow).not.toContain("bun run validate:all");
 	expect(workflow).toContain("name: Validate All");
+	expect(workflow).toContain("name: Playwright E2E");
+	expect(workflow).toContain("bunx playwright install --with-deps chromium");
+	expect(workflow).toContain("bun run test:e2e");
 	expect(workflow.slice(workflow.indexOf("  docker-build:"))).not.toContain("needs:");
 	const dockerfile = text("Dockerfile");
 	expect(dockerfile).toContain("COPY --chown=bun:bun tsconfig.json ./");

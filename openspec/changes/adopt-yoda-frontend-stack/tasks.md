@@ -28,10 +28,10 @@
 
 ## 5. Migrate configuration, local checkout, appearance, and PWA behavior
 
-- [ ] 5.1 Add failing component tests for avatar navigation, the configuration route, IndexedDB/File System Access checkout setup, local-evidence labeling, appearance persistence, and responsive navigation.
-- [ ] 5.2 Implement the Mantine-backed configuration and navigation components while preserving the existing browser checkout adapter and preferences; verify the focused tests pass and local evidence remains non-authoritative.
-- [ ] 5.3 Update the client asset manifest integration and verify the HTML shell, icons, manifest, service worker, content types, cache headers, and installed-app loading through existing PWA/server tests.
-- [ ] 5.4 Run `bun run typecheck`, all focused configuration/PWA tests, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
+- [x] 5.1 Add failing component tests for avatar navigation, the configuration route, IndexedDB/File System Access checkout setup, local-evidence labeling, appearance persistence, and responsive navigation.
+- [x] 5.2 Implement the Mantine-backed configuration and navigation components while preserving the existing browser checkout adapter and preferences; verify the focused tests pass and local evidence remains non-authoritative.
+- [x] 5.3 Update the client asset manifest integration and verify the HTML shell, icons, manifest, service worker, content types, cache headers, and installed-app loading through existing PWA/server tests.
+- [x] 5.4 Run `bun run typecheck`, all focused configuration/PWA tests, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
 
 ## 6. Cut over and remove the legacy renderer
 

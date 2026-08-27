@@ -1,4 +1,19 @@
+import { appearancePreference, applyAppearance, saveAppearance } from "#/features/command-center/appearance";
 import { avatarUrlFor } from "#/features/command-center/avatar-url";
+import {
+	type BrowserDirectoryHandle,
+	type BrowserFileHandle,
+	type CheckoutRecord,
+	checkoutKey,
+	checkoutStoreFor,
+	exactCheckoutDirectory,
+	persistCheckout,
+	persistVerifiedCheckout,
+	readCheckout,
+	repositoryForRemote,
+	revalidateCheckout,
+	storedCheckouts,
+} from "#/features/command-center/browser-checkout";
 import {
 	loadSortPreference,
 	type SortDirection,
@@ -61,30 +76,9 @@ type DashboardSnapshot = {
 	repositories: Repository[];
 	notifications: NotificationProjection[];
 };
-export type BrowserFileHandle = {
-	getFile(): Promise<{ text(): Promise<string> }>;
-};
-export type BrowserDirectoryHandle = {
-	name?: string;
-	kind?: string;
-	getDirectoryHandle(name: string): Promise<BrowserDirectoryHandle>;
-	getFileHandle(name: string): Promise<BrowserFileHandle>;
-	entries(): AsyncIterable<[string, BrowserDirectoryHandle]>;
-	queryPermission(options: { mode: "read" }): Promise<PermissionState>;
-	requestPermission(options: { mode: "read" }): Promise<PermissionState>;
-};
-type CheckoutRecord = {
-	key: string;
-	account?: string;
-	kind?: "root" | "override";
-	handle?: BrowserDirectoryHandle;
-};
-type RequestLike = {
-	result?: unknown;
-	error?: unknown;
-	onerror?: IDBRequest["onerror"] | (() => void);
-	onsuccess?: IDBRequest["onsuccess"] | (() => void);
-};
+
+export type { BrowserDirectoryHandle, BrowserFileHandle } from "#/features/command-center/browser-checkout";
+
 type Repository = {
 	account_login: string;
 	repository_id: string;
@@ -252,110 +246,8 @@ let known: Set<string> | null = null,
 		sort: { mode: "closest", direction: "asc" },
 	};
 
-const appearanceKey = "dcc-appearance";
-export const appearanceFor = ({
-	preference: storedPreference,
-	systemDark = false,
-}: {
-	preference?: unknown;
-	systemDark?: boolean;
-} = {}) => {
-	const preference = ["system", "dark", "light"].includes(String(storedPreference))
-		? (storedPreference as "system" | "dark" | "light")
-		: "system";
-	let theme = preference;
-	if (preference === "system") theme = systemDark ? "dark" : "light";
-	return { preference, theme };
-};
-const appearancePreference = () => {
-	try {
-		return appearanceFor({
-			preference: globalThis.localStorage?.getItem(appearanceKey),
-			systemDark: globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches,
-		});
-	} catch (error) {
-		console.error("Appearance preference read failed", errorName(error));
-		return appearanceFor();
-	}
-};
-const applyAppearance = (value: unknown) => {
-	const appearance = appearanceFor({
-		preference: value,
-		systemDark: globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches,
-	});
-	document.documentElement.dataset.appearance = appearance.theme;
-	document.documentElement.style.colorScheme = appearance.theme;
-	return appearance;
-};
-const saveAppearance = (value: string) => {
-	try {
-		globalThis.localStorage?.setItem(appearanceKey, value);
-		applyAppearance(value);
-	} catch (error) {
-		console.error("Appearance preference save failed", errorName(error));
-	}
-};
+export { appearanceFor } from "#/features/command-center/appearance";
 
-const checkoutDatabase = () =>
-	new Promise((resolve, reject) => {
-		const request = indexedDB.open("dcc-checkouts", 1);
-		request.onupgradeneeded = () => request.result.createObjectStore("handles", { keyPath: "key" });
-		request.onerror = () => reject(request.error);
-		request.onsuccess = () => resolve(request.result);
-	});
-const requestResult = (request: RequestLike) =>
-	new Promise((resolve, reject) => {
-		request.onerror = () => reject(request.error);
-		request.onsuccess = () => resolve(request.result);
-	});
-export const checkoutStoreFor = <Record>(
-	open: () => Promise<{
-		getAll(): RequestLike;
-		put(record: Record): RequestLike;
-	}>,
-) => ({
-	getAll: async () => {
-		const store = await open();
-		return requestResult(store.getAll());
-	},
-	put: async (record: Record) => {
-		const store = await open();
-		return requestResult(store.put(record));
-	},
-});
-const checkoutStore = () =>
-	checkoutStoreFor(async () => {
-		const database = (await checkoutDatabase()) as IDBDatabase;
-		return {
-			getAll: () => database.transaction("handles").objectStore("handles").getAll(),
-			put: (record: CheckoutRecord) => database.transaction("handles", "readwrite").objectStore("handles").put(record),
-		};
-	});
-const storedCheckouts = () => checkoutStore().getAll();
-const persistCheckout = (record: CheckoutRecord) => checkoutStore().put(record);
-export const exactCheckoutDirectory = (
-	root: Pick<BrowserDirectoryHandle, "getDirectoryHandle">,
-	repository: Pick<Repository, "full_name">,
-) => root.getDirectoryHandle(repository.full_name.split("/").at(-1) ?? repository.full_name);
-export const revalidateCheckout = (record: { handle: Pick<BrowserDirectoryHandle, "queryPermission"> }) =>
-	record.handle.queryPermission({ mode: "read" });
-export const persistVerifiedCheckout = async <Handle, Repo, Record>({
-	handle,
-	repository,
-	read,
-	persist,
-	record,
-}: {
-	handle: Handle;
-	repository: Repo;
-	read(handle: Handle, repository: Repo): Promise<unknown>;
-	persist(record: Record): Promise<unknown>;
-	record: Record;
-}) => {
-	if (!(await read(handle, repository))) return false;
-	await persist(record);
-	return true;
-};
 const permissionFor = async (record: CheckoutRecord) => {
 	if (!record.handle) throw new TypeError("Checkout handle is missing");
 	const permission = await revalidateCheckout({ handle: record.handle });
@@ -387,51 +279,6 @@ const invalidateRepositoryCheckout = (repository: Repository, state: Exclude<Che
 const invalidateAccountCheckouts = (account: string, state: Exclude<CheckoutState, "Resolved">) => {
 	for (const repository of repositoryCatalog)
 		if (normalized(repository.account_login) === normalized(account)) invalidateRepositoryCheckout(repository, state);
-};
-export const readCheckout = async (handle: BrowserDirectoryHandle, repository: Repository) => {
-	const git = await handle.getDirectoryHandle(".git");
-	const configHandle = await git.getFileHandle("config");
-	const config = await configHandle.getFile();
-	const configText = await config.text();
-	if (repositoryForRemote(configText) !== normalized(repository.full_name)) return null;
-	const headHandle = await git.getFileHandle("HEAD");
-	const head = await headHandle.getFile();
-	const value = (await head.text()).trim();
-	const ref = value.match(/^ref: refs\/heads\/([A-Za-z0-9._/-]+)$/);
-	const source_ref = ref && !ref[1].includes("..") ? ref[1] : null;
-	const source_commit = /^[0-9a-f]{40}$/i.test(value) ? value : null;
-	const specs: OpenSpecEvidence[] = [];
-	const files = new Map<string, BrowserFileHandle>();
-	let changes: BrowserDirectoryHandle;
-	try {
-		const openspec = await handle.getDirectoryHandle("openspec");
-		changes = await openspec.getDirectoryHandle("changes");
-	} catch (error) {
-		if (errorName(error) === "NotFoundError") return { specs, files };
-		throw error;
-	}
-	for await (const [name, directory] of changes.entries()) {
-		if (directory.kind !== "directory" || !/^[A-Za-z0-9._-]+$/.test(name)) continue;
-		try {
-			const fileHandle = await directory.getFileHandle("tasks.md");
-			const file = await fileHandle.getFile();
-			const text = await file.text();
-			specs.push({
-				change_name: name,
-				...parseTasks(text),
-				source_ref,
-				source_commit,
-				source_type: "local",
-				installation_id: repository.installation_id,
-				account_login: repository.account_login,
-				repository_id: repository.repository_id,
-			});
-			files.set(name, fileHandle);
-		} catch (error) {
-			if (errorName(error) !== "NotFoundError") console.error("Local OpenSpec read failed", errorName(error));
-		}
-	}
-	return { specs, files };
 };
 export const readRepositoryCheckout = async (repository: Repository, handle: BrowserDirectoryHandle) => {
 	const key = checkoutKey(repository.account_login, repository.repository_id);
@@ -528,8 +375,19 @@ const sourceFor = (item: OpenSpecEvidence) =>
 		: item.source_url
 			? '<a href="' + esc(item.source_url) + '" target="_blank" rel="noopener noreferrer">Open tasks</a>'
 			: "";
-export const checkoutKey = (account: unknown, repositoryId: unknown) =>
-	`${normalized(account)}:${String(repositoryId)}`;
+
+export {
+	checkoutKey,
+	checkoutStoreFor,
+	exactCheckoutDirectory,
+	persistCheckout,
+	persistVerifiedCheckout,
+	readCheckout,
+	repositoryForRemote,
+	revalidateCheckout,
+	storedCheckouts,
+} from "#/features/command-center/browser-checkout";
+
 const rootKey = (account: unknown) => `root:${normalized(account)}`;
 const checkoutSupported = () =>
 	Boolean(globalThis.indexedDB && typeof browserGlobal.showDirectoryPicker === "function");
@@ -549,13 +407,6 @@ export const checkoutStateFor = ({
 			: resolution === "resolved"
 				? "Resolved"
 				: "Unresolved";
-export const repositoryForRemote = (content: unknown) => {
-	const origin = String(content ?? "").match(/^\[remote "origin"\]([\s\S]*?)(?=^\[|(?![\s\S]))/m);
-	const match = origin?.[1].match(
-		/^\s*url\s*=\s*(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\s*$/im,
-	);
-	return match ? normalized(`${match[1]}/${match[2].replace(/\.git$/i, "")}`) : null;
-};
 export const localSpecsFor = (pr: PullRequest, pullRequests: PullRequest[], specs = localSpecs) => {
 	const scoped = specs.filter(
 		(item) => item.installation_id === pr.installation_id && item.repository_id === pr.repository_id,

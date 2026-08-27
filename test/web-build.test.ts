@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "vitest";
 import { buildBrowserScript } from "#/web/build";
-import { buildFrontend } from "#/web/frontend-build";
+import { buildFrontend, frontendManifestFor } from "#/web/frontend-build";
 
 test("the legacy browser entry remains TypeScript that Bun can build", async () => {
 	expect(await buildBrowserScript()).toContain("/api/snapshot");
@@ -12,4 +12,11 @@ test("the frontend entry emits a production browser asset", async () => {
 	const output = await buildFrontend();
 
 	expect(output.some((asset) => asset.type === "chunk" && asset.isEntry)).toBe(true);
+	const manifest = frontendManifestFor(output);
+	expect(manifest["src/web/client.tsx"]?.file).toBeTruthy();
+	expect(
+		Object.values(manifest)
+			.flatMap((entry) => [entry.file, ...(entry.css ?? [])])
+			.every((file) => output.some((asset) => asset.fileName === file)),
+	).toBe(true);
 });
