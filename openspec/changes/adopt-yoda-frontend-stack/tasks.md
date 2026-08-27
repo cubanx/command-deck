@@ -9,8 +9,8 @@
 
 - [x] 2.1 Add failing tests for route-prefetched snapshot loading, one Query cache, event-driven invalidation, reconnect refresh, preserved local preferences, and no healthy-stream polling; verify the focused tests fail before implementation.
 - [x] 2.2 Implement the file-based dashboard/configuration routes, feature-local snapshot query and mutation options, and one root EventSource bridge over the existing `/api/snapshot` and `/events` contracts; verify the focused route/query tests pass.
-- [ ] 2.3 Verify existing authenticated snapshot, SSE, reconciliation, merge, OAuth, and webhook server tests still pass unchanged.
-- [ ] 2.4 Run `bun run typecheck`, the focused frontend/server tests declared by this group, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
+- [x] 2.3 Verify existing authenticated snapshot, SSE, reconciliation, merge, OAuth, and webhook server tests still pass unchanged.
+- [x] 2.4 Run `bun run typecheck`, the focused frontend/server tests declared by this group, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
 
 ## 3. Port the dashboard view model and authority gates
 
