@@ -39,3 +39,4 @@
 - [x] 6.2 Delete the superseded HTML-string renderer, render-bound event wiring, obsolete build path, redundant CSS, and string-markup tests only after equivalent component coverage passes; verify no application-owned `innerHTML`, Lit, Mustache, or parallel renderer remains.
 - [x] 6.3 Run `bun run typecheck`, the full `bun run test` suite with every component/UI test included and zero failures, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
 - [x] 6.4 Record the exact validation results and remaining deployment/observation gates; stop without commit, push, PR, deploy, production access, or external mutation.
+- [x] 6.5 Keep development frontend assets live-rebuilt and refresh the development manifest after hashed output changes, while production assets remain stably cached; verify focused and full gates.

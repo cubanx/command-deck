@@ -12,11 +12,12 @@ export const frontendManifestFor = (output: BuildOutput[]): FrontendManifest => 
 	return parsed as FrontendManifest;
 };
 
-export const buildFrontend = async ({ write = false } = {}) => {
+export const buildFrontend = async ({ write = false, watch = false } = {}) => {
 	const result = await build({
 		build: {
 			manifest: true,
 			write,
+			watch: watch ? {} : undefined,
 			rollupOptions: {
 				input: new URL("./client.tsx", import.meta.url).pathname,
 			},
@@ -43,4 +44,4 @@ export const buildFrontendAssets = async () => {
 	return { files, manifest, output };
 };
 
-if (import.meta.main) await buildFrontend({ write: true });
+if (import.meta.main) await buildFrontend({ write: true, watch: process.argv.includes("--watch") });

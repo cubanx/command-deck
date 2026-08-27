@@ -67,6 +67,10 @@ test("development startup builds the ignored frontend assets before starting the
 	const packageJson = JSON.parse(text("package.json")) as { scripts: Record<string, string> };
 	expect(packageJson.scripts.dev).toContain("bun run build:web &&");
 	expect(packageJson.scripts["dev:demo"]).toContain("bun run build:web &&");
+	expect(packageJson.scripts.dev).toContain("scripts/dev.ts");
+	expect(packageJson.scripts["dev:demo"]).toContain("scripts/dev.ts");
+	expect(text("scripts/dev.ts")).toContain('"--watch", "src/server.ts"');
+	expect(text("scripts/dev.ts")).toContain('"src/web/frontend-build.ts", "--watch"');
 });
 
 test("Railway deploys only when runtime inputs change", () => {

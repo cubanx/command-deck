@@ -49,7 +49,7 @@ import {
 } from "#/merge";
 import { countedFetch, createReconciliationCoordinator } from "#/reconciliation-coordinator";
 import { createWeekdayReconciliationScheduler } from "#/reconciliation-scheduler";
-import { loadFrontendAssets } from "#/web/frontend-assets";
+import { frontendAssetLoader } from "#/web/frontend-assets";
 
 type AppDependencies = {
 	bootstrapInstallation?: typeof bootstrapInstallation;
@@ -139,8 +139,7 @@ const iconAssets = new Map<string, [string, string]>([
 	["/icon-maskable-512.png", ["icon-maskable-512.png", "image/png"]],
 ]);
 
-let frontendAssets: ReturnType<typeof loadFrontendAssets> | undefined;
-const builtFrontend = () => (frontendAssets ??= loadFrontendAssets());
+const builtFrontend = frontendAssetLoader({ development: process.env.NODE_ENV !== "production" });
 const mimeFor = (path: string) =>
 	path.endsWith(".css") ? "text/css" : path.endsWith(".js") ? "text/javascript" : "application/octet-stream";
 const frontendShell = async () => {
