@@ -35,17 +35,14 @@ test("starts one non-blocking broad repair after the inbox drain", async () =>
 									: { kind: "unchanged" as const },
 						},
 					];
-					for (const row of rows)
-						await args[6]?.({ ...row, startedAt: new Date() });
+					for (const row of rows) await args[6]?.({ ...row, startedAt: new Date() });
 					return rows;
 				},
 			},
 		);
 		await app.drain();
 		expect(calls).toBe(1);
-		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(
-			200,
-		);
+		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(200);
 		await app.drain();
 		expect(calls).toBe(1);
 		for (let count = 0; count < 5; count++) await Promise.resolve();
@@ -78,9 +75,7 @@ test("queues the startup-wide repair behind an active scoped reconciliation", as
 		let startupCompleted!: () => void;
 		const scoped = new Promise<void>((resolve) => (releaseScoped = resolve));
 		const started = new Promise<void>((resolve) => (scopedStarted = resolve));
-		const completed = new Promise<void>(
-			(resolve) => (startupCompleted = resolve),
-		);
+		const completed = new Promise<void>((resolve) => (startupCompleted = resolve));
 		const calls: Array<string[] | undefined> = [];
 		const app = createApp(
 			db,
@@ -122,11 +117,10 @@ test("queues the startup-wide repair behind an active scoped reconciliation", as
 			expect((await manual).status).toBe(200);
 			await completed;
 			expect(calls).toEqual([["9"], undefined]);
-			expect(
-				await db.reconciliationRuns
-					.find({}, { projection: { _id: 0, trigger: 1 } })
-					.toArray(),
-			).toEqual([{ trigger: "manual" }, { trigger: "startup" }]);
+			expect(await db.reconciliationRuns.find({}, { projection: { _id: 0, trigger: 1 } }).toArray()).toEqual([
+				{ trigger: "manual" },
+				{ trigger: "startup" },
+			]);
 		} finally {
 			app.stop();
 		}
@@ -175,8 +169,7 @@ test("startup repair refreshes bound users only after repairing missed close and
 					await Promise.all(
 						["u", "shared"].map((id) =>
 							mutateUser(db, id, (user) => {
-								const pullRequests =
-									user.installations[0]!.repositories[0]!.pullRequests;
+								const pullRequests = user.installations[0]!.repositories[0]!.pullRequests;
 								pullRequests.splice(0, pullRequests.length, {
 									number: 8,
 									title: "Missed open",
@@ -217,13 +210,10 @@ test("startup repair refreshes bound users only after repairing missed close and
 			await app.drain();
 			await reconciled;
 			for (const reader of [primary, shared])
-				expect(new TextDecoder().decode((await reader.read()).value)).toContain(
-					"event: refresh",
-				);
-			expect(
-				(await db.users.findOne({ _id: "u" }))?.installations[0]
-					?.repositories[0]?.pullRequests,
-			).toMatchObject([{ number: 8, title: "Missed open" }]);
+				expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: refresh");
+			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toMatchObject([
+				{ number: 8, title: "Missed open" },
+			]);
 			const noRefresh = await Promise.race([
 				foreign.read(),
 				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
@@ -273,10 +263,7 @@ test("startup reconciliation records only aggregate repaired delivery telemetry"
 			unresolvedDeliveryCount: 0,
 		});
 		expect(JSON.stringify(run)).not.toContain("repairable");
-		expect(
-			(await db.inboxDeliveries.findOne({ _id: "github:repairable" }))
-				?.resolvedBy,
-		).toBe("reconciliation");
+		expect((await db.inboxDeliveries.findOne({ _id: "github:repairable" }))?.resolvedBy).toBe("reconciliation");
 		app.stop();
 	}));
 
@@ -329,14 +316,9 @@ test("broad reconciliation refreshes each changed installation before a later fa
 		const unchanged = await streamFor("unchanged");
 		try {
 			expect(await app.reconcile()).toBe("failed");
-			expect(new TextDecoder().decode((await changed.read()).value)).toContain(
-				"event: refresh",
-			);
+			expect(new TextDecoder().decode((await changed.read()).value)).toContain("event: refresh");
 			expect(
-				await Promise.race([
-					unchanged.read(),
-					new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
-				]),
+				await Promise.race([unchanged.read(), new Promise<undefined>((resolve) => setTimeout(resolve, 25))]),
 			).toBeUndefined();
 		} finally {
 			await Promise.all([changed.cancel(), unchanged.cancel()]);
@@ -351,12 +333,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 			["b", { installation: { id: 10 } }],
 			["missing", {}],
 		] as const)
-			await acceptGitHubDelivery(
-				db,
-				deliveryId,
-				"push",
-				JSON.stringify(payload),
-			);
+			await acceptGitHubDelivery(db, deliveryId, "push", JSON.stringify(payload));
 		await db.inboxDeliveries.insertOne({
 			_id: "github:bad",
 			provider: "github",
@@ -391,10 +368,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 		);
 		try {
 			expect(await app.reconcile()).toBe("success");
-			const runs = await db.reconciliationRuns
-				.find({ trigger: "manual" })
-				.sort({ installationId: 1 })
-				.toArray();
+			const runs = await db.reconciliationRuns.find({ trigger: "manual" }).sort({ installationId: 1 }).toArray();
 			expect(runs).toHaveLength(2);
 			for (const run of runs) {
 				expect(run).toMatchObject({
@@ -403,9 +377,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 					unchangedPrCount: 1,
 					unresolvedDeliveryCount: 1,
 				});
-				expect(run.durationMs).toBe(
-					run.completedAt.getTime() - run.startedAt.getTime(),
-				);
+				expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
 				expect(run.changedPrCount + run.unchangedPrCount).toBe(run.prCount);
 			}
 		} finally {
@@ -438,18 +410,12 @@ test("broad reconciliation records each installation's own elapsed duration", as
 		);
 		try {
 			expect(await app.reconcile()).toBe("success");
-			const runs = await db.reconciliationRuns
-				.find({})
-				.sort({ installationId: 1 })
-				.toArray();
+			const runs = await db.reconciliationRuns.find({}).sort({ installationId: 1 }).toArray();
 			expect(runs).toHaveLength(2);
 			const first = runs.find((run) => run.installationId === "9");
 			const second = runs.find((run) => run.installationId === "10");
 			if (!first || !second) throw new Error("reconciliation runs missing");
-			for (const run of runs)
-				expect(run.durationMs).toBe(
-					run.completedAt.getTime() - run.startedAt.getTime(),
-				);
+			for (const run of runs) expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
 			expect(second.durationMs).toBeGreaterThan(0);
 			expect(first.durationMs).toBeGreaterThan(second.durationMs * 10);
 		} finally {

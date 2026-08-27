@@ -1,11 +1,5 @@
 import { createSign } from "node:crypto";
-import type {
-	Db,
-	MergedPullRequestEvidence,
-	PullRequest,
-	ReconciliationEvidence,
-	Repository,
-} from "#/db";
+import type { Db, MergedPullRequestEvidence, PullRequest, ReconciliationEvidence, Repository } from "#/db";
 import {
 	appendReconciliationEvidence,
 	correlateDeploymentPullRequest,
@@ -14,23 +8,11 @@ import {
 } from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
-import {
-	detectedOpenSpecSlugs,
-	parseOpenSpecDeclaration,
-	parseTasks,
-	projectOpenSpec,
-} from "#/openspec";
+import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks, projectOpenSpec } from "#/openspec";
 
-type FetchLike = (
-	input: RequestInfo | URL,
-	init?: RequestInit,
-) => Promise<Response>;
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
-export const githubFetch = async (
-	fetcher: FetchLike,
-	input: RequestInfo | URL,
-	init?: RequestInit,
-) => {
+export const githubFetch = async (fetcher: FetchLike, input: RequestInfo | URL, init?: RequestInit) => {
 	const timeout = AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS);
 	try {
 		return await fetcher(input, {
@@ -66,9 +48,7 @@ export type GitHubRequestFailure = {
 		}>;
 	};
 };
-export type GitHubRequestFailureReporter = (
-	failure: GitHubRequestFailure,
-) => void | Promise<void>;
+export type GitHubRequestFailureReporter = (failure: GitHubRequestFailure) => void | Promise<void>;
 export type ReadResult =
 	| {
 			kind: "changed";
@@ -87,10 +67,7 @@ export type ReadResult =
 			repository?: string;
 			status?: number;
 	  };
-const mergePullRequestSnapshot = (
-	old: PullRequest | undefined,
-	next: PullRequest,
-): PullRequest => ({
+const mergePullRequestSnapshot = (old: PullRequest | undefined, next: PullRequest): PullRequest => ({
 	...old,
 	...next,
 	opened_at: next.opened_at ?? old?.opened_at,
@@ -102,21 +79,11 @@ const projectedPullRequestCounts = (
 ) => {
 	const counts = { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
 	for (const snapshot of snapshots) {
-		const previous = previousRepositories.find(
-			(repository) => repository.repositoryId === snapshot.repositoryId,
-		);
-		for (const pr of snapshot.pullRequests.filter((pr) =>
-			sameLogin(pr.author_login, login),
-		)) {
-			const old = previous?.pullRequests.find(
-				(item) => item.number === pr.number,
-			);
+		const previous = previousRepositories.find((repository) => repository.repositoryId === snapshot.repositoryId);
+		for (const pr of snapshot.pullRequests.filter((pr) => sameLogin(pr.author_login, login))) {
+			const old = previous?.pullRequests.find((item) => item.number === pr.number);
 			counts.prCount++;
-			if (
-				JSON.stringify(old) ===
-				JSON.stringify(mergePullRequestSnapshot(old, pr))
-			)
-				counts.unchangedPrCount++;
+			if (JSON.stringify(old) === JSON.stringify(mergePullRequestSnapshot(old, pr))) counts.unchangedPrCount++;
 			else counts.changedPrCount++;
 		}
 	}
@@ -136,20 +103,10 @@ type GraphqlConnection = {
 };
 const graphqlEndpoint = "https://api.github.com/graphql";
 const providerFailedState = (value: unknown) =>
-	[
-		"action_required",
-		"cancelled",
-		"canceled",
-		"failed",
-		"failure",
-		"startup_failure",
-		"timed_out",
-		"error",
-	].includes(String(value).toLowerCase());
-const providerAggregateState = (
-	items: unknown[],
-	stateFor: (item: unknown) => unknown,
-) => {
+	["action_required", "cancelled", "canceled", "failed", "failure", "startup_failure", "timed_out", "error"].includes(
+		String(value).toLowerCase(),
+	);
+const providerAggregateState = (items: unknown[], stateFor: (item: unknown) => unknown) => {
 	if (!items.length) return "unknown";
 	let pending = false;
 	let unknown = false;
@@ -157,27 +114,14 @@ const providerAggregateState = (
 		const state = String(stateFor(item) ?? "").toLowerCase();
 		if (providerFailedState(state)) return "failure";
 		if (["success", "neutral", "skipped"].includes(state)) continue;
-		if (
-			[
-				"queued",
-				"in_progress",
-				"pending",
-				"requested",
-				"waiting",
-				"expected",
-			].includes(state)
-		)
-			pending = true;
+		if (["queued", "in_progress", "pending", "requested", "waiting", "expected"].includes(state)) pending = true;
 		else unknown = true;
 	}
 	return pending ? "pending" : unknown ? "unknown" : "success";
 };
-const optionalString = (value: unknown) =>
-	typeof value === "string" ? value : undefined;
-const base64url = (value: string | Buffer) =>
-	Buffer.from(value).toString("base64url");
-const diagnosticString = (value: unknown) =>
-	typeof value === "string" ? value.slice(0, 200) : undefined;
+const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
+const base64url = (value: string | Buffer) => Buffer.from(value).toString("base64url");
+const diagnosticString = (value: unknown) => (typeof value === "string" ? value.slice(0, 200) : undefined);
 const graphqlErrorDiagnostic = (errors: unknown) => {
 	if (!Array.isArray(errors)) return undefined;
 	const items = errors
@@ -185,15 +129,10 @@ const graphqlErrorDiagnostic = (errors: unknown) => {
 			if (!error || typeof error !== "object") return undefined;
 			const value = error as Record<string, unknown>;
 			const path = Array.isArray(value.path)
-				? diagnosticString(
-						value.path
-							.filter((item): item is string => typeof item === "string")
-							.join("."),
-					)
+				? diagnosticString(value.path.filter((item): item is string => typeof item === "string").join("."))
 				: undefined;
 			const code = diagnosticString(value.type);
-			const message =
-				path || code ? undefined : diagnosticString(value.message);
+			const message = path || code ? undefined : diagnosticString(value.message);
 			return path || code || message
 				? {
 						...(path ? { field: path } : {}),
@@ -237,25 +176,15 @@ export async function githubErrorDiagnostic(response: Response) {
 	};
 	return Object.values(diagnostic).some(Boolean) ? diagnostic : undefined;
 }
-export function githubAppJwt(
-	appId: string,
-	privateKey: string,
-	now = Math.floor(Date.now() / 1000),
-) {
+export function githubAppJwt(appId: string, privateKey: string, now = Math.floor(Date.now() / 1000)) {
 	const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" })),
-		payload = base64url(
-			JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId }),
-		),
+		payload = base64url(JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId })),
 		signer = createSign("RSA-SHA256");
 	signer.update(`${header}.${payload}`);
 	signer.end();
 	return `${header}.${payload}.${signer.sign(privateKey).toString("base64url")}`;
 }
-export async function installationToken(
-	appJwt: string,
-	installationId: string,
-	fetcher: FetchLike = fetch,
-) {
+export async function installationToken(appJwt: string, installationId: string, fetcher: FetchLike = fetch) {
 	const response = await githubFetch(
 		fetcher,
 		`https://api.github.com/app/installations/${installationId}/access_tokens`,
@@ -267,21 +196,13 @@ export async function installationToken(
 			},
 		},
 	);
-	if (!response.ok)
-		throw new Error(
-			`GitHub installation token request failed (${response.status})`,
-		);
+	if (!response.ok) throw new Error(`GitHub installation token request failed (${response.status})`);
 	return ((await response.json()) as { token: string }).token;
 }
-export const retryDelay = (
-	response: Response,
-	attempt: number,
-	now = Date.now(),
-) => {
+export const retryDelay = (response: Response, attempt: number, now = Date.now()) => {
 	const retryable =
 		[429, 502, 503, 504].includes(response.status) ||
-		(response.status === 403 &&
-			response.headers.get("x-ratelimit-remaining") === "0");
+		(response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0");
 	if (!retryable) return undefined;
 	const retryAfter = Number(response.headers.get("retry-after"));
 	if (retryAfter > 0) return Math.min(retryAfter * 1000, 60_000);
@@ -289,12 +210,7 @@ export const retryDelay = (
 	if (reset * 1000 > now) return Math.min(reset * 1000 - now, 60_000);
 	return Math.min(1000 * 2 ** attempt, 60_000);
 };
-async function githubGraphql(
-	token: string,
-	query: string,
-	variables: Record<string, unknown>,
-	fetcher: FetchLike,
-) {
+async function githubGraphql(token: string, query: string, variables: Record<string, unknown>, fetcher: FetchLike) {
 	let response: Response | undefined;
 	for (let attempt = 0; attempt < 3; attempt++) {
 		response = await fetcher(graphqlEndpoint, {
@@ -315,8 +231,7 @@ async function githubGraphql(
 			status: response?.status,
 		});
 	const body: unknown = await response.json();
-	if (!body || typeof body !== "object")
-		throw new Error("GitHub GraphQL response was incomplete");
+	if (!body || typeof body !== "object") throw new Error("GitHub GraphQL response was incomplete");
 	const errors = (body as { errors?: unknown }).errors;
 	if (Array.isArray(errors))
 		throw Object.assign(new Error("GitHub GraphQL response was incomplete"), {
@@ -330,8 +245,7 @@ async function githubGraphql(
 	return (body as { data: Record<string, unknown> }).data;
 }
 const safeUrl = (value: unknown) =>
-	URL.canParse(String(value)) &&
-	["http:", "https:"].includes(new URL(String(value)).protocol)
+	URL.canParse(String(value)) && ["http:", "https:"].includes(new URL(String(value)).protocol)
 		? new URL(String(value)).toString()
 		: undefined;
 const nextLink = (header: string | null) =>
@@ -348,8 +262,7 @@ export function githubNextLink(header: string | null, seen: Set<string>) {
 	} catch {
 		throw new Error("GitHub pagination link was invalid");
 	}
-	if (url.origin !== "https://api.github.com")
-		throw new Error("GitHub pagination link was not GitHub API");
+	if (url.origin !== "https://api.github.com") throw new Error("GitHub pagination link was not GitHub API");
 	const next = url.toString();
 	if (seen.has(next)) throw new Error("GitHub pagination loop detected");
 	seen.add(next);
@@ -430,8 +343,7 @@ async function pagedGet(
 		} catch (error) {
 			return {
 				kind: "error",
-				message:
-					error instanceof Error ? error.message : "GitHub pagination failed",
+				message: error instanceof Error ? error.message : "GitHub pagination failed",
 				stale: true,
 				...evidence,
 				summary: "GitHub pagination failed",
@@ -453,11 +365,7 @@ async function pagedGet(
 		all.push(...items);
 		next = following;
 	}
-	await db.providerCache.updateOne(
-		{ _id: key },
-		{ $set: { body: all, updatedAt: new Date() } },
-		{ upsert: true },
-	);
+	await db.providerCache.updateOne({ _id: key }, { $set: { body: all, updatedAt: new Date() } }, { upsert: true });
 	return { kind: "changed", body: all };
 }
 export async function conditionalGet(
@@ -493,10 +401,7 @@ export async function conditionalGet(
 			summary: "GitHub request failed",
 		};
 	if (response.status === 304) {
-		await db.providerCache.updateOne(
-			{ _id: key },
-			{ $set: { updatedAt: new Date() } },
-		);
+		await db.providerCache.updateOne({ _id: key }, { $set: { updatedAt: new Date() } });
 		return cached?.body === undefined
 			? {
 					kind: "error",
@@ -616,9 +521,7 @@ async function fetchOpenSpecTasksForPullRequests(
 	const archiveTaskPaths = (paths: string[], name: string) => {
 		const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 		return paths.filter((path) =>
-			new RegExp(
-				`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escaped}/tasks\\.md$`,
-			).test(path),
+			new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escaped}/tasks\\.md$`).test(path),
 		);
 	};
 	const results: PullRequestOpenSpecs[] = [];
@@ -627,8 +530,7 @@ async function fetchOpenSpecTasksForPullRequests(
 			bUpdatedAt = Date.parse(String(b.updated_at ?? "")),
 			aHasValidUpdatedAt = Number.isFinite(aUpdatedAt),
 			bHasValidUpdatedAt = Number.isFinite(bUpdatedAt);
-		if (aHasValidUpdatedAt !== bHasValidUpdatedAt)
-			return Number(bHasValidUpdatedAt) - Number(aHasValidUpdatedAt);
+		if (aHasValidUpdatedAt !== bHasValidUpdatedAt) return Number(bHasValidUpdatedAt) - Number(aHasValidUpdatedAt);
 		return (
 			bUpdatedAt - aUpdatedAt ||
 			Number(a.number) - Number(b.number) ||
@@ -656,8 +558,7 @@ async function fetchOpenSpecTasksForPullRequests(
 			{ operation: "openspec", repository },
 			"filename",
 		);
-		if (changes.kind !== "changed" || !Array.isArray(changes.body))
-			return changes;
+		if (changes.kind !== "changed" || !Array.isArray(changes.body)) return changes;
 		const declaration = parseOpenSpecDeclaration(pr.body);
 		const paths = changes.body
 			.filter((item) => (item as { status?: unknown }).status !== "removed")
@@ -682,8 +583,7 @@ async function fetchOpenSpecTasksForPullRequests(
 				if (content === null) {
 					const archivePaths = archiveTaskPaths(paths, name);
 					const [archivePath] = archivePaths;
-					if (archivePaths.length !== 1 || !archivePath)
-						return artifactFailure();
+					if (archivePaths.length !== 1 || !archivePath) return artifactFailure();
 					path = archivePath;
 					if (stage) stage.value = "archive OpenSpec task";
 					try {
@@ -722,10 +622,7 @@ async function refreshRepositoryPolicy(
 		request,
 		evidence,
 	);
-	const branch =
-		details.kind === "changed"
-			? (details.body as any)?.default_branch
-			: undefined;
+	const branch = details.kind === "changed" ? (details.body as any)?.default_branch : undefined;
 	if (typeof branch !== "string" || !branch)
 		return {
 			policy: repository.policy && {
@@ -751,10 +648,7 @@ async function refreshRepositoryPolicy(
 			evidence,
 		),
 	]);
-	if (
-		rules.kind !== "changed" ||
-		(protection.kind === "error" && protection.status !== 404)
-	)
+	if (rules.kind !== "changed" || (protection.kind === "error" && protection.status !== 404))
 		return {
 			policy: repository.policy && {
 				...(repository.policy as Record<string, unknown>),
@@ -770,36 +664,25 @@ async function refreshRepositoryPolicy(
 			},
 			stale: true,
 		};
-	const required = new Map<
-		string,
-		{ context: string; integration_id?: string }
-	>();
+	const required = new Map<string, { context: string; integration_id?: string }>();
 	for (const rule of rules.body as any[])
 		for (const parameter of rule?.rules ?? [])
 			if (parameter?.type === "required_status_checks")
-				for (const check of parameter?.parameters?.required_status_checks ??
-					[]) {
+				for (const check of parameter?.parameters?.required_status_checks ?? []) {
 					const context = optionalString(check?.context);
 					if (context)
 						required.set(`${context}:${check.integration_id ?? ""}`, {
 							context,
-							...(check.integration_id == null
-								? {}
-								: { integration_id: String(check.integration_id) }),
+							...(check.integration_id == null ? {} : { integration_id: String(check.integration_id) }),
 						});
 				}
-	const classic =
-		protection.kind === "changed"
-			? (protection.body as any)?.required_status_checks
-			: undefined;
+	const classic = protection.kind === "changed" ? (protection.body as any)?.required_status_checks : undefined;
 	for (const check of classic?.checks ?? []) {
 		const context = optionalString(check?.context);
 		if (context)
 			required.set(`${context}:${check.app_id ?? ""}`, {
 				context,
-				...(check.app_id == null
-					? {}
-					: { integration_id: String(check.app_id) }),
+				...(check.app_id == null ? {} : { integration_id: String(check.app_id) }),
 			});
 	}
 	for (const context of classic?.contexts ?? [])
@@ -827,9 +710,7 @@ const pullRequestLifecycleQuery = `query PullRequestLifecycle($owner: String!, $
 }
 }`;
 
-const graphqlConnectionQuery = (
-	field: "labels" | "reviews" | "reviewThreads" | "contexts",
-) =>
+const graphqlConnectionQuery = (field: "labels" | "reviews" | "reviewThreads" | "contexts") =>
 	`query PullRequestConnection($owner: String!, $repo: String!, $number: Int!, $after: String!) {
   repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
     ${field === "contexts" ? "statusCheckRollup { contexts" : field}(first: 100, after: $after) { nodes { ${
@@ -845,19 +726,11 @@ const graphqlConnectionQuery = (
 }`;
 
 function graphqlConnection(value: unknown): GraphqlConnection {
-	if (!value || typeof value !== "object")
-		throw new Error("GitHub pull request pagination was incomplete");
+	if (!value || typeof value !== "object") throw new Error("GitHub pull request pagination was incomplete");
 	const connection = value as GraphqlConnection;
-	if (
-		!Array.isArray(connection.nodes) ||
-		!connection.pageInfo ||
-		typeof connection.pageInfo.hasNextPage !== "boolean"
-	)
+	if (!Array.isArray(connection.nodes) || !connection.pageInfo || typeof connection.pageInfo.hasNextPage !== "boolean")
 		throw new Error("GitHub pull request pagination was incomplete");
-	if (
-		connection.pageInfo.hasNextPage &&
-		typeof connection.pageInfo.endCursor !== "string"
-	)
+	if (connection.pageInfo.hasNextPage && typeof connection.pageInfo.endCursor !== "string")
 		throw new Error("GitHub pull request pagination was incomplete");
 	return connection;
 }
@@ -886,11 +759,7 @@ async function completeGraphqlConnection(
 			fetcher,
 		);
 		const pullRequest = (data.repository as any)?.pullRequest;
-		page = graphqlConnection(
-			field === "contexts"
-				? pullRequest?.statusCheckRollup?.contexts
-				: pullRequest?.[field],
-		);
+		page = graphqlConnection(field === "contexts" ? pullRequest?.statusCheckRollup?.contexts : pullRequest?.[field]);
 		nodes.push(...page.nodes!);
 	}
 	return nodes;
@@ -916,29 +785,20 @@ type PullRequestRead = {
 	openSpecEvidence: PullRequestOpenSpecs;
 };
 
-const loadReconciliationTarget = async (
-	db: Db,
-	input: ReconcilePullRequestInput,
-) => {
+const loadReconciliationTarget = async (db: Db, input: ReconcilePullRequestInput) => {
 	const users = await db.users
-		.find(
-			{ "installations.installationId": input.installationId },
-			{ projection: { _id: 1, installations: 1 } },
-		)
+		.find({ "installations.installationId": input.installationId }, { projection: { _id: 1, installations: 1 } })
 		.toArray();
 	const installation = users
 		.flatMap((user) => user.installations)
 		.find(
 			(installation) =>
-				installation.installationId === input.installationId &&
-				approvedInstallationAccount(installation.accountLogin),
+				installation.installationId === input.installationId && approvedInstallationAccount(installation.accountLogin),
 		);
 	return {
 		users,
 		installation,
-		repository: installation?.repositories.find(
-			(item) => item.repositoryId === input.repositoryId,
-		),
+		repository: installation?.repositories.find((item) => item.repositoryId === input.repositoryId),
 	};
 };
 
@@ -953,14 +813,10 @@ const removeClosedPullRequest = async (
 			mutateUser(db, user._id, (aggregate) => {
 				const target = aggregate.installations
 					.find((item) => item.installationId === input.installationId)
-					?.repositories.find(
-						(item) => item.repositoryId === input.repositoryId,
-					);
+					?.repositories.find((item) => item.repositoryId === input.repositoryId);
 				if (target) {
 					const before = target.pullRequests.length;
-					target.pullRequests = target.pullRequests.filter(
-						(item) => Number(item.number) !== input.number,
-					);
+					target.pullRequests = target.pullRequests.filter((item) => Number(item.number) !== input.number);
 					changed ||= target.pullRequests.length !== before;
 				}
 			}),
@@ -975,9 +831,7 @@ const readOpenPullRequest = async (
 	request: FetchLike,
 	owner: string,
 	name: string,
-	repository: NonNullable<
-		Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]
-	>,
+	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
 	stage: { value: string },
 ): Promise<PullRequestRead | undefined> => {
 	stage.value = "GraphQL lifecycle";
@@ -987,45 +841,16 @@ const readOpenPullRequest = async (
 		{ owner, repo: name, number: input.number },
 		input.fetcher,
 	);
-	const pullRequest = (
-		data.repository as { pullRequest?: Record<string, unknown> } | undefined
-	)?.pullRequest;
-	if (!pullRequest || typeof pullRequest !== "object")
+	const pullRequest = (data.repository as { pullRequest?: Record<string, unknown> } | undefined)?.pullRequest;
+	if (!pullRequest || typeof pullRequest !== "object") throw new Error("GitHub pull request response was incomplete");
+	if (["CLOSED", "MERGED"].includes(String(pullRequest.state)) || pullRequest.merged === true) return undefined;
+	if (!pullRequest.reviewRequests || typeof (pullRequest.reviewRequests as any).totalCount !== "number")
 		throw new Error("GitHub pull request response was incomplete");
-	if (
-		["CLOSED", "MERGED"].includes(String(pullRequest.state)) ||
-		pullRequest.merged === true
-	)
-		return undefined;
-	if (
-		!pullRequest.reviewRequests ||
-		typeof (pullRequest.reviewRequests as any).totalCount !== "number"
-	)
-		throw new Error("GitHub pull request response was incomplete");
-	const headSha =
-		typeof pullRequest.headRefOid === "string"
-			? pullRequest.headRefOid
-			: undefined;
+	const headSha = typeof pullRequest.headRefOid === "string" ? pullRequest.headRefOid : undefined;
 	if (!headSha) throw new Error("GitHub pull request head was unavailable");
 	const [labels, reviews, threads, contexts] = await Promise.all([
-		completeGraphqlConnection(
-			input.token,
-			input.fetcher,
-			owner,
-			name,
-			input.number,
-			"labels",
-			pullRequest.labels,
-		),
-		completeGraphqlConnection(
-			input.token,
-			input.fetcher,
-			owner,
-			name,
-			input.number,
-			"reviews",
-			pullRequest.reviews,
-		),
+		completeGraphqlConnection(input.token, input.fetcher, owner, name, input.number, "labels", pullRequest.labels),
+		completeGraphqlConnection(input.token, input.fetcher, owner, name, input.number, "reviews", pullRequest.reviews),
 		completeGraphqlConnection(
 			input.token,
 			input.fetcher,
@@ -1050,17 +875,8 @@ const readOpenPullRequest = async (
 	stage.value = "Actions";
 	const actions = await pagedGet(
 		db,
-		"installation:" +
-			input.installationId +
-			":repo:" +
-			input.repositoryId +
-			":actions:" +
-			headSha,
-		"https://api.github.com/repositories/" +
-			input.repositoryId +
-			"/actions/runs?head_sha=" +
-			headSha +
-			"&per_page=100",
+		"installation:" + input.installationId + ":repo:" + input.repositoryId + ":actions:" + headSha,
+		"https://api.github.com/repositories/" + input.repositoryId + "/actions/runs?head_sha=" + headSha + "&per_page=100",
 		request,
 		{ operation: "actions", repository: repository.full_name },
 		"workflow_runs",
@@ -1073,12 +889,7 @@ const readOpenPullRequest = async (
 		input.fetchTasks ??
 		(async (task: Parameters<TaskFetcher>[0]) => {
 			const response = await request(
-				"https://api.github.com/repositories/" +
-					task.repositoryId +
-					"/contents/" +
-					task.path +
-					"?ref=" +
-					task.sha,
+				"https://api.github.com/repositories/" + task.repositoryId + "/contents/" + task.path + "?ref=" + task.sha,
 				{ headers: { accept: "application/vnd.github.raw" } },
 			);
 			if (response.ok) return response.text();
@@ -1107,22 +918,13 @@ const readOpenPullRequest = async (
 	);
 	if (!Array.isArray(tasks) || tasks.length !== 1)
 		throw Object.assign(new Error("GitHub OpenSpec read was incomplete"), {
-			status:
-				Array.isArray(tasks) || tasks.kind !== "error"
-					? undefined
-					: tasks.status,
+			status: Array.isArray(tasks) || tasks.kind !== "error" ? undefined : tasks.status,
 		});
 	if (
 		!labels.every((item: any) => item && typeof item.name === "string") ||
 		!reviews.every((item: any) => item && typeof item.state === "string") ||
-		!threads.every(
-			(item: any) => item && typeof item.isResolved === "boolean",
-		) ||
-		!contexts.every(
-			(item: any) =>
-				item &&
-				(typeof item.name === "string" || typeof item.context === "string"),
-		)
+		!threads.every((item: any) => item && typeof item.isResolved === "boolean") ||
+		!contexts.every((item: any) => item && (typeof item.name === "string" || typeof item.context === "string"))
 	)
 		throw new Error("GitHub pull request response was incomplete");
 	return {
@@ -1140,25 +942,12 @@ const readOpenPullRequest = async (
 const applyOpenPullRequest = async (
 	db: Db,
 	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
-	installation: Awaited<
-		ReturnType<typeof loadReconciliationTarget>
-	>["installation"],
-	repository: NonNullable<
-		Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]
-	>,
+	installation: Awaited<ReturnType<typeof loadReconciliationTarget>>["installation"],
+	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
 	input: ReconcilePullRequestInput,
 	read: PullRequestRead,
 ): Promise<ReadResult> => {
-	const {
-		pullRequest,
-		headSha,
-		labels,
-		reviews,
-		threads,
-		contexts,
-		actions,
-		openSpecEvidence,
-	} = read;
+	const { pullRequest, headSha, labels, reviews, threads, contexts, actions, openSpecEvidence } = read;
 	const reviewNodes = reviews as Array<{ state: string }>;
 	const threadNodes = threads as Array<{ isResolved: boolean }>;
 	const policy = repository.policy as
@@ -1174,18 +963,13 @@ const applyOpenPullRequest = async (
 		const context = contexts.find(
 			(item: any) =>
 				[item?.name, item?.context].includes(required.context) &&
-				(!required.integration_id ||
-					String(required.integration_id) ===
-						String(item?.checkSuite?.app?.databaseId)),
+				(!required.integration_id || String(required.integration_id) === String(item?.checkSuite?.app?.databaseId)),
 		);
 		const conclusion = (context as any)?.conclusion ?? (context as any)?.state;
 		return {
 			head_sha: headSha,
 			conclusion:
-				context &&
-				["success", "neutral", "skipped"].includes(
-					String(conclusion).toLowerCase(),
-				)
+				context && ["success", "neutral", "skipped"].includes(String(conclusion).toLowerCase())
 					? String(conclusion).toLowerCase()
 					: "missing",
 		};
@@ -1209,19 +993,11 @@ const applyOpenPullRequest = async (
 		labels,
 		review_activity:
 			Number((pullRequest.reviewRequests as any).totalCount) > 0 ||
-			reviewNodes.some((review) =>
-				["APPROVED", "COMMENTED", "CHANGES_REQUESTED"].includes(
-					String(review.state),
-				),
-			),
+			reviewNodes.some((review) => ["APPROVED", "COMMENTED", "CHANGES_REQUESTED"].includes(String(review.state))),
 		completed_review_count: reviewNodes.filter((review) =>
-			["APPROVED", "COMMENTED", "CHANGES_REQUESTED"].includes(
-				String(review.state),
-			),
+			["APPROVED", "COMMENTED", "CHANGES_REQUESTED"].includes(String(review.state)),
 		).length,
-		unresolved_review_threads: threadNodes.filter(
-			(thread) => !thread.isResolved,
-		).length,
+		unresolved_review_threads: threadNodes.filter((thread) => !thread.isResolved).length,
 		changes_requested: pullRequest.reviewDecision === "CHANGES_REQUESTED",
 		repository_policy_loaded: Boolean(policy && !policy.stale),
 		required_checks: requiredChecks,
@@ -1233,11 +1009,7 @@ const applyOpenPullRequest = async (
 			const value = context as Record<string, unknown>;
 			return value.conclusion ?? value.state ?? value.status;
 		}),
-		...openSpecProjection(
-			openSpecEvidence,
-			pullRequest.headRefName,
-			repository.full_name,
-		),
+		...openSpecProjection(openSpecEvidence, pullRequest.headRefName, repository.full_name),
 	};
 	let changed = false;
 	await Promise.all(
@@ -1245,16 +1017,11 @@ const applyOpenPullRequest = async (
 			mutateUser(db, user._id, (aggregate) => {
 				const target = aggregate.installations
 					.find((item) => item.installationId === input.installationId)
-					?.repositories.find(
-						(item) => item.repositoryId === input.repositoryId,
-					);
-				const previous = target?.pullRequests.find(
-					(item) => Number(item.number) === input.number,
-				);
+					?.repositories.find((item) => item.repositoryId === input.repositoryId);
+				const previous = target?.pullRequests.find((item) => Number(item.number) === input.number);
 				if (
 					!target ||
-					(previous?.updated_at &&
-						String(previous.updated_at) > String(next.updated_at)) ||
+					(previous?.updated_at && String(previous.updated_at) > String(next.updated_at)) ||
 					(previous?.head_sha &&
 						previous.head_sha !== next.head_sha &&
 						String(previous.updated_at ?? "") >= String(next.updated_at ?? ""))
@@ -1262,10 +1029,7 @@ const applyOpenPullRequest = async (
 					return;
 				if (
 					previous?.lifecycle_stale === false &&
-					Object.entries(next).every(
-						([key, value]) =>
-							JSON.stringify(previous?.[key]) === JSON.stringify(value),
-					)
+					Object.entries(next).every(([key, value]) => JSON.stringify(previous?.[key]) === JSON.stringify(value))
 				)
 					return;
 				changed = true;
@@ -1285,14 +1049,8 @@ const applyOpenPullRequest = async (
 	return { kind: changed ? "changed" : "unchanged", body: next };
 };
 
-export async function reconcilePullRequest(
-	db: Db,
-	input: ReconcilePullRequestInput,
-): Promise<ReadResult> {
-	const { users, installation, repository } = await loadReconciliationTarget(
-		db,
-		input,
-	);
+export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestInput): Promise<ReadResult> {
+	const { users, installation, repository } = await loadReconciliationTarget(db, input);
 	if (!repository)
 		return {
 			kind: "error",
@@ -1320,15 +1078,7 @@ export async function reconcilePullRequest(
 		});
 	const stage = { value: "GraphQL lifecycle" };
 	try {
-		const read = await readOpenPullRequest(
-			db,
-			input,
-			request,
-			owner,
-			name,
-			repository,
-			stage,
-		);
+		const read = await readOpenPullRequest(db, input, request, owner, name, repository, stage);
 		stage.value = "persistence";
 		return read
 			? applyOpenPullRequest(db, users, installation, repository, input, read)
@@ -1351,12 +1101,8 @@ export async function reconcilePullRequest(
 				mutateUser(db, user._id, (aggregate) => {
 					const target = aggregate.installations
 						.find((item) => item.installationId === input.installationId)
-						?.repositories.find(
-							(item) => item.repositoryId === input.repositoryId,
-						);
-					const previous = target?.pullRequests.find(
-						(item) => Number(item.number) === input.number,
-					);
+						?.repositories.find((item) => item.repositoryId === input.repositoryId);
+					const previous = target?.pullRequests.find((item) => Number(item.number) === input.number);
 					if (previous) previous.lifecycle_stale = true;
 				}),
 			),
@@ -1413,18 +1159,14 @@ export async function bootstrapInstallation(
 			throw new Error("GitHub OpenSpec artifact fetch failed");
 		});
 	const bound = await db.users
-		.find(
-			{ "installations.installationId": installationId },
-			{ projection: { _id: 1, github: 1, installations: 1 } },
-		)
+		.find({ "installations.installationId": installationId }, { projection: { _id: 1, github: 1, installations: 1 } })
 		.toArray();
 	if (
 		!bound.some((user) =>
 			user.installations.some(
 				(item) =>
 					item.installationId === installationId &&
-					(!item.accountLogin ||
-						approvedInstallationAccount(item.accountLogin)),
+					(!item.accountLogin || approvedInstallationAccount(item.accountLogin)),
 			),
 		)
 	)
@@ -1498,26 +1240,16 @@ export async function bootstrapInstallation(
 			{ operation: "pull_requests", repository: repo.full_name },
 		);
 		if (prs.kind !== "changed") return prs;
-		const deployments = await bootstrapDeployments(
-			db,
-			installationId,
-			String(repo.id),
-			token,
-			fetcher,
-			repo.full_name,
-		);
+		const deployments = await bootstrapDeployments(db, installationId, String(repo.id), token, fetcher, repo.full_name);
 		if (deployments.kind === "error") return deployments;
-		const deploymentRows =
-			deployments.kind === "changed" ? deployments.body : [];
+		const deploymentRows = deployments.kind === "changed" ? deployments.body : [];
 		const pullRequests = Array.isArray(prs.body) ? prs.body : [];
 		const deploymentPullRequests = pullRequests.map((pr: any) => ({
 			...pr,
 			url: pr.html_url,
 			head_sha: pr.head?.sha,
 		}));
-		const recentMergedPullRequests = retainRecentMergedPullRequests(
-			existingRepository?.recentMergedPullRequests ?? [],
-		);
+		const recentMergedPullRequests = retainRecentMergedPullRequests(existingRepository?.recentMergedPullRequests ?? []);
 		const tasks = await fetchOpenSpecTasksForPullRequests(
 			db,
 			installationId,
@@ -1572,13 +1304,8 @@ export async function bootstrapInstallation(
 					})
 				: [],
 			openSpecs: [],
-			deployments: (deploymentRows as Record<string, unknown>[]).map(
-				(deployment) =>
-					correlateDeploymentPullRequest(
-						deployment,
-						deploymentPullRequests,
-						recentMergedPullRequests,
-					),
+			deployments: (deploymentRows as Record<string, unknown>[]).map((deployment) =>
+				correlateDeploymentPullRequest(deployment, deploymentPullRequests, recentMergedPullRequests),
 			),
 			...(recentMergedPullRequests.length ? { recentMergedPullRequests } : {}),
 		});
@@ -1597,27 +1324,17 @@ export async function bootstrapInstallation(
 					changedPrCount: 0,
 					unchangedPrCount: 0,
 				};
-				const installation = aggregate.installations.find(
-					(item) => item.installationId === installationId,
-				);
+				const installation = aggregate.installations.find((item) => item.installationId === installationId);
 				if (
 					!installation ||
 					(installation.accountLogin &&
-						(!approvedInstallationAccount(installation.accountLogin) ||
-							!sameLogin(installation.accountLogin, account)))
+						(!approvedInstallationAccount(installation.accountLogin) || !sameLogin(installation.accountLogin, account)))
 				)
 					return;
-				attemptCounts = projectedPullRequestCounts(
-					installation.repositories,
-					snapshots,
-					aggregate.github.login,
-				);
+				attemptCounts = projectedPullRequestCounts(installation.repositories, snapshots, aggregate.github.login);
 				if (!installation.accountLogin) installation.accountLogin = account;
 				installation.permissions = {
-					pull_requests:
-						typeof pullRequestsPermission === "string"
-							? pullRequestsPermission
-							: undefined,
+					pull_requests: typeof pullRequestsPermission === "string" ? pullRequestsPermission : undefined,
 				};
 				installation.repositories = snapshots.map((snapshot) => {
 					const previous = installation.repositories.find(
@@ -1626,13 +1343,9 @@ export async function bootstrapInstallation(
 					return {
 						...snapshot,
 						pullRequests: snapshot.pullRequests
-							.filter((pr) =>
-								sameLogin(pr.author_login, aggregate.github.login),
-							)
+							.filter((pr) => sameLogin(pr.author_login, aggregate.github.login))
 							.map((pr) => {
-								const old = previous?.pullRequests.find(
-									(item) => item.number === pr.number,
-								);
+								const old = previous?.pullRequests.find((item) => item.number === pr.number);
 								return mergePullRequestSnapshot(old, pr);
 							}),
 						openSpecs: snapshot.openSpecs,
@@ -1724,49 +1437,31 @@ export async function bootstrapDeployments(
 			ref: deployment.ref,
 			sha: deployment.sha,
 			state: latest?.state ?? "pending",
-			status_id:
-				latest?.status_id == null ? undefined : String(latest.status_id),
+			status_id: latest?.status_id == null ? undefined : String(latest.status_id),
 			status_created_at: latest?.status_created_at,
 			target_url: safeUrl(latest?.target_url),
 			log_url: safeUrl(latest?.log_url),
-			updated_at:
-				latest?.status_created_at ??
-				deployment.created_at ??
-				new Date().toISOString(),
+			updated_at: latest?.status_created_at ?? deployment.created_at ?? new Date().toISOString(),
 		});
 	}
 	return { kind: "changed", body: deployments };
 }
 export async function reconcileInstallations(
 	db: Db,
-	credentialsFor: (
-		installationId: string,
-	) => Promise<{ token: string; appJwt: string }>,
+	credentialsFor: (installationId: string) => Promise<{ token: string; appJwt: string }>,
 	fetcher: FetchLike,
 	installationIds?: string[],
 	fetchTasks?: TaskFetcher,
 	reportTaskFetchFailure?: GitHubRequestFailureReporter,
-	onResult?: (item: {
-		installationId: string;
-		startedAt: Date;
-		result: ReadResult;
-	}) => Promise<void>,
+	onResult?: (item: { installationId: string; startedAt: Date; result: ReadResult }) => Promise<void>,
 ) {
 	const ids = installationIds
 		? [...new Set(installationIds)].sort()
 		: [
 				...new Set(
-					(
-						await db.users
-							.find({}, { projection: { installations: 1 } })
-							.toArray()
-					).flatMap((user) =>
+					(await db.users.find({}, { projection: { installations: 1 } }).toArray()).flatMap((user) =>
 						user.installations
-							.filter(
-								(item) =>
-									!item.accountLogin ||
-									approvedInstallationAccount(item.accountLogin),
-							)
+							.filter((item) => !item.accountLogin || approvedInstallationAccount(item.accountLogin))
 							.map((item) => item.installationId),
 					),
 				),
@@ -1798,27 +1493,17 @@ export async function reconcileInstallations(
 		results.push({ installationId, result });
 		await onResult?.({ installationId, startedAt, result });
 		if (result.kind === "error") {
-			logReconciliationFailure(
-				"installation reconciliation failed",
-				installationId,
-				result,
-				"ReadResult",
-			);
+			logReconciliationFailure("installation reconciliation failed", installationId, result, "ReadResult");
 			await persistReconciliationFailure(db, installationId, result);
 		}
 	}
 	const failures = results.filter((item) => item.result.kind === "error");
 	if (failures.length)
-		throw new Error(
-			`reconciliation failed for installations ${failures.map((item) => item.installationId).join(",")}`,
-		);
+		throw new Error(`reconciliation failed for installations ${failures.map((item) => item.installationId).join(",")}`);
 	return results;
 }
 
-export const normalizedReconciliationFailure = (): Extract<
-	ReadResult,
-	{ kind: "error" }
-> => ({
+export const normalizedReconciliationFailure = (): Extract<ReadResult, { kind: "error" }> => ({
 	kind: "error",
 	stale: true,
 	message: "reconciliation failed",
@@ -1831,14 +1516,7 @@ export const logReconciliationFailure = (
 	installationId: string,
 	result: Extract<ReadResult, { kind: "error" }>,
 	classification: string,
-) =>
-	console.error(
-		event,
-		installationId,
-		result.operation ?? "reconciliation",
-		classification,
-		result.message,
-	);
+) => console.error(event, installationId, result.operation ?? "reconciliation", classification, result.message);
 
 export async function persistReconciliationFailure(
 	db: Db,
@@ -1846,22 +1524,13 @@ export async function persistReconciliationFailure(
 	result: Extract<ReadResult, { kind: "error" }>,
 ) {
 	const users = await db.users
-		.find(
-			{ "installations.installationId": installationId },
-			{ projection: { _id: 1 } },
-		)
+		.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
 		.toArray();
 	await Promise.all(
 		users.map((user) =>
 			mutateUser(db, user._id, (aggregate) => {
-				const installation = aggregate.installations.find(
-					(item) => item.installationId === installationId,
-				);
-				if (
-					installation &&
-					(!installation.accountLogin ||
-						approvedInstallationAccount(installation.accountLogin))
-				) {
+				const installation = aggregate.installations.find((item) => item.installationId === installationId);
+				if (installation && (!installation.accountLogin || approvedInstallationAccount(installation.accountLogin))) {
 					installation.lastSyncError = result.message.slice(0, 200);
 					appendReconciliationEvidence(installation, {
 						completedAt: new Date(),
@@ -1878,18 +1547,11 @@ export async function persistReconciliationFailure(
 }
 
 export async function approvedInstallationIdsForUser(db: Db, userId: string) {
-	const user = await db.users.findOne(
-		{ _id: userId },
-		{ projection: { installations: 1 } },
-	);
+	const user = await db.users.findOne({ _id: userId }, { projection: { installations: 1 } });
 	return [
 		...new Set(
 			user?.installations
-				.filter(
-					(item) =>
-						!item.accountLogin ||
-						approvedInstallationAccount(item.accountLogin),
-				)
+				.filter((item) => !item.accountLogin || approvedInstallationAccount(item.accountLogin))
 				.map((item) => item.installationId) ?? [],
 		),
 	].sort();

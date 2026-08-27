@@ -17,9 +17,7 @@ export type OpenSpecDeclaration = {
 export function parseOpenSpecDeclaration(body: unknown): OpenSpecDeclaration {
 	if (typeof body !== "string") return { state: "absent", slugs: [] };
 	const lines = body.split(/\r?\n/);
-	const headings = lines
-		.map((line, index) => ({ line, index }))
-		.filter(({ line }) => /^##\s+OpenSpecs\s*$/.test(line));
+	const headings = lines.map((line, index) => ({ line, index })).filter(({ line }) => /^##\s+OpenSpecs\s*$/.test(line));
 	if (!headings.length) return { state: "absent", slugs: [] };
 	if (headings.length !== 1) return { state: "invalid", slugs: [] };
 	const slugs: string[] = [];
@@ -27,17 +25,12 @@ export function parseOpenSpecDeclaration(body: unknown): OpenSpecDeclaration {
 		const line = lines[index]!;
 		if (/^#{1,6}(?:\s|$)/.test(line)) break;
 		if (!line.trim()) continue;
-		const bullet = line.match(
-			/^\s*[-*+]\s+(?:`([A-Za-z0-9][A-Za-z0-9._-]*)`|([A-Za-z0-9][A-Za-z0-9._-]*))\s*$/,
-		);
+		const bullet = line.match(/^\s*[-*+]\s+(?:`([A-Za-z0-9][A-Za-z0-9._-]*)`|([A-Za-z0-9][A-Za-z0-9._-]*))\s*$/);
 		const slug = bullet?.[1] ?? bullet?.[2];
-		if (!slug || !openSpecSlug.test(slug) || slugs.includes(slug))
-			return { state: "invalid", slugs: [] };
+		if (!slug || !openSpecSlug.test(slug) || slugs.includes(slug)) return { state: "invalid", slugs: [] };
 		slugs.push(slug);
 	}
-	return slugs.length
-		? { state: "declared", slugs: slugs.sort() }
-		: { state: "empty", slugs: [] };
+	return slugs.length ? { state: "declared", slugs: slugs.sort() } : { state: "empty", slugs: [] };
 }
 
 export const detectedOpenSpecSlugs = (paths: ReadonlyArray<string>) =>
@@ -45,9 +38,7 @@ export const detectedOpenSpecSlugs = (paths: ReadonlyArray<string>) =>
 		...new Set(
 			paths
 				.map((path) => path.match(/^openspec\/changes\/([^/]+)\//)?.[1])
-				.filter((slug): slug is string =>
-					Boolean(slug && slug !== "archive" && openSpecSlug.test(slug)),
-				),
+				.filter((slug): slug is string => Boolean(slug && slug !== "archive" && openSpecSlug.test(slug))),
 		),
 	].sort();
 
@@ -102,32 +93,23 @@ export async function projectOpenSpec(
 	if (!changeName) throw new Error("invalid OpenSpec tasks path");
 	if (input.deleted) {
 		const users = await db.users
-			.find(
-				{ "installations.installationId": input.installationId },
-				{ projection: { _id: 1 } },
-			)
+			.find({ "installations.installationId": input.installationId }, { projection: { _id: 1 } })
 			.toArray();
 		let changed = false;
 		await Promise.all(
 			users.map((user) =>
 				mutateUser(db, user._id, (aggregate) => {
-					const installation = aggregate.installations.find(
-						(item) => item.installationId === input.installationId,
-					);
+					const installation = aggregate.installations.find((item) => item.installationId === input.installationId);
 					if (
 						!installation ||
 						!approvedInstallationAccount(installation.accountLogin) ||
 						!sameLogin(installation.accountLogin, input.accountLogin)
 					)
 						return;
-					const repository = installation.repositories.find(
-						(item) => item.repositoryId === input.repositoryId,
-					);
+					const repository = installation.repositories.find((item) => item.repositoryId === input.repositoryId);
 					if (repository) {
 						const before = repository.openSpecs.length;
-						repository.openSpecs = repository.openSpecs.filter(
-							(item) => item.change_name !== changeName,
-						);
+						repository.openSpecs = repository.openSpecs.filter((item) => item.change_name !== changeName);
 						changed ||= repository.openSpecs.length !== before;
 					}
 				}),
@@ -137,32 +119,23 @@ export async function projectOpenSpec(
 	}
 	const progress = parseTasks(input.content ?? "");
 	const users = await db.users
-		.find(
-			{ "installations.installationId": input.installationId },
-			{ projection: { _id: 1 } },
-		)
+		.find({ "installations.installationId": input.installationId }, { projection: { _id: 1 } })
 		.toArray();
 	let changed = false,
 		completed = false;
 	await Promise.all(
 		users.map((user) =>
 			mutateUser(db, user._id, (aggregate) => {
-				const installation = aggregate.installations.find(
-					(item) => item.installationId === input.installationId,
-				);
+				const installation = aggregate.installations.find((item) => item.installationId === input.installationId);
 				if (
 					!installation ||
 					!approvedInstallationAccount(installation.accountLogin) ||
 					!sameLogin(installation.accountLogin, input.accountLogin)
 				)
 					return;
-				const repository = installation.repositories.find(
-					(item) => item.repositoryId === input.repositoryId,
-				);
+				const repository = installation.repositories.find((item) => item.repositoryId === input.repositoryId);
 				if (!repository) return;
-				const index = repository.openSpecs.findIndex(
-						(item) => item.change_name === changeName,
-					),
+				const index = repository.openSpecs.findIndex((item) => item.change_name === changeName),
 					previous = index >= 0 ? repository.openSpecs[index] : undefined;
 				completed ||=
 					progress.total > 0 &&
@@ -175,25 +148,13 @@ export async function projectOpenSpec(
 					pre_merge_ready: progress.preMergeReady,
 					source_commit: input.sha,
 					...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
-					active_group: progress.activeGroup
-						? JSON.stringify(progress.activeGroup)
-						: null,
+					active_group: progress.activeGroup ? JSON.stringify(progress.activeGroup) : null,
 					updated_at: new Date().toISOString(),
 				};
 				changed ||=
 					!previous ||
-					(
-						[
-							"completed",
-							"total",
-							"pre_merge_ready",
-							"source_commit",
-							"source_ref",
-							"active_group",
-						] as const
-					).some(
-						(key) =>
-							JSON.stringify(previous[key]) !== JSON.stringify(next[key]),
+					(["completed", "total", "pre_merge_ready", "source_commit", "source_ref", "active_group"] as const).some(
+						(key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]),
 					);
 				if (index >= 0) repository.openSpecs[index] = next;
 				else repository.openSpecs.push(next);

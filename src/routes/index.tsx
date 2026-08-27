@@ -9,11 +9,8 @@ import {
 	saveSortPreference,
 } from "#/features/command-center/sort-preference";
 
-export const dashboardLoader = ({
-	context,
-}: {
-	context: { queryClient: QueryClient };
-}) => context.queryClient.ensureQueryData(snapshotQueryOptions);
+export const dashboardLoader = ({ context }: { context: { queryClient: QueryClient } }) =>
+	context.queryClient.ensureQueryData(snapshotQueryOptions);
 
 export const Route = createFileRoute("/")({
 	loader: dashboardLoader,
@@ -24,9 +21,7 @@ export function Dashboard() {
 	const { data: snapshot } = useSuspenseQuery(snapshotQueryOptions);
 	const login = snapshot.user?.login ?? "User";
 	const [search, setSearch] = useState("");
-	const [sort, setSort] = useState(() =>
-		loadSortPreference(globalThis.localStorage, console.error),
-	);
+	const [sort, setSort] = useState(() => loadSortPreference(globalThis.localStorage, console.error));
 
 	useEffect(() => {
 		saveSortPreference(sort, globalThis.localStorage, console.error);
@@ -40,18 +35,14 @@ export function Dashboard() {
 			</p>
 			<label>
 				Search pull requests
-				<input
-					value={search}
-					onChange={(event) => setSearch(event.target.value)}
-				/>
+				<input value={search} onChange={(event) => setSearch(event.target.value)} />
 			</label>
 			<label>
 				Sort pull requests
 				<select
 					value={sort.mode}
 					onChange={(event) => {
-						if (isSortMode(event.target.value))
-							setSort({ ...sort, mode: event.target.value });
+						if (isSortMode(event.target.value)) setSort({ ...sort, mode: event.target.value });
 					}}
 				>
 					<option value="closest">Closest to merge</option>

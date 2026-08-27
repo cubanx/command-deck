@@ -11,24 +11,19 @@ export type DashboardSnapshot = {
 	notifications: unknown[];
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 export const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 	if (
 		!isRecord(value) ||
-		!["repositories", "pullRequests", "deployments", "notifications"].every(
-			(key) => Array.isArray(value[key]),
-		) ||
+		!["repositories", "pullRequests", "deployments", "notifications"].every((key) => Array.isArray(value[key])) ||
 		(value.error !== undefined && typeof value.error !== "string") ||
 		(value.stale !== undefined && typeof value.stale !== "boolean") ||
 		(value.user !== undefined &&
 			(!isRecord(value.user) ||
 				typeof value.user.login !== "string" ||
-				(value.user.avatar_url !== undefined &&
-					typeof value.user.avatar_url !== "string") ||
-				(value.user.fixture_avatar !== undefined &&
-					typeof value.user.fixture_avatar !== "boolean")))
+				(value.user.avatar_url !== undefined && typeof value.user.avatar_url !== "string") ||
+				(value.user.fixture_avatar !== undefined && typeof value.user.fixture_avatar !== "boolean")))
 	)
 		return null;
 	const user = value.user as Record<string, unknown> | undefined;
@@ -42,9 +37,7 @@ export const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 					user: {
 						login: user.login as string,
 						...(avatarUrl === null ? {} : { avatar_url: avatarUrl }),
-						...(user.fixture_avatar === undefined
-							? {}
-							: { fixture_avatar: user.fixture_avatar as boolean }),
+						...(user.fixture_avatar === undefined ? {} : { fixture_avatar: user.fixture_avatar as boolean }),
 					},
 				}),
 		repositories: value.repositories as unknown[],
@@ -58,8 +51,7 @@ export const snapshotQueryOptions = queryOptions({
 	queryKey: ["snapshot"],
 	queryFn: async () => {
 		const response = await fetch("/api/snapshot");
-		if (!response.ok)
-			throw new Error(`Snapshot request failed: ${response.status}`);
+		if (!response.ok) throw new Error(`Snapshot request failed: ${response.status}`);
 		const snapshot = snapshotFor(await response.json());
 		if (!snapshot) throw new TypeError("Invalid dashboard snapshot");
 		return snapshot;

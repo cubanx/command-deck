@@ -33,9 +33,7 @@ import {
 	statusDetailStateFor,
 } from "#/web/app";
 
-const directory = (
-	overrides: Partial<BrowserDirectoryHandle> = {},
-): BrowserDirectoryHandle => ({
+const directory = (overrides: Partial<BrowserDirectoryHandle> = {}): BrowserDirectoryHandle => ({
 	getDirectoryHandle: async () => directory(),
 	getFileHandle: async () => ({
 		getFile: async () => ({ text: async () => "" }),
@@ -122,24 +120,9 @@ test("reduces lifecycle evidence with explicit precedence and named blockers", (
 		[{ state: "closed" }, undefined, "closed", []],
 		[{ ...lifecycleReady, draft: true }, undefined, "draft", ["Draft"]],
 		[{}, undefined, "openspec", ["No OpenSpec found"]],
-		[
-			{ ...lifecycleReady },
-			{ completed: 1, total: 2, pre_merge_ready: false },
-			"openspec",
-			["OpenSpec incomplete"],
-		],
-		[
-			{ ...lifecycleReady, review_activity: false, completed_review_count: 0 },
-			undefined,
-			"ready",
-			[],
-		],
-		[
-			{ ...lifecycleReady, unresolved_review_threads: 1 },
-			undefined,
-			"reviewing",
-			["Unresolved review threads"],
-		],
+		[{ ...lifecycleReady }, { completed: 1, total: 2, pre_merge_ready: false }, "openspec", ["OpenSpec incomplete"]],
+		[{ ...lifecycleReady, review_activity: false, completed_review_count: 0 }, undefined, "ready", []],
+		[{ ...lifecycleReady, unresolved_review_threads: 1 }, undefined, "reviewing", ["Unresolved review threads"]],
 		[
 			{ ...lifecycleReady, unresolved_review_threads: undefined },
 			undefined,
@@ -157,24 +140,9 @@ test("reduces lifecycle evidence with explicit precedence and named blockers", (
 			"reviewing",
 			["Review pending"],
 		],
-		[
-			{ ...lifecycleReady, changes_requested: true },
-			undefined,
-			"reviewing",
-			["Changes requested"],
-		],
-		[
-			{ ...lifecycleReady, changes_requested: undefined },
-			undefined,
-			"reviewing",
-			["Review state unavailable"],
-		],
-		[
-			{ ...lifecycleReady, mergeable: "unknown" },
-			undefined,
-			"reviewing",
-			["Mergeability unknown"],
-		],
+		[{ ...lifecycleReady, changes_requested: true }, undefined, "reviewing", ["Changes requested"]],
+		[{ ...lifecycleReady, changes_requested: undefined }, undefined, "reviewing", ["Review state unavailable"]],
+		[{ ...lifecycleReady, mergeable: "unknown" }, undefined, "reviewing", ["Mergeability unknown"]],
 		[
 			{
 				...lifecycleReady,
@@ -185,12 +153,7 @@ test("reduces lifecycle evidence with explicit precedence and named blockers", (
 			"mergeable",
 			[],
 		],
-		[
-			{ ...lifecycleReady, repository_policy_loaded: false },
-			undefined,
-			"reviewing",
-			["Repository policy unavailable"],
-		],
+		[{ ...lifecycleReady, repository_policy_loaded: false }, undefined, "reviewing", ["Repository policy unavailable"]],
 		[
 			{
 				...lifecycleReady,
@@ -203,8 +166,7 @@ test("reduces lifecycle evidence with explicit precedence and named blockers", (
 		],
 		[lifecycleReady, undefined, "mergeable", []],
 	] as const;
-	for (const [pr, spec, stage, blockers] of cases)
-		expect(lifecycleFor(pr, spec)).toEqual({ stage, blockers });
+	for (const [pr, spec, stage, blockers] of cases) expect(lifecycleFor(pr, spec)).toEqual({ stage, blockers });
 	expect(
 		lifecycleFor({
 			...lifecycleReady,
@@ -299,13 +261,7 @@ test("uses five lifecycle stages and global opened ordering", () => {
 		progress: null,
 		score: 0,
 	});
-	for (const stage of [
-		"Draft",
-		"OpenSpec ready",
-		"Ready for review",
-		"Reviewing",
-		"Mergeable",
-	])
+	for (const stage of ["Draft", "OpenSpec ready", "Ready for review", "Reviewing", "Mergeable"])
 		expect(rendered).toContain(stage);
 	const ordered = derivePullRequests([
 		{ pr: { ...lifecycleReady, number: 3, full_name: "ds9/zeta" } },
@@ -384,18 +340,11 @@ test("status presentation has one warning, no positive pills, and preserves proj
 			head_ref: "ds9/hold-the-line",
 			head_sha: "a".repeat(40),
 			updated_at: "2026-08-18T12:00:00Z",
-			workflow_failures: [
-				{ name: "Runabout check", url: "https://github.com/ds9/actions/9" },
-			],
+			workflow_failures: [{ name: "Runabout check", url: "https://github.com/ds9/actions/9" }],
 		},
 		spec: { change_name: "hold-the-line", completed: 1, total: 2 },
 		bucket: "ready",
-		blockers: [
-			"Changes requested",
-			"Actions failed",
-			"Mergeability blocked",
-			"OpenSpec incomplete",
-		],
+		blockers: ["Changes requested", "Actions failed", "Mergeability blocked", "OpenSpec incomplete"],
 		progress: 0.5,
 		score: 0,
 	});
@@ -430,37 +379,30 @@ test("status detail supports hover or focus, pinned activation, and dismissal", 
 		key: "ds9:42:9",
 		pinned: true,
 	});
-	expect(
-		statusDetailStateFor(
-			{ key: "ds9:42:9", pinned: true },
-			"ds9:42:9",
-			"activate",
-		),
-	).toEqual({ key: null, pinned: false });
+	expect(statusDetailStateFor({ key: "ds9:42:9", pinned: true }, "ds9:42:9", "activate")).toEqual({
+		key: null,
+		pinned: false,
+	});
 	expect(statusDetailStateFor(inspected, null, "dismiss")).toEqual(initial);
 });
 
 test("hover detail waits briefly, stays open on leave, and is replaced by another trigger", () => {
 	expect(statusDetailHoverDelay).toBe(350);
-	expect(
-		statusDetailStateFor({ key: "ds9:42:9", pinned: false }, null, "leave"),
-	).toEqual({ key: "ds9:42:9", pinned: false });
-	expect(
-		statusDetailStateFor({ key: "ds9:42:9", pinned: true }, null, "leave"),
-	).toEqual({ key: "ds9:42:9", pinned: true });
-	expect(
-		statusDetailStateFor(
-			{ key: "ds9:42:9", pinned: false },
-			"ds9:7:1",
-			"inspect",
-		),
-	).toEqual({ key: "ds9:7:1", pinned: false });
-	expect(
-		statusDetailPositionFor(
-			{ left: 980, top: 740, width: 20, height: 20 },
-			{ width: 1000, height: 800 },
-		),
-	).toEqual({ left: 628, top: 548 });
+	expect(statusDetailStateFor({ key: "ds9:42:9", pinned: false }, null, "leave")).toEqual({
+		key: "ds9:42:9",
+		pinned: false,
+	});
+	expect(statusDetailStateFor({ key: "ds9:42:9", pinned: true }, null, "leave")).toEqual({
+		key: "ds9:42:9",
+		pinned: true,
+	});
+	expect(statusDetailStateFor({ key: "ds9:42:9", pinned: false }, "ds9:7:1", "inspect")).toEqual({
+		key: "ds9:7:1",
+		pinned: false,
+	});
+	expect(statusDetailPositionFor({ left: 980, top: 740, width: 20, height: 20 }, { width: 1000, height: 800 })).toEqual(
+		{ left: 628, top: 548 },
+	);
 });
 
 test("stage and attention filters compose independently", () => {
@@ -579,24 +521,13 @@ test("closest-to-merge retains named lifecycle blockers", () => {
 			},
 			"Changes requested",
 		],
-		[
-			{ ...lifecycleReady, unresolved_review_threads: 1 },
-			"Unresolved review threads",
-		],
+		[{ ...lifecycleReady, unresolved_review_threads: 1 }, "Unresolved review threads"],
 		[{ ...lifecycleReady, mergeable: "conflicting" }, "Mergeability blocked"],
-		[
-			{ ...lifecycleReady },
-			"OpenSpec incomplete",
-			{ change_name: "incomplete", completed: 1, total: 3 },
-		],
+		[{ ...lifecycleReady }, "OpenSpec incomplete", { change_name: "incomplete", completed: 1, total: 3 }],
 	] as const;
-	for (const [pr, label, spec = complete] of cases)
-		expect(blockersFor(pr, spec)).toEqual([label]);
+	for (const [pr, label, spec = complete] of cases) expect(blockersFor(pr, spec)).toEqual([label]);
 	expect(
-		blockersFor(
-			{ ...lifecycleReady, draft: true },
-			{ change_name: "incomplete", completed: 1, total: 3 },
-		),
+		blockersFor({ ...lifecycleReady, draft: true }, { change_name: "incomplete", completed: 1, total: 3 }),
 	).toHaveLength(1);
 });
 
@@ -612,14 +543,8 @@ test("closest-to-merge counts each unresolved gate once and shows exact labels",
 			},
 			"Changes requested",
 		],
-		[
-			{ ...lifecycleReady, unresolved_review_threads: 1 },
-			"Unresolved review threads",
-		],
-		[
-			{ ...lifecycleReady, repository_policy_loaded: false },
-			"Repository policy unavailable",
-		],
+		[{ ...lifecycleReady, unresolved_review_threads: 1 }, "Unresolved review threads"],
+		[{ ...lifecycleReady, repository_policy_loaded: false }, "Repository policy unavailable"],
 		[
 			{
 				...lifecycleReady,
@@ -629,8 +554,7 @@ test("closest-to-merge counts each unresolved gate once and shows exact labels",
 		],
 		[{ ...lifecycleReady, mergeable: "conflicting" }, "Mergeability blocked"],
 	] as const;
-	for (const [pr, label, spec = complete] of cases)
-		expect(blockersFor(pr, spec)).toEqual([label]);
+	for (const [pr, label, spec = complete] of cases) expect(blockersFor(pr, spec)).toEqual([label]);
 	expect(
 		blockersFor(
 			{
@@ -681,31 +605,16 @@ test("search ranks exact, prefix, substring, then typo matches and keeps numeric
 		fuzzyScore("defiant", "defint"),
 	]).toEqual([0, 1, 2, 3]);
 	expect(numbers(derivePullRequests(items, { query: "9" }))).toEqual([9]);
-	expect(numbers(derivePullRequests(items, { query: "defint" }))).toEqual([
-		9, 12,
-	]);
+	expect(numbers(derivePullRequests(items, { query: "defint" }))).toEqual([9, 12]);
 });
 
 test("title, repository, branch, OpenSpec, status, and repository selections compose", () => {
-	for (const query of [
-		"readiness",
-		"ds9/ops",
-		"defiant/ready",
-		"upgrade-defiant",
-	])
+	for (const query of ["readiness", "ds9/ops", "defiant/ready", "upgrade-defiant"])
 		expect(numbers(derivePullRequests(items, { query }))).toContain(12);
 	const filters = { query: "defiant", statuses: new Set(["mergeable"]) };
-	expect(
-		numbers(derivePullRequests(items, { ...filters, repositories: null })),
-	).toEqual([9]);
-	expect(
-		numbers(
-			derivePullRequests(items, { repositories: new Set(["ds9/reports"]) }),
-		),
-	).toEqual([11]);
-	expect(
-		numbers(derivePullRequests(items, { repositories: new Set() })),
-	).toEqual([]);
+	expect(numbers(derivePullRequests(items, { ...filters, repositories: null }))).toEqual([9]);
+	expect(numbers(derivePullRequests(items, { repositories: new Set(["ds9/reports"]) }))).toEqual([11]);
+	expect(numbers(derivePullRequests(items, { repositories: new Set() }))).toEqual([]);
 	expect(repositoryOptions(items)).toEqual(["ds9/ops", "ds9/reports"]);
 });
 
@@ -799,9 +708,7 @@ test("avatar and page boundaries fail closed", () => {
 test("local checkout keys, permissions, and remotes fail closed", () => {
 	expect(checkoutKey("Crisp-Inc", "42")).toBe("crisp-inc:42");
 	expect(checkoutStateFor({ supported: false })).toBe("Unsupported");
-	expect(checkoutStateFor({ supported: true, permission: "prompt" })).toBe(
-		"Permission required",
-	);
+	expect(checkoutStateFor({ supported: true, permission: "prompt" })).toBe("Permission required");
 	expect(
 		checkoutStateFor({
 			supported: true,
@@ -816,29 +723,19 @@ test("local checkout keys, permissions, and remotes fail closed", () => {
 			resolution: "resolved",
 		}),
 	).toBe("Resolved");
+	expect(repositoryForRemote('[remote "origin"]\n\turl = git@github.com:Crisp-Inc/dev-command-center.git')).toBe(
+		"crisp-inc/dev-command-center",
+	);
 	expect(
-		repositoryForRemote(
-			'[remote "origin"]\n\turl = git@github.com:Crisp-Inc/dev-command-center.git',
-		),
-	).toBe("crisp-inc/dev-command-center");
-	expect(
-		repositoryForRemote(
-			'[remote "upstream"]\n\turl = git@github.com:Crisp-Inc/dev-command-center.git',
-		),
+		repositoryForRemote('[remote "upstream"]\n\turl = git@github.com:Crisp-Inc/dev-command-center.git'),
 	).toBeNull();
 	expect(
-		repositoryForRemote(
-			'[remote "origin"]\nurl = https://github.com.evil.test/Crisp-Inc/dev-command-center.git',
-		),
+		repositoryForRemote('[remote "origin"]\nurl = https://github.com.evil.test/Crisp-Inc/dev-command-center.git'),
 	).toBeNull();
 	expect(
-		repositoryForRemote(
-			'[remote "origin"]\nurl = https://github.com/Crisp-Inc/dev-command-center.git?token=nope',
-		),
+		repositoryForRemote('[remote "origin"]\nurl = https://github.com/Crisp-Inc/dev-command-center.git?token=nope'),
 	).toBeNull();
-	expect(
-		repositoryForRemote("url = https://git.example.test/crisp/repo.git"),
-	).toBeNull();
+	expect(repositoryForRemote("url = https://git.example.test/crisp/repo.git")).toBeNull();
 });
 
 test("merge controls expose one named state instead of an opaque boolean chain", () => {
@@ -899,13 +796,10 @@ test("local checkout parsing retains only verified repository and OpenSpec evide
 		getFile: async () => ({ text: async () => content }),
 	});
 	const taskDirectory = directory({
-		getFileHandle: async () =>
-			file("## Readiness\n- [x] Shields\n- [ ] Phasers"),
+		getFileHandle: async () => file("## Readiness\n- [x] Shields\n- [ ] Phasers"),
 	});
 	const changes = directory({
-		entries: async function* (): AsyncGenerator<
-			[string, BrowserDirectoryHandle]
-		> {
+		entries: async function* (): AsyncGenerator<[string, BrowserDirectoryHandle]> {
 			yield ["prepare-defiant", { kind: "directory", ...taskDirectory }];
 		},
 	});
@@ -938,13 +832,12 @@ test("local checkout parsing retains only verified repository and OpenSpec evide
 			source_ref: "prepare-defiant",
 		}),
 	]);
-	expect(
-		parseTasks(
-			"## Helm\n- [x] Set course\n## Observe [post-merge]\n- [ ] Watch",
-		),
-	).toMatchObject({ completed: 1, total: 2, pre_merge_ready: true });
-	const activeTasks =
-		"## Build\n- [x] Implement\n- [ ] Verify\n\n## Observe [post-merge]\n- [ ] Watch";
+	expect(parseTasks("## Helm\n- [x] Set course\n## Observe [post-merge]\n- [ ] Watch")).toMatchObject({
+		completed: 1,
+		total: 2,
+		pre_merge_ready: true,
+	});
+	const activeTasks = "## Build\n- [x] Implement\n- [ ] Verify\n\n## Observe [post-merge]\n- [ ] Watch";
 	expect(parseTasks(activeTasks)).toMatchObject({
 		pre_merge_ready: false,
 		active_group: { title: "Build" },
@@ -978,9 +871,7 @@ test("local checkout parsing retains only verified repository and OpenSpec evide
 			throw error;
 		},
 	});
-	expect(await readRepositoryCheckout(repository, missingCheckout)).toBe(
-		"Unresolved",
-	);
+	expect(await readRepositoryCheckout(repository, missingCheckout)).toBe("Unresolved");
 	expect(localSpecFor(pullRequest, [pullRequest])).toBeNull();
 });
 

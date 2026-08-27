@@ -20,8 +20,5 @@ test("provider identity mutations are idempotent", () =>
 		await acceptGitHubDelivery(db, "a", "pull_request", body);
 		await acceptGitHubDelivery(db, "b", "pull_request", body);
 		await drainInbox(db);
-		expect(
-			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]
-				?.pullRequests,
-		).toHaveLength(1);
+		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toHaveLength(1);
 	}));

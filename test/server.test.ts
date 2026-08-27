@@ -1,11 +1,6 @@
 import { createHmac } from "node:crypto";
 import { expect, test, vi } from "vitest";
-import {
-	bindInstallation,
-	createOAuthState,
-	createSession,
-	upsertIdentity,
-} from "#/access";
+import { bindInstallation, createOAuthState, createSession, upsertIdentity } from "#/access";
 import { loadConfig } from "#/config";
 import { mutateUser } from "#/db";
 import { reconcileInstallations } from "#/github";
@@ -72,12 +67,8 @@ test("public shell assets and streams are isolated without a service worker", ()
 		}
 		const shell = await (await app.fetch(new Request("http://local/"))).text();
 		expect(shell).toContain("<title>Command Deck.ai</title>");
-		expect(shell).toContain(
-			'<link rel="icon" href="/icon-adaptive.svg" type="image/svg+xml">',
-		);
-		expect(shell).toContain(
-			'<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">',
-		);
+		expect(shell).toContain('<link rel="icon" href="/icon-adaptive.svg" type="image/svg+xml">');
+		expect(shell).toContain('<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">');
 		expect(shell).toContain('rel="manifest" href="/manifest.webmanifest"');
 		expect(shell).toContain("apple-touch-icon");
 		for (const path of [
@@ -87,25 +78,15 @@ test("public shell assets and streams are isolated without a service worker", ()
 			"/icon-512.png",
 			"/icon-maskable-512.png",
 		])
-			expect(
-				(await app.fetch(new Request(`http://local${path}`))).headers.get(
-					"content-type",
-				),
-			).toBe("image/png");
-		const sourceIcon = await (
-			await app.fetch(new Request("http://local/icon.svg"))
-		).text();
+			expect((await app.fetch(new Request(`http://local${path}`))).headers.get("content-type")).toBe("image/png");
+		const sourceIcon = await (await app.fetch(new Request("http://local/icon.svg"))).text();
 		expect(sourceIcon).toContain("OpenMoji");
 		expect(sourceIcon).toContain("CC BY-SA 4.0");
-		const adaptiveIcon = await (
-			await app.fetch(new Request("http://local/icon-adaptive.svg"))
-		).text();
+		const adaptiveIcon = await (await app.fetch(new Request("http://local/icon-adaptive.svg"))).text();
 		expect(adaptiveIcon).toContain("prefers-color-scheme:dark");
 		expect(adaptiveIcon).toContain("#f59e0b");
 		expect(adaptiveIcon).toContain("#38bdf8");
-		const worker = await (
-			await app.fetch(new Request("http://local/sw.js"))
-		).text();
+		const worker = await (await app.fetch(new Request("http://local/sw.js"))).text();
 		expect(worker).toContain("self.skipWaiting()");
 		expect(worker).toMatch(/caches\s*\.keys\(\)/);
 		expect(worker).toContain("caches.delete(cache)");
@@ -114,21 +95,13 @@ test("public shell assets and streams are isolated without a service worker", ()
 		expect(worker).not.toContain("const CACHE");
 		expect(worker).not.toContain("const ASSETS");
 		expect(worker).not.toContain('addEventListener("fetch"');
-		expect(
-			(await app.fetch(new Request("http://local/sw.js"))).headers.get(
-				"cache-control",
-			),
-		).toContain("no-cache");
+		expect((await app.fetch(new Request("http://local/sw.js"))).headers.get("cache-control")).toContain("no-cache");
 		expect(shell).toContain('href="/app.css"');
 		expect(shell).toContain('src="/app.js"');
 		expect(shell).not.toContain("?v=");
-		const javascript = await (
-			await app.fetch(new Request("http://local/app.js"))
-		).text();
+		const javascript = await (await app.fetch(new Request("http://local/app.js"))).text();
 		expect(javascript).not.toContain("serviceWorker?.register");
-		const css = await (
-			await app.fetch(new Request("http://local/app.css"))
-		).text();
+		const css = await (await app.fetch(new Request("http://local/app.css"))).text();
 		expect(css).toContain("width: min(420px, 100%)");
 		expect(css).toContain("padding: 10px 12px");
 		expect(css).toContain("font-size: 16px");
@@ -138,17 +111,11 @@ test("public shell assets and streams are isolated without a service worker", ()
 		);
 		expect(css).toContain("justify-self: center;");
 		expect(css).toContain("margin-left: 0;");
-		expect(css).toContain(
-			"@media (max-width: 760px) {\n\theader {\n\t\tdisplay: flex;",
-		);
+		expect(css).toContain("@media (max-width: 760px) {\n\theader {\n\t\tdisplay: flex;");
 		expect(javascript).toContain("showDirectoryPicker");
 		expect(javascript).toContain("Provider reconciliation is stale.");
-		expect(
-			(await app.fetch(new Request("http://local/api/snapshot"))).status,
-		).toBe(401);
-		expect((await app.fetch(new Request("http://local/events"))).status).toBe(
-			401,
-		);
+		expect((await app.fetch(new Request("http://local/api/snapshot"))).status).toBe(401);
+		expect((await app.fetch(new Request("http://local/events"))).status).toBe(401);
 		expect(
 			(
 				await app.fetch(
@@ -183,9 +150,7 @@ test("GitHub webhook route rejects invalid HMAC and durably deduplicates valid d
 		await new Promise<void>((resolve) => queueMicrotask(resolve));
 		await app.drain();
 		expect((await app.fetch(request(signature))).status).toBe(202);
-		expect(
-			await db.inboxDeliveries.countDocuments({ deliveryId: "quality-hmac" }),
-		).toBe(1);
+		expect(await db.inboxDeliveries.countDocuments({ deliveryId: "quality-hmac" })).toBe(1);
 	}));
 
 test("GitHub webhook route rejects correctly signed malformed JSON without an inbox row", () =>
@@ -237,17 +202,12 @@ test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
 			];
 		});
 		const calls: number[] = [];
-		const app = createApp(
-			db,
-			{ ...testConfig, githubWebhookSecret: "secret" },
-			undefined,
-			{
-				reconcilePullRequest: async (_db, target) => {
-					calls.push(target.number);
-					return { kind: "unchanged" };
-				},
+		const app = createApp(db, { ...testConfig, githubWebhookSecret: "secret" }, undefined, {
+			reconcilePullRequest: async (_db, target) => {
+				calls.push(target.number);
+				return { kind: "unchanged" };
 			},
-		);
+		});
 		const session = await createSession(db, "u");
 		const stream = await app.fetch(
 			new Request("http://local/events", {
@@ -280,9 +240,7 @@ test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
 		await app.drain();
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(calls).toEqual([7]);
-		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
-			"event: refresh",
-		);
+		expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: refresh");
 		expect(
 			await app.fetch(
 				new Request("http://local/webhooks/github", {
@@ -299,10 +257,7 @@ test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
 		await app.drain();
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(
-			await Promise.race([
-				reader.read(),
-				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
-			]),
+			await Promise.race([reader.read(), new Promise<undefined>((resolve) => setTimeout(resolve, 25))]),
 		).toBeUndefined();
 		await reader.cancel();
 		app.stop?.();
@@ -330,9 +285,7 @@ test("installation repair refreshes only bound streams after a changed bootstrap
 					};
 				if (outcome === "changed")
 					await mutateUser(database, "u", (user) => {
-						user.installations.find(
-							(item) => item.installationId === installationId,
-						)!.repositories = [
+						user.installations.find((item) => item.installationId === installationId)!.repositories = [
 							{
 								repositoryId: "2",
 								full_name: "ds9/ops",
@@ -342,9 +295,7 @@ test("installation repair refreshes only bound streams after a changed bootstrap
 							},
 						];
 					});
-				return outcome === "changed"
-					? { kind: "changed", body: [{ id: 2 }] }
-					: { kind: "unchanged" };
+				return outcome === "changed" ? { kind: "changed", body: [{ id: 2 }] } : { kind: "unchanged" };
 			},
 		});
 		const stream = async (id: string) => {
@@ -370,19 +321,12 @@ test("installation repair refreshes only bound streams after a changed bootstrap
 				}),
 			);
 		const none = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
-			Promise.race([
-				reader.read(),
-				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
-			]);
+			Promise.race([reader.read(), new Promise<undefined>((resolve) => setTimeout(resolve, 25))]);
 		try {
 			expect((await repair()).status).toBe(200);
-			expect(
-				(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories,
-			).toHaveLength(1);
+			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories).toHaveLength(1);
 			for (const item of [primary, shared])
-				expect(
-					new TextDecoder().decode((await item.reader.read()).value),
-				).toContain("event: refresh");
+				expect(new TextDecoder().decode((await item.reader.read()).value)).toContain("event: refresh");
 			outcome = "unchanged";
 			await repair();
 			expect(await none(primary.reader)).toBeUndefined();
@@ -395,11 +339,7 @@ test("installation repair refreshes only bound streams after a changed bootstrap
 			expect(await none(foreign.reader)).toBeUndefined();
 			expect(await failed.text()).toContain("reconciliation failed");
 		} finally {
-			await Promise.all([
-				primary.reader.cancel(),
-				shared.reader.cancel(),
-				foreign.reader.cancel(),
-			]);
+			await Promise.all([primary.reader.cancel(), shared.reader.cancel(), foreign.reader.cancel()]);
 			app.stop();
 		}
 	}));
@@ -434,53 +374,40 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 				];
 			});
 		}
-		let outcome: "changed" | "openspec" | "closed" | "unchanged" | "error" =
-			"changed";
-		const app = createApp(
-			db,
-			{ ...testConfig, githubWebhookSecret: "secret" },
-			undefined,
-			{
-				reconcilePullRequest: async (database, target) => {
-					if (outcome === "error")
-						return {
-							kind: "error",
-							stale: true,
-							message: "provider unavailable",
-						};
-					if (
-						outcome === "changed" ||
-						outcome === "openspec" ||
-						outcome === "closed"
-					)
-						await Promise.all(
-							["u", "shared"].map((id) =>
-								mutateUser(database, id, (user) => {
-									const pullRequests =
-										user.installations[0]!.repositories[0]!.pullRequests;
-									if (outcome === "closed") pullRequests.splice(0);
-									else if (outcome === "openspec")
-										user.installations[0]!.repositories[0]!.openSpecs.push({
-											change_name: "repair-wolf-359",
-											completed: 0,
-											total: 1,
-											pre_merge_ready: false,
-											source_commit: "a".repeat(40),
-											active_group: null,
-											updated_at: "2030-01-01T00:00:00Z",
-										});
-									else pullRequests[0]!.title = "Repair the wormhole";
-								}),
-							),
-						);
-					return outcome === "changed" ||
-						outcome === "openspec" ||
-						outcome === "closed"
-						? { kind: "changed", body: { number: target.number } }
-						: { kind: "unchanged" };
-				},
+		let outcome: "changed" | "openspec" | "closed" | "unchanged" | "error" = "changed";
+		const app = createApp(db, { ...testConfig, githubWebhookSecret: "secret" }, undefined, {
+			reconcilePullRequest: async (database, target) => {
+				if (outcome === "error")
+					return {
+						kind: "error",
+						stale: true,
+						message: "provider unavailable",
+					};
+				if (outcome === "changed" || outcome === "openspec" || outcome === "closed")
+					await Promise.all(
+						["u", "shared"].map((id) =>
+							mutateUser(database, id, (user) => {
+								const pullRequests = user.installations[0]!.repositories[0]!.pullRequests;
+								if (outcome === "closed") pullRequests.splice(0);
+								else if (outcome === "openspec")
+									user.installations[0]!.repositories[0]!.openSpecs.push({
+										change_name: "repair-wolf-359",
+										completed: 0,
+										total: 1,
+										pre_merge_ready: false,
+										source_commit: "a".repeat(40),
+										active_group: null,
+										updated_at: "2030-01-01T00:00:00Z",
+									});
+								else pullRequests[0]!.title = "Repair the wormhole";
+							}),
+						),
+					);
+				return outcome === "changed" || outcome === "openspec" || outcome === "closed"
+					? { kind: "changed", body: { number: target.number } }
+					: { kind: "unchanged" };
 			},
-		);
+		});
 		const streamFor = async (id: string) => {
 			const session = await createSession(db, id);
 			const stream = await app.fetch(
@@ -513,27 +440,19 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 			);
 		try {
 			expect((await repair()).status).toBe(200);
-			expect(
-				(await db.users.findOne({ _id: "u" }))?.installations[0]
-					?.repositories[0]?.pullRequests[0]?.title,
-			).toBe("Repair the wormhole");
+			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]?.title).toBe(
+				"Repair the wormhole",
+			);
 			for (const stream of [primary, shared])
-				expect(
-					new TextDecoder().decode((await stream.reader.read()).value),
-				).toContain("event: refresh");
+				expect(new TextDecoder().decode((await stream.reader.read()).value)).toContain("event: refresh");
 			const openSpec = await streamFor("u");
 			outcome = "openspec";
 			expect((await repair()).status).toBe(200);
-			expect(
-				(await db.users.findOne({ _id: "u" }))?.installations[0]
-					?.repositories[0]?.openSpecs,
-			).toMatchObject([{ change_name: "repair-wolf-359" }]);
-			expect(
-				new TextDecoder().decode((await openSpec.reader.read()).value),
-			).toContain("event: refresh");
-			expect(
-				new TextDecoder().decode((await primary.reader.read()).value),
-			).toContain("event: refresh");
+			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toMatchObject([
+				{ change_name: "repair-wolf-359" },
+			]);
+			expect(new TextDecoder().decode((await openSpec.reader.read()).value)).toContain("event: refresh");
+			expect(new TextDecoder().decode((await primary.reader.read()).value)).toContain("event: refresh");
 			await openSpec.reader.cancel();
 			outcome = "unchanged";
 			expect((await repair()).status).toBe(200);
@@ -559,20 +478,13 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 			).toBe(202);
 			await app.drain();
 			const noEvent = (reader: ReadableStreamDefaultReader<Uint8Array>) =>
-				Promise.race([
-					reader.read(),
-					new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
-				]);
+				Promise.race([reader.read(), new Promise<undefined>((resolve) => setTimeout(resolve, 25))]);
 			expect(await noEvent(primary.reader)).toBeUndefined();
 			outcome = "error";
 			expect((await repair()).status).toBe(502);
 			expect(await noEvent(foreign.reader)).toBeUndefined();
 		} finally {
-			await Promise.all([
-				primary.reader.cancel(),
-				shared.reader.cancel(),
-				foreign.reader.cancel(),
-			]);
+			await Promise.all([primary.reader.cancel(), shared.reader.cancel(), foreign.reader.cancel()]);
 			app.stop();
 		}
 	}));
@@ -580,14 +492,10 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 test("dashboard shell uses compact OpenSpec disclosure and an accessible PR section name", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
-		const javascript = await (
-			await app.fetch(new Request("http://local/app.js"))
-		).text();
+		const javascript = await (await app.fetch(new Request("http://local/app.js"))).text();
 		expect(javascript).toContain("<details");
 		expect(javascript).toContain("<summary");
-		expect(javascript).toContain(
-			'<img class="brand-icon" src="/icon-adaptive.svg" alt="">',
-		);
+		expect(javascript).toContain('<img class="brand-icon" src="/icon-adaptive.svg" alt="">');
 		expect(javascript).toContain("<h1>Command Deck.ai</h1>");
 		expect(javascript).toContain("Open tasks");
 		expect(javascript).toContain('aria-label="Pull requests"');
@@ -598,9 +506,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain('class="control-group search-results"');
 		expect(javascript).toContain('class="control-group filters"');
 		expect(javascript).toContain('class="control-group sorting"');
-		expect(javascript).toContain(
-			'<fieldset class="repository-filter"><legend>Repositories</legend>',
-		);
+		expect(javascript).toContain('<fieldset class="repository-filter"><legend>Repositories</legend>');
 		expect(javascript).not.toContain('<details class="repository-filter"');
 		expect(javascript).not.toContain("repository-search");
 		expect(javascript).not.toContain("repositoryQuery");
@@ -609,9 +515,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain('event.key === "/"');
 		expect(javascript).toContain('event.key === "Escape"');
 		expect(javascript).toContain('id="pr-sort"');
-		expect(javascript).not.toContain(
-			'aria-describedby="codex-activity-status"',
-		);
+		expect(javascript).not.toContain('aria-describedby="codex-activity-status"');
 		expect(javascript).toContain('id="pr-direction"');
 		expect(javascript).toContain("Lifecycle stage");
 		expect(javascript).toContain("Needs attention");
@@ -619,9 +523,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain("Closest to merge");
 		expect(javascript).not.toContain("Codex activity (unavailable)");
 		expect(javascript).not.toContain("codex-activity-status");
-		expect(javascript).toContain(
-			"${repositoryGroup}${filterGroup}${sortingGroup}${searchGroup}",
-		);
+		expect(javascript).toContain("${repositoryGroup}${filterGroup}${sortingGroup}${searchGroup}");
 		expect(javascript).toContain("PR lifecycle. Current stage:");
 		expect(javascript).toContain("lifecycle-rail");
 		expect(javascript).toContain("data-status-detail");
@@ -633,9 +535,7 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(javascript).toContain("workflow_failures");
 		expect(javascript).not.toContain("failed_jobs");
 		expect(javascript).not.toContain("failed_steps");
-		const css = await (
-			await app.fetch(new Request("http://local/app.css"))
-		).text();
+		const css = await (await app.fetch(new Request("http://local/app.css"))).text();
 		expect(css).toContain("position: sticky");
 		expect(css).toContain("flex-wrap: wrap");
 		expect(css).toContain(".lifecycle-pill.complete");
@@ -651,22 +551,14 @@ test("dashboard shell uses compact OpenSpec disclosure and an accessible PR sect
 		expect(css).toContain("color: var(--lifecycle-complete)");
 		expect(css).toContain("color: var(--lifecycle-current)");
 		expect(css).toContain("color: var(--warning)");
-		expect(css).toContain(
-			".pr-lifecycle {\n\tdisplay: flex;\n\tflex-direction: column;",
-		);
-		expect(css).toContain(
-			".pr-lifecycle-title {\n\tmargin: 0;\n\tpadding: 0 4px;",
-		);
+		expect(css).toContain(".pr-lifecycle {\n\tdisplay: flex;\n\tflex-direction: column;");
+		expect(css).toContain(".pr-lifecycle-title {\n\tmargin: 0;\n\tpadding: 0 4px;");
 		expect(css).toContain(".pr-statuses + .muted {\n\tmargin-top: 8px;");
 		expect(css).toContain(".control-group");
 		expect(css).not.toContain(".sorting #codex-activity-status");
-		expect(css).toContain(
-			".repository-options {\n\tdisplay: flex;\n\tflex-wrap: wrap;",
-		);
+		expect(css).toContain(".repository-options {\n\tdisplay: flex;\n\tflex-wrap: wrap;");
 		expect(javascript).toContain('class="stack"');
-		expect(javascript).toContain(
-			'<article class="card"><div class="pr-card-header">',
-		);
+		expect(javascript).toContain('<article class="card"><div class="pr-card-header">');
 		expect(css).toContain(".stack > :not(.card) + :not(.card)");
 		expect(css).toContain(".stack > article.card + article.card");
 		expect(css).toContain(':root[data-appearance="dark"] .openspec');
@@ -679,18 +571,12 @@ test("avatar navigation opens one dedicated configuration page", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
 		await app.drain();
-		const javascript = await (
-			await app.fetch(new Request("http://local/app.js"))
-		).text();
-		const css = await (
-			await app.fetch(new Request("http://local/app.css"))
-		).text();
+		const javascript = await (await app.fetch(new Request("http://local/app.js"))).text();
+		const css = await (await app.fetch(new Request("http://local/app.css"))).text();
 		expect(javascript).toContain('class="avatar-menu"');
 		expect(javascript).toContain('class="brand brand-home" href="/"');
 		expect(javascript).toContain('aria-label="User menu"');
-		expect(javascript).toContain(
-			'class="avatar-menu-caret" aria-hidden="true">▾</span>',
-		);
+		expect(javascript).toContain('class="avatar-menu-caret" aria-hidden="true">▾</span>');
 		expect(javascript).toContain('class="appearance-menu"');
 		expect(javascript).toContain('class="appearance-check"');
 		expect(javascript).toContain("✓");
@@ -766,19 +652,13 @@ test("reconcile route requires an authenticated user with an approved bound inst
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
 		const request = (headers?: HeadersInit) =>
-			app.fetch(
-				new Request("http://local/api/reconcile", { method: "POST", headers }),
-			);
+			app.fetch(new Request("http://local/api/reconcile", { method: "POST", headers }));
 		expect((await request()).status).toBe(401);
 		await upsertIdentity(db, "u", "kira");
 		const session = await createSession(db, "u");
-		expect(
-			(await request({ cookie: `dcc_session=${session.token}` })).status,
-		).toBe(404);
+		expect((await request({ cookie: `dcc_session=${session.token}` })).status).toBe(404);
 		await bindInstallation(db, "u", "12", "external");
-		expect(
-			(await request({ cookie: `dcc_session=${session.token}` })).status,
-		).toBe(404);
+		expect((await request({ cookie: `dcc_session=${session.token}` })).status).toBe(404);
 	}));
 
 test("manual PR reconciliation is scoped to known open PRs and all-known repair stays targeted", () =>
@@ -816,9 +696,7 @@ test("manual PR reconciliation is scoped to known open PRs and all-known repair 
 		const app = createApp(db, testConfig, undefined, {
 			reconcilePullRequest: async (_db, target) => {
 				calls.push(target);
-				return fail
-					? { kind: "error", message: "repair failed", stale: true }
-					: { kind: "unchanged" };
+				return fail ? { kind: "error", message: "repair failed", stale: true } : { kind: "unchanged" };
 			},
 		});
 		const session = await createSession(db, "u");
@@ -828,9 +706,7 @@ test("manual PR reconciliation is scoped to known open PRs and all-known repair 
 					method: "POST",
 					headers: {
 						cookie: `dcc_session=${session.token}`,
-						...(body === undefined
-							? {}
-							: { "content-type": "application/json" }),
+						...(body === undefined ? {} : { "content-type": "application/json" }),
 					},
 					body: body === undefined ? undefined : JSON.stringify(body),
 				}),
@@ -903,9 +779,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			true,
 			["sign", "verify"],
 		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-			await crypto.subtle.exportKey("pkcs8", privateKey),
-		)
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 			.toString("base64")
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
@@ -938,24 +812,19 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 				if (url.includes("/app/installations/")) {
 					if (fail) return Response.json({ account: { login: "cubanx" } });
 					return new Promise((release) => {
-						releaseIdentity = () =>
-							release(Response.json({ account: { login: "cubanx" } }));
+						releaseIdentity = () => release(Response.json({ account: { login: "cubanx" } }));
 						resolve();
 					});
 				}
-				if (url.endsWith("/repos/cubanx/defiant"))
-					return Response.json({ default_branch: "main" });
+				if (url.endsWith("/repos/cubanx/defiant")) return Response.json({ default_branch: "main" });
 				if (url.includes("/rules/branches/")) return Response.json([]);
-				if (url.includes("/branches/main/protection"))
-					return Response.json({}, { status: 404 });
+				if (url.includes("/branches/main/protection")) return Response.json({}, { status: 404 });
 				if (url.includes("installation/repositories"))
 					return Response.json({
 						repositories: [{ id: 2, full_name: "cubanx/defiant" }],
 					});
 				if (url.includes("/pulls/1/files"))
-					return Response.json([
-						{ filename: "openspec/changes/repair-defiant/tasks.md" },
-					]);
+					return Response.json([{ filename: "openspec/changes/repair-defiant/tasks.md" }]);
 				if (url.includes("/pulls?"))
 					return Response.json([
 						{
@@ -1014,8 +883,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			if (!successfulUser) throw new Error("test user missing");
 			const successfulInstallation = successfulUser.installations[0];
 			if (!successfulInstallation) throw new Error("test installation missing");
-			const successfulEvidence =
-				successfulInstallation.reconciliationEvidence?.at(-1);
+			const successfulEvidence = successfulInstallation.reconciliationEvidence?.at(-1);
 			expect(successfulEvidence).toMatchObject({
 				outcome: "success",
 				operation: "reconciliation",
@@ -1023,13 +891,10 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const foreignUser = await db.users.findOne({ _id: "foreign" });
 			if (!foreignUser) throw new Error("foreign test user missing");
 			const foreignInstallation = foreignUser.installations[0];
-			if (!foreignInstallation)
-				throw new Error("foreign test installation missing");
+			if (!foreignInstallation) throw new Error("foreign test installation missing");
 			expect(foreignInstallation.reconciliationEvidence).toBeUndefined();
 			const refresh = await reader.read();
-			expect(new TextDecoder().decode(refresh.value)).toContain(
-				"event: refresh",
-			);
+			expect(new TextDecoder().decode(refresh.value)).toContain("event: refresh");
 			await reader.cancel();
 			fail = true;
 			const failed = await request();
@@ -1037,9 +902,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const body = await failed.text();
 			expect(JSON.parse(body)).toEqual({ status: "failed" });
 			expect(body).not.toContain("fixture-token-value");
-			const reconciliationLog = logs.find(
-				(log) => log[0] === "installation reconciliation failed",
-			);
+			const reconciliationLog = logs.find((log) => log[0] === "installation reconciliation failed");
 			expect(reconciliationLog).toEqual([
 				"installation reconciliation failed",
 				"12",
@@ -1057,17 +920,12 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 				operation: "openspec",
 				summary: "GitHub OpenSpec artifact fetch failed",
 			});
-			expect(JSON.stringify(failedEvidence)).not.toContain(
-				"fixture-token-value",
-			);
-			expect(JSON.stringify(failedEvidence)).not.toContain(
-				"fixture-header-value",
-			);
+			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-token-value");
+			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-header-value");
 			const failedForeignUser = await db.users.findOne({ _id: "foreign" });
 			if (!failedForeignUser) throw new Error("foreign test user missing");
 			const failedForeignInstallation = failedForeignUser.installations[0];
-			if (!failedForeignInstallation)
-				throw new Error("foreign test installation missing");
+			if (!failedForeignInstallation) throw new Error("foreign test installation missing");
 			expect(failedForeignInstallation.reconciliationEvidence).toBeUndefined();
 			const logged = JSON.stringify(logs);
 			expect(logged).not.toContain("fixture-token-value");
@@ -1092,9 +950,7 @@ test("a timed-out reconciliation releases its lock", () =>
 			true,
 			["sign", "verify"],
 		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-			await crypto.subtle.exportKey("pkcs8", privateKey),
-		)
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 			.toString("base64")
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
@@ -1116,9 +972,7 @@ test("a timed-out reconciliation releases its lock", () =>
 		};
 		const timeout = vi
 			.spyOn(AbortSignal, "timeout")
-			.mockReturnValue(
-				AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
-			);
+			.mockReturnValue(AbortSignal.abort(new DOMException("timed out", "TimeoutError")));
 		try {
 			expect(await app.reconcile()).toBe("failed");
 			timeout.mockRestore();
@@ -1155,16 +1009,8 @@ test("merge start and confirmation bind the session, origin, exact node ID, and 
 				return { merged: true };
 			},
 		};
-		const app = createApp(
-			db,
-			{ ...testConfig, githubClientId: "client" },
-			provider,
-		);
-		const post = (
-			path: string,
-			body = mergeTarget,
-			headers: HeadersInit = {},
-		) =>
+		const app = createApp(db, { ...testConfig, githubClientId: "client" }, provider);
+		const post = (path: string, body = mergeTarget, headers: HeadersInit = {}) =>
 			app.fetch(
 				new Request(`http://local${path}`, {
 					method: "POST",
@@ -1178,17 +1024,13 @@ test("merge start and confirmation bind the session, origin, exact node ID, and 
 			);
 		const start = await post("/api/merge/start");
 		expect(start.status).toBe(302);
-		const token = new URL(start.headers.get("location") ?? "").searchParams.get(
-			"state",
-		);
+		const token = new URL(start.headers.get("location") ?? "").searchParams.get("state");
 		expect(token).toBeTruthy();
 		expect(await mergeIntentFor(db, token!)).toMatchObject({
 			fullName: "Crisp-Inc/dev-command-center",
 			pullRequestTitle: "Hold the line",
 		});
-		expect(JSON.stringify(await db.mergeIntents.findOne({}))).not.toContain(
-			session.token,
-		);
+		expect(JSON.stringify(await db.mergeIntents.findOne({}))).not.toContain(session.token);
 		await advanceMergeIntent(db, token!, "started", "authorized", undefined, {
 			pullRequestId: "PR_kwDOA",
 		});
@@ -1201,25 +1043,13 @@ test("merge start and confirmation bind the session, origin, exact node ID, and 
 		if (!reader) throw new Error("event stream body missing");
 		await reader.read();
 		expect(
-			await (
-				await post(
-					"/api/merge/confirm",
-					new URLSearchParams({ confirmation: token! }).toString(),
-				)
-			).json(),
+			await (await post("/api/merge/confirm", new URLSearchParams({ confirmation: token! }).toString())).json(),
 		).toEqual({ status: "success" });
-		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
-			"event: refresh",
-		);
+		expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: refresh");
 		await reader.cancel();
-		expect(
-			(
-				await post(
-					"/api/merge/confirm",
-					new URLSearchParams({ confirmation: token! }).toString(),
-				)
-			).status,
-		).toBe(409);
+		expect((await post("/api/merge/confirm", new URLSearchParams({ confirmation: token! }).toString())).status).toBe(
+			409,
+		);
 		const production = createApp(
 			db,
 			{
@@ -1269,11 +1099,7 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 				return { merged: true };
 			},
 		};
-		const app = createApp(
-			db,
-			{ ...testConfig, githubClientId: "client" },
-			provider,
-		);
+		const app = createApp(db, { ...testConfig, githubClientId: "client" }, provider);
 		const post = (confirmation: string) =>
 			app.fetch(
 				new Request("http://local/api/merge/confirm", {
@@ -1296,9 +1122,7 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 					body: mergeTarget,
 				}),
 			);
-			const state = new URL(
-				response.headers.get("location") ?? "",
-			).searchParams.get("state");
+			const state = new URL(response.headers.get("location") ?? "").searchParams.get("state");
 			if (!state) throw new Error("merge state missing");
 			await advanceMergeIntent(db, state, "started", "authorized", undefined, {
 				pullRequestId: "PR_kwDOA",
@@ -1348,14 +1172,10 @@ test("local demo serves snapshot and SSE without a session and exposes no Railwa
 			localDemo: true,
 			hostname: "127.0.0.1",
 		});
-		const snapshot = await (
-			await app.fetch(new Request("http://local/api/snapshot"))
-		).json();
+		const snapshot = await (await app.fetch(new Request("http://local/api/snapshot"))).json();
 		expect(snapshot.pullRequests).toHaveLength(19);
 		expect(snapshot.repositories[0]?.account_login).toBe("cubanx");
-		expect(snapshot.notifications[0]?.body).toBe(
-			"Restore the Defiant launch checklist needs attention.",
-		);
+		expect(snapshot.notifications[0]?.body).toBe("Restore the Defiant launch checklist needs attention.");
 		const stream = await app.fetch(new Request("http://local/events"));
 		expect(stream.status).toBe(200);
 		await stream.body?.cancel();
@@ -1376,8 +1196,7 @@ test("OAuth callback preserves zero bindings and production origin/readiness gat
 			...testConfig,
 			production: true,
 			publicUrl: "https://command-center.up.railway.app",
-			oauthCallbackUrl:
-				"https://command-center.up.railway.app/auth/github/callback",
+			oauthCallbackUrl: "https://command-center.up.railway.app/auth/github/callback",
 			githubClientId: "client",
 			githubClientSecret: "secret",
 		});
@@ -1403,31 +1222,22 @@ test("OAuth callback preserves zero bindings and production origin/readiness gat
 			expect(
 				(
 					await app.fetch(
-						new Request(
-							`http://local/auth/github/callback?code=code&state=${state}`,
-							{
-								headers: {
-									"x-forwarded-proto": "https",
-									"x-forwarded-host": "command-center.up.railway.app",
-								},
+						new Request(`http://local/auth/github/callback?code=code&state=${state}`, {
+							headers: {
+								"x-forwarded-proto": "https",
+								"x-forwarded-host": "command-center.up.railway.app",
 							},
-						),
+						}),
 					)
 				).status,
 			).toBe(302);
-			expect(
-				(await db.users.findOne({ _id: "9" }))?.installations,
-			).toHaveLength(0);
+			expect((await db.users.findOne({ _id: "9" }))?.installations).toHaveLength(0);
 		} finally {
 			globalThis.fetch = original;
 		}
-		expect((await app.fetch(new Request("http://local/health"))).status).toBe(
-			200,
-		);
+		expect((await app.fetch(new Request("http://local/health"))).status).toBe(200);
 		await db.client.close();
-		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(
-			503,
-		);
+		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(503);
 	}));
 
 test("local OAuth sends its loopback callback and permits its HTTP session cookie", () =>
@@ -1440,15 +1250,11 @@ test("local OAuth sends its loopback callback and permits its HTTP session cooki
 				GITHUB_CLIENT_SECRET: "secret",
 			}),
 		);
-		const begin = await app.fetch(
-			new Request("http://127.0.0.1:3000/auth/github"),
-		);
+		const begin = await app.fetch(new Request("http://127.0.0.1:3000/auth/github"));
 		expect(begin.headers.get("location")).toContain(
 			"redirect_uri=http%3A%2F%2F127.0.0.1%3A3000%2Fauth%2Fgithub%2Fcallback",
 		);
-		const state = new URL(begin.headers.get("location") ?? "").searchParams.get(
-			"state",
-		);
+		const state = new URL(begin.headers.get("location") ?? "").searchParams.get("state");
 		const original = globalThis.fetch;
 		fetchTarget.fetch = async (input) =>
 			String(input).includes("access_token")
@@ -1456,9 +1262,7 @@ test("local OAuth sends its loopback callback and permits its HTTP session cooki
 				: Response.json({ id: 9, login: "kira" });
 		try {
 			const callback = await app.fetch(
-				new Request(
-					`http://127.0.0.1:3000/auth/github/callback?code=code&state=${state}`,
-				),
+				new Request(`http://127.0.0.1:3000/auth/github/callback?code=code&state=${state}`),
 			);
 			expect(callback.headers.get("location")).toBe("http://127.0.0.1:3000");
 			expect(callback.headers.get("set-cookie")).not.toContain(" Secure;");
@@ -1471,13 +1275,9 @@ test("public shell and health survive failed initialization while readiness repo
 	withDatabase(async (db) => {
 		await db.client.close();
 		const app = createApp(db, testConfig);
-		expect((await app.fetch(new Request("http://local/health"))).status).toBe(
-			200,
-		);
+		expect((await app.fetch(new Request("http://local/health"))).status).toBe(200);
 		expect((await app.fetch(new Request("http://local/"))).status).toBe(200);
-		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(
-			503,
-		);
+		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(503);
 	}));
 
 test("failed initialization drain retains the full webhook diagnostic", () =>
@@ -1525,17 +1325,13 @@ test("OAuth binds only the verified installation account and never persists its 
 				expect(
 					(
 						await app.fetch(
-							new Request(
-								`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`,
-							),
+							new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`),
 						)
 					).status,
 				).toBe(302);
 			}
 			const user = await db.users.findOne({ _id: "9" });
-			expect(user?.installations).toMatchObject([
-				{ installationId: "12", accountLogin: "cubanx" },
-			]);
+			expect(user?.installations).toMatchObject([{ installationId: "12", accountLogin: "cubanx" }]);
 			expect(JSON.stringify(user)).not.toContain("oauth-token");
 		} finally {
 			globalThis.fetch = original;
@@ -1561,17 +1357,10 @@ test("OAuth rejects an unverified installation without binding it", () =>
 		try {
 			const state = await createOAuthState(db);
 			expect(
-				(
-					await app.fetch(
-						new Request(
-							`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`,
-						),
-					)
-				).status,
+				(await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`)))
+					.status,
 			).toBe(403);
-			expect(
-				(await db.users.findOne({ _id: "9" }))?.installations,
-			).toHaveLength(0);
+			expect((await db.users.findOne({ _id: "9" }))?.installations).toHaveLength(0);
 		} finally {
 			globalThis.fetch = original;
 		}
@@ -1593,24 +1382,16 @@ test("OAuth installation pagination rejects unsafe and looping next links withou
 			fetchTarget.fetch = async (input) => {
 				const url = String(input);
 				calls.push(url);
-				if (url.includes("access_token"))
-					return Response.json({ access_token: "oauth-token" });
-				if (url.endsWith("/user"))
-					return Response.json({ id: 9, login: "kira" });
-				if (url.includes("user/installations"))
-					return Response.json({ installations: [] }, { headers: { link } });
+				if (url.includes("access_token")) return Response.json({ access_token: "oauth-token" });
+				if (url.endsWith("/user")) return Response.json({ id: 9, login: "kira" });
+				if (url.includes("user/installations")) return Response.json({ installations: [] }, { headers: { link } });
 				throw new Error(`unexpected ${url}`);
 			};
 			try {
 				const state = await createOAuthState(db);
 				expect(
-					(
-						await app.fetch(
-							new Request(
-								`http://local/auth/github/callback?code=x&state=${state}&installation_id=12`,
-							),
-						)
-					).status,
+					(await app.fetch(new Request(`http://local/auth/github/callback?code=x&state=${state}&installation_id=12`)))
+						.status,
 				).toBe(502);
 				expect(calls.some((call) => call.includes("evil.example"))).toBe(false);
 			} finally {
@@ -1659,9 +1440,7 @@ test("repair persists a sanitized stale failure when its installation token requ
 			true,
 			["sign", "verify"],
 		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-			await crypto.subtle.exportKey("pkcs8", privateKey),
-		)
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 			.toString("base64")
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
@@ -1687,8 +1466,7 @@ test("repair persists a sanitized stale failure when its installation token requ
 			expect(response.status).toBe(200);
 			const body = await response.text();
 			expect(body).not.toContain("raw repair provider diagnostic");
-			const installation = (await db.users.findOne({ _id: "u" }))
-				?.installations[0];
+			const installation = (await db.users.findOne({ _id: "u" }))?.installations[0];
 			expect(installation).toMatchObject({
 				lastSyncError: "reconciliation failed",
 			});
@@ -1696,9 +1474,7 @@ test("repair persists a sanitized stale failure when its installation token requ
 				outcome: "failure",
 				operation: "reconciliation",
 			});
-			expect(JSON.stringify(installation)).not.toContain(
-				"raw repair provider diagnostic",
-			);
+			expect(JSON.stringify(installation)).not.toContain("raw repair provider diagnostic");
 		} finally {
 			globalThis.fetch = original;
 		}
@@ -1716,9 +1492,7 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 			true,
 			["sign", "verify"],
 		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-			await crypto.subtle.exportKey("pkcs8", privateKey),
-		)
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 			.toString("base64")
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
@@ -1740,26 +1514,20 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 		});
 		fetchTarget.fetch = async (input) => {
 			const url = String(input);
-			if (url.includes("access_token"))
-				return Response.json({ access_token: "oauth-token" });
+			if (url.includes("access_token")) return Response.json({ access_token: "oauth-token" });
 			if (url.endsWith("/user")) return Response.json({ id: 9, login: "kira" });
 			if (url.includes("user/installations"))
 				return Response.json({
 					installations: [{ id: 12, account: { login: "Crisp-Inc" } }],
 				});
-			if (url.includes("access_tokens"))
-				return Response.json({ token: "installation-token" });
+			if (url.includes("access_tokens")) return Response.json({ token: "installation-token" });
 			if (url.includes("/app/installations/"))
 				return new Promise((resolve) => {
-					identityRequested?.(() =>
-						resolve(Response.json({ account: { login: "Crisp-Inc" } })),
-					);
+					identityRequested?.(() => resolve(Response.json({ account: { login: "Crisp-Inc" } })));
 				});
-			if (url.endsWith("/repos/Crisp-Inc/defiant"))
-				return Response.json({ default_branch: "main" });
+			if (url.endsWith("/repos/Crisp-Inc/defiant")) return Response.json({ default_branch: "main" });
 			if (url.includes("/rules/branches/main")) return Response.json([]);
-			if (url.includes("/branches/main/protection"))
-				return new Response(null, { status: 404 });
+			if (url.includes("/branches/main/protection")) return new Response(null, { status: 404 });
 			if (url.includes("installation/repositories"))
 				return Response.json({
 					repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }],
@@ -1783,17 +1551,10 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 		try {
 			const state = await createOAuthState(db);
 			expect(
-				(
-					await app.fetch(
-						new Request(
-							`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`,
-						),
-					)
-				).status,
+				(await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`)))
+					.status,
 			).toBe(302);
-			expect(
-				(await db.users.findOne({ _id: "9" }))?.installations,
-			).toMatchObject([
+			expect((await db.users.findOne({ _id: "9" }))?.installations).toMatchObject([
 				{ installationId: "12", accountLogin: "Crisp-Inc", repositories: [] },
 			]);
 			const releaseIdentity = await waitForIdentityRequest;
@@ -1803,16 +1564,13 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 			const deadline = Date.now() + 2000;
 			while (!projected && Date.now() < deadline) {
 				const user = await db.users.findOne({ _id: "9" });
-				projected = Boolean(
-					user?.installations[0]?.repositories[0]?.pullRequests?.length,
-				);
+				projected = Boolean(user?.installations[0]?.repositories[0]?.pullRequests?.length);
 				if (!projected) await new Promise((resolve) => setTimeout(resolve, 10));
 			}
 			expect(projected).toBe(true);
-			expect(
-				(await db.users.findOne({ _id: "9" }))?.installations[0]
-					?.repositories[0]?.pullRequests,
-			).toMatchObject([{ number: 1, author_login: "kira" }]);
+			expect((await db.users.findOne({ _id: "9" }))?.installations[0]?.repositories[0]?.pullRequests).toMatchObject([
+				{ number: 1, author_login: "kira" },
+			]);
 		} finally {
 			globalThis.fetch = original;
 		}
@@ -1830,9 +1588,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			true,
 			["sign", "verify"],
 		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-			await crypto.subtle.exportKey("pkcs8", privateKey),
-		)
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 			.toString("base64")
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
@@ -1861,16 +1617,12 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			...args: Parameters<typeof db.users.replaceOne>
 		) => ReturnType<typeof db.users.replaceOne>;
 		const users = db.users as {
-			replaceOne: (
-				...args: Parameters<typeof db.users.replaceOne>
-			) => ReturnType<typeof db.users.replaceOne>;
+			replaceOne: (...args: Parameters<typeof db.users.replaceOne>) => ReturnType<typeof db.users.replaceOne>;
 		};
 		let rejectPersistence = false;
 		const unhandled: unknown[] = [];
 		const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
-		users.replaceOne = async (
-			...args: Parameters<typeof db.users.replaceOne>
-		) => {
+		users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
 			if (rejectPersistence) throw new Error("persistence diagnostic");
 			return originalReplace(...args);
 		};
@@ -1880,15 +1632,13 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 		process.on("unhandledRejection", onUnhandledRejection);
 		fetchTarget.fetch = async (input) => {
 			const url = String(input);
-			if (url.includes("access_token"))
-				return Response.json({ access_token: "oauth-token" });
+			if (url.includes("access_token")) return Response.json({ access_token: "oauth-token" });
 			if (url.endsWith("/user")) return Response.json({ id: 9, login: "kira" });
 			if (url.includes("user/installations"))
 				return Response.json({
 					installations: [{ id: 12, account: { login: "Crisp-Inc" } }],
 				});
-			if (url.includes("access_tokens"))
-				return Response.json({ token: "installation-token" });
+			if (url.includes("access_tokens")) return Response.json({ token: "installation-token" });
 			if (url.includes("/app/installations/")) {
 				if (fail) {
 					rejectPersistence = true;
@@ -1896,49 +1646,34 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				}
 				return Response.json({ account: { login: "Crisp-Inc" } });
 			}
-			if (url.endsWith("/repos/Crisp-Inc/defiant"))
-				return Response.json({ default_branch: "main" });
+			if (url.endsWith("/repos/Crisp-Inc/defiant")) return Response.json({ default_branch: "main" });
 			if (url.includes("/rules/branches/main")) return Response.json([]);
-			if (url.includes("/branches/main/protection"))
-				return new Response(null, { status: 404 });
+			if (url.includes("/branches/main/protection")) return new Response(null, { status: 404 });
 			if (url.includes("installation/repositories"))
 				return Response.json({
 					repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }],
 				});
-			if (url.includes("/pulls") || url.includes("/deployments"))
-				return Response.json([]);
+			if (url.includes("/pulls") || url.includes("/deployments")) return Response.json([]);
 			throw new Error(`unexpected GitHub request ${url}`);
 		};
 		try {
 			const state = await createOAuthState(db);
 			expect(
-				(
-					await app.fetch(
-						new Request(
-							`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`,
-						),
-					)
-				).status,
+				(await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`)))
+					.status,
 			).toBe(302);
-			expect(
-				new TextDecoder().decode((await existingReader.read()).value),
-			).toContain("event: refresh");
+			expect(new TextDecoder().decode((await existingReader.read()).value)).toContain("event: refresh");
 			for (let attempts = 0; !logs.length && attempts < 50; attempts++)
 				await new Promise((resolve) => setTimeout(resolve));
-			expect(
-				(await db.users.findOne({ _id: "9" }))?.installations[0],
-			).toMatchObject({
+			expect((await db.users.findOne({ _id: "9" }))?.installations[0]).toMatchObject({
 				installationId: "12",
 				accountLogin: "Crisp-Inc",
 				repositories: [],
 			});
-			const failedInstallation = (await db.users.findOne({ _id: "9" }))
-				?.installations[0];
+			const failedInstallation = (await db.users.findOne({ _id: "9" }))?.installations[0];
 			expect(failedInstallation).not.toHaveProperty("lastSyncError");
 			expect(failedInstallation?.reconciliationEvidence).toBeUndefined();
-			expect(JSON.stringify(failedInstallation)).not.toContain(
-				"github diagnostic",
-			);
+			expect(JSON.stringify(failedInstallation)).not.toContain("github diagnostic");
 			expect(logs).toMatchObject([
 				[
 					"installation bootstrap persistence failed",
@@ -1947,13 +1682,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					"Error",
 					"GitHub request failed (401)",
 				],
-				[
-					"installation bootstrap failed",
-					"12",
-					"installation_identity",
-					"ReadResult",
-					"GitHub request failed (401)",
-				],
+				["installation bootstrap failed", "12", "installation_identity", "ReadResult", "GitHub request failed (401)"],
 			]);
 			await new Promise((resolve) => setTimeout(resolve));
 			expect(unhandled).toEqual([]);
@@ -1968,9 +1697,9 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				}),
 				globalThis.fetch,
 			);
-			expect(
-				(await db.users.findOne({ _id: "9" }))?.installations[0]?.repositories,
-			).toMatchObject([{ repositoryId: "2", full_name: "Crisp-Inc/defiant" }]);
+			expect((await db.users.findOne({ _id: "9" }))?.installations[0]?.repositories).toMatchObject([
+				{ repositoryId: "2", full_name: "Crisp-Inc/defiant" },
+			]);
 		} finally {
 			globalThis.fetch = original;
 			console.error = originalError;
@@ -2020,17 +1749,13 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 			true,
 			["sign", "verify"],
 		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-			await crypto.subtle.exportKey("pkcs8", privateKey),
-		)
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 			.toString("base64")
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
 		const original = globalThis.fetch;
 		fetchTarget.fetch = async (input) =>
-			String(input).includes("access_tokens")
-				? Response.json({ token: "installation" })
-				: new Response("- [x] Launch");
+			String(input).includes("access_tokens") ? Response.json({ token: "installation" }) : new Response("- [x] Launch");
 		try {
 			const app = createApp(db, {
 				...testConfig,
@@ -2038,13 +1763,8 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 				githubAppPrivateKey: pem,
 			});
 			await app.drain();
-			expect(
-				(await db.users.findOne({ _id: "u" }))?.installations[0]
-					?.repositories[0]?.openSpecs,
-			).toHaveLength(1);
-			expect(
-				(await db.inboxDeliveries.findOne({ _id: "github:push" }))?.payload,
-			).toBeUndefined();
+			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(1);
+			expect((await db.inboxDeliveries.findOne({ _id: "github:push" }))?.payload).toBeUndefined();
 		} finally {
 			globalThis.fetch = original;
 		}
@@ -2089,9 +1809,7 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 			true,
 			["sign", "verify"],
 		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-			await crypto.subtle.exportKey("pkcs8", privateKey),
-		)
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 			.toString("base64")
 			.match(/.{1,64}/g)
 			?.join("\n")}\n-----END PRIVATE KEY-----`;
@@ -2139,9 +1857,7 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 				diagnostic: {
 					message: "Resource not accessible by integration",
 					documentationUrl: "https://docs.github.com/rest",
-					errors: [
-						{ resource: "Repository", field: "contents", code: "forbidden" },
-					],
+					errors: [{ resource: "Repository", field: "contents", code: "forbidden" }],
 				},
 			}),
 		]);

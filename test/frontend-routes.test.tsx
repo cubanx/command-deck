@@ -3,10 +3,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import {
-	snapshotFor,
-	snapshotQueryOptions,
-} from "#/features/command-center/snapshot";
+import { snapshotFor, snapshotQueryOptions } from "#/features/command-center/snapshot";
 import { SnapshotEvents } from "#/features/command-center/snapshot-events";
 import { Dashboard, dashboardLoader } from "#/routes/index";
 import { renderFrontend } from "#/web/test-harness";
@@ -44,8 +41,7 @@ class FixtureEventSource {
 	}
 
 	emit(type: string) {
-		for (const listener of this.listeners.get(type) ?? [])
-			listener(new Event(type));
+		for (const listener of this.listeners.get(type) ?? []) listener(new Event(type));
 	}
 }
 
@@ -69,18 +65,12 @@ test("prefetches the dashboard through one snapshot cache", async () => {
 	const { getByText } = renderFrontend(<Dashboard />, queryClient);
 	await waitFor(() =>
 		expect(
-			getByText(
-				(_, element) =>
-					element?.tagName === "P" &&
-					element.textContent === "Signed in as Kira Nerys",
-			),
+			getByText((_, element) => element?.tagName === "P" && element.textContent === "Signed in as Kira Nerys"),
 		).toBeDefined(),
 	);
 
 	expect(fetch).toHaveBeenCalledTimes(1);
-	expect(queryClient.getQueryData(snapshotQueryOptions.queryKey)).toEqual(
-		snapshot,
-	);
+	expect(queryClient.getQueryData(snapshotQueryOptions.queryKey)).toEqual(snapshot);
 });
 
 test("normalizes the legacy snapshot contract without discarding optional projection fields", () => {
@@ -155,50 +145,34 @@ test("invalidates the snapshot for refresh events and reconnects without polling
 
 	events.emit("open");
 	expect(invalidate).not.toHaveBeenCalled();
-	expect(
-		queryClient.getQueryState(snapshotQueryOptions.queryKey)?.isInvalidated,
-	).toBe(false);
+	expect(queryClient.getQueryState(snapshotQueryOptions.queryKey)?.isInvalidated).toBe(false);
 	events.emit("refresh");
 	expect(invalidate).toHaveBeenCalledTimes(1);
-	expect(
-		queryClient.getQueryState(snapshotQueryOptions.queryKey)?.isInvalidated,
-	).toBe(true);
+	expect(queryClient.getQueryState(snapshotQueryOptions.queryKey)?.isInvalidated).toBe(true);
 	expect(setInterval).not.toHaveBeenCalled();
 	queryClient.setQueryData(snapshotQueryOptions.queryKey, snapshot);
 	events.emit("open");
 	expect(invalidate).toHaveBeenCalledTimes(1);
 	events.emit("refresh");
 	expect(invalidate).toHaveBeenCalledTimes(2);
-	expect(
-		queryClient.getQueryState(snapshotQueryOptions.queryKey)?.isInvalidated,
-	).toBe(true);
+	expect(queryClient.getQueryState(snapshotQueryOptions.queryKey)?.isInvalidated).toBe(true);
 
 	unmount();
 	expect(events.closed).toBe(true);
 });
 
 test("preserves dashboard preferences while the snapshot changes", async () => {
-	localStorage.setItem(
-		"dcc-pr-sort",
-		JSON.stringify({ mode: "updated", direction: "desc" }),
-	);
+	localStorage.setItem("dcc-pr-sort", JSON.stringify({ mode: "updated", direction: "desc" }));
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async () => Response.json(snapshot)),
 	);
 	const queryClient = new QueryClient();
-	const { getByLabelText, getByText } = renderFrontend(
-		<Dashboard />,
-		queryClient,
-	);
+	const { getByLabelText, getByText } = renderFrontend(<Dashboard />, queryClient);
 
 	await waitFor(() =>
 		expect(
-			getByText(
-				(_, element) =>
-					element?.tagName === "P" &&
-					element.textContent === "Signed in as Kira Nerys",
-			),
+			getByText((_, element) => element?.tagName === "P" && element.textContent === "Signed in as Kira Nerys"),
 		).toBeDefined(),
 	);
 	const search = getByLabelText("Search pull requests");
@@ -214,9 +188,7 @@ test("preserves dashboard preferences while the snapshot changes", async () => {
 	await waitFor(() =>
 		expect(
 			getByText(
-				(_, element) =>
-					element?.tagName === "P" &&
-					element.textContent === "Signed in as Kira Nerys (refreshed)",
+				(_, element) => element?.tagName === "P" && element.textContent === "Signed in as Kira Nerys (refreshed)",
 			),
 		).toBeDefined(),
 	);

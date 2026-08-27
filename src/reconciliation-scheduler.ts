@@ -18,9 +18,7 @@ const newYorkTime = (date: Date): NewYorkTime => {
 			.map((part) => [part.type, part.value]),
 	);
 	return {
-		weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(
-			values.weekday,
-		),
+		weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday),
 		hour: Number(values.hour),
 		minute: Number(values.minute),
 	};
@@ -28,17 +26,13 @@ const newYorkTime = (date: Date): NewYorkTime => {
 
 const isWeekdayBoundary = (date: Date) => {
 	const { weekday, hour, minute } = newYorkTime(date);
-	return (
-		weekday >= 1 && weekday <= 5 && hour >= 7 && hour < 19 && minute % 10 === 0
-	);
+	return weekday >= 1 && weekday <= 5 && hour >= 7 && hour < 19 && minute % 10 === 0;
 };
 
 export function nextWeekdayReconciliationAt(after: Date) {
 	// ponytail: bounded minute scan avoids timezone conversion dependencies; replace if scheduling becomes hot.
 	for (
-		let candidate = new Date(
-			Math.floor(after.getTime() / 60_000) * 60_000 + 60_000,
-		);
+		let candidate = new Date(Math.floor(after.getTime() / 60_000) * 60_000 + 60_000);
 		candidate.getTime() - after.getTime() <= 8 * 24 * 60 * 60_000;
 		candidate = new Date(candidate.getTime() + 60_000)
 	)
@@ -57,8 +51,7 @@ type SchedulerDependencies = {
 export function createWeekdayReconciliationScheduler({
 	now = () => new Date(),
 	setTimeout: scheduleTimeout = setTimeout,
-	clearTimeout: cancelTimeout = (handle) =>
-		clearTimeout(handle as ReturnType<typeof setTimeout>),
+	clearTimeout: cancelTimeout = (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 	knownOpenPullRequests,
 	enqueue,
 }: SchedulerDependencies) {
@@ -68,21 +61,14 @@ export function createWeekdayReconciliationScheduler({
 		void knownOpenPullRequests()
 			.then((targets) => targets.forEach(enqueue))
 			.catch((error) =>
-				console.error(
-					"weekday reconciliation scheduling failed",
-					error instanceof Error ? error.name : "unknown",
-				),
+				console.error("weekday reconciliation scheduling failed", error instanceof Error ? error.name : "unknown"),
 			);
 	const schedule = () => {
 		if (stopped) return;
 		const current = now();
 		if (isWeekdayBoundary(current)) run();
 		const next = nextWeekdayReconciliationAt(current);
-		if (next)
-			timer = scheduleTimeout(
-				schedule,
-				Math.max(0, next.getTime() - current.getTime()),
-			);
+		if (next) timer = scheduleTimeout(schedule, Math.max(0, next.getTime() - current.getTime()));
 	};
 	return {
 		start: schedule,

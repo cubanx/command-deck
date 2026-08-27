@@ -11,10 +11,7 @@ import {
 const runMutation = (options: { mutationFn?: unknown }, variables?: unknown) =>
 	(options.mutationFn as (variables: unknown) => Promise<void>)(variables);
 const runSuccess = (options: { onSuccess?: unknown }, variables?: unknown) =>
-	(options.onSuccess as (data: unknown, variables: unknown) => Promise<void>)(
-		undefined,
-		variables,
-	);
+	(options.onSuccess as (data: unknown, variables: unknown) => Promise<void>)(undefined, variables);
 
 test("uses the existing reconciliation and merge-confirmation contracts", async () => {
 	const fetch = vi.fn(async () => new Response(null, { status: 200 }));
@@ -27,10 +24,7 @@ test("uses the existing reconciliation and merge-confirmation contracts", async 
 	});
 	await runMutation(reconcilePullRequestsMutationOptions(queryClient));
 	await runMutation(reconcileInstallationMutationOptions(queryClient), "ds9");
-	await runMutation(
-		mergeConfirmMutationOptions(queryClient),
-		"confirmation-token",
-	);
+	await runMutation(mergeConfirmMutationOptions(queryClient), "confirmation-token");
 
 	expect(fetch.mock.calls).toEqual([
 		[
@@ -71,10 +65,7 @@ test("uses the existing reconciliation and merge-confirmation contracts", async 
 	});
 	await runSuccess(reconcilePullRequestsMutationOptions(queryClient));
 	await runSuccess(reconcileInstallationMutationOptions(queryClient), "ds9");
-	await runSuccess(
-		mergeConfirmMutationOptions(queryClient),
-		"confirmation-token",
-	);
+	await runSuccess(mergeConfirmMutationOptions(queryClient), "confirmation-token");
 	expect(invalidate).toHaveBeenCalledTimes(4);
 	expect(invalidate).toHaveBeenCalledWith({
 		queryKey: snapshotQueryOptions.queryKey,
@@ -86,7 +77,7 @@ test("fails with a generic status without reading a response body", async () => 
 		"fetch",
 		vi.fn(async () => new Response("provider secret", { status: 502 })),
 	);
-	await expect(
-		runMutation(reconcilePullRequestsMutationOptions(new QueryClient())),
-	).rejects.toThrow("Snapshot mutation failed: 502");
+	await expect(runMutation(reconcilePullRequestsMutationOptions(new QueryClient()))).rejects.toThrow(
+		"Snapshot mutation failed: 502",
+	);
 });

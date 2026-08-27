@@ -9,37 +9,22 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 		commands: string[];
 	};
 	const workflow = text(".github/workflows/ci-quality.yml");
-	const ciCommands = [...workflow.matchAll(/- run: (bun run [^\n]+)/g)].map(
-		([, command]) => command,
-	);
-	expect(commands.commands).toEqual([
-		"bun run check",
-		"bun run typecheck",
-		"bun run build:web",
-		"bun run check:crap",
-	]);
+	const ciCommands = [...workflow.matchAll(/- run: (bun run [^\n]+)/g)].map(([, command]) => command);
+	expect(commands.commands).toEqual(["bun run check", "bun run typecheck", "bun run build:web", "bun run check:crap"]);
 	expect(ciCommands.sort()).toEqual([...commands.commands].sort());
 	expect(workflow).not.toContain("bun run validate:all");
 	expect(workflow).toContain("name: Validate All");
-	expect(workflow.slice(workflow.indexOf("  docker-build:"))).not.toContain(
-		"needs:",
-	);
+	expect(workflow.slice(workflow.indexOf("  docker-build:"))).not.toContain("needs:");
 	const dockerfile = text("Dockerfile");
 	expect(dockerfile).toContain("COPY --chown=bun:bun tsconfig.json ./");
-	expect(workflow).toContain(
-		"docker run --rm command-center-ai:quality bun -e 'await import(\"./src/server.ts\")'",
-	);
+	expect(workflow).toContain("docker run --rm command-center-ai:quality bun -e 'await import(\"./src/server.ts\")'");
 	expect(JSON.parse(text("src/web/manifest.webmanifest"))).toMatchObject({
 		name: "Command Deck.ai",
 		short_name: "Command Deck",
 		display: "standalone",
 	});
-	expect(text("src/web/index.html")).toContain(
-		'<link rel="manifest" href="/manifest.webmanifest">',
-	);
-	expect(text("src/web/app.ts")).not.toContain(
-		"navigator.serviceWorker.register",
-	);
+	expect(text("src/web/index.html")).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+	expect(text("src/web/app.ts")).not.toContain("navigator.serviceWorker.register");
 	const worker = text("src/web/sw.js");
 	expect(worker).toContain("self.skipWaiting()");
 	expect(worker).toContain('self.addEventListener("activate"');
@@ -71,17 +56,9 @@ test("Railway deploys only when runtime inputs change", () => {
 	const railway = JSON.parse(text("railway.json")) as {
 		build: { watchPatterns?: string[] };
 	};
-	expect(railway.build.watchPatterns).toEqual([
-		"**",
-		"!/README.md",
-		"!/docs/**",
-		"!/openspec/**",
-		"!/.mex/**",
-	]);
+	expect(railway.build.watchPatterns).toEqual(["**", "!/README.md", "!/docs/**", "!/openspec/**", "!/.mex/**"]);
 });
 
 test("server allows serial GitHub reconciliation to outlive Bun's default idle timeout", () => {
-	expect(text("src/server.ts")).toMatch(
-		/Bun\.serve\(\{[\s\S]*?idleTimeout:\s*255,[\s\S]*?fetch:\s*app\.fetch,/,
-	);
+	expect(text("src/server.ts")).toMatch(/Bun\.serve\(\{[\s\S]*?idleTimeout:\s*255,[\s\S]*?fetch:\s*app\.fetch,/);
 });

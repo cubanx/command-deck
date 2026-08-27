@@ -3,10 +3,7 @@ export type PullRequestTarget = {
 	repositoryId: string;
 	number: number;
 };
-export type FetchLike = (
-	input: RequestInfo | URL,
-	init?: RequestInit,
-) => Promise<Response>;
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export const countedFetch = (fetcher: FetchLike) => {
 	let count = 0;
 	return {
@@ -17,11 +14,7 @@ export const countedFetch = (fetcher: FetchLike) => {
 		count: () => count,
 	};
 };
-export type ReconciliationTrigger =
-	| "scheduled"
-	| "webhook"
-	| "startup"
-	| "manual";
+export type ReconciliationTrigger = "scheduled" | "webhook" | "startup" | "manual";
 type ReconciliationResult = {
 	kind?: "changed" | "unchanged" | "error";
 	providerRequestCount?: number;
@@ -37,9 +30,7 @@ type QueuedTarget = {
 };
 
 type CoordinatorDependencies = {
-	reconcilePullRequest(
-		target: PullRequestTarget,
-	): Promise<ReconciliationResult | void>;
+	reconcilePullRequest(target: PullRequestTarget): Promise<ReconciliationResult | void>;
 	reconcileInstallations(): Promise<unknown>;
 	recordRun?: (run: {
 		installationId: string;
@@ -68,19 +59,14 @@ type InstallationWork = {
 	timer?: ReturnType<typeof setTimeout>;
 };
 
-const targetKey = ({ repositoryId, number }: PullRequestTarget) =>
-	`${repositoryId}:${number}`;
+const targetKey = ({ repositoryId, number }: PullRequestTarget) => `${repositoryId}:${number}`;
 
 export function createReconciliationCoordinator({
 	reconcilePullRequest,
 	reconcileInstallations,
 	recordRun,
 	debounceMs = 250,
-	onError = (error) =>
-		console.error(
-			"reconciliation failed",
-			error instanceof Error ? error.name : "unknown",
-		),
+	onError = (error) => console.error("reconciliation failed", error instanceof Error ? error.name : "unknown"),
 }: CoordinatorDependencies) {
 	const installations = new Map<string, InstallationWork>();
 	let broadRequested = false;
@@ -94,9 +80,7 @@ export function createReconciliationCoordinator({
 		return work;
 	};
 	const hasTargetWork = () =>
-		[...installations.values()].some((work) =>
-			Boolean(work.active || work.timer || work.pending.size),
-		);
+		[...installations.values()].some((work) => Boolean(work.active || work.timer || work.pending.size));
 	const runBroad = () => {
 		if (!broadRequested || broadRunning || hasTargetWork()) return;
 		broadRequested = false;
@@ -112,9 +96,7 @@ export function createReconciliationCoordinator({
 	const run = (installationId: string) => {
 		const work = workFor(installationId);
 		if (work.active || broadRunning) return;
-		const next = work.pending.entries().next().value as
-			| [string, QueuedTarget]
-			| undefined;
+		const next = work.pending.entries().next().value as [string, QueuedTarget] | undefined;
 		if (!next) {
 			runBroad();
 			return;
@@ -136,9 +118,7 @@ export function createReconciliationCoordinator({
 					providerRequestCount: result?.providerRequestCount ?? 0,
 					changedPrCount: result?.kind === "changed" ? 1 : 0,
 					unchangedPrCount: result?.kind === "unchanged" ? 1 : 0,
-					changedFieldCategories:
-						result?.changedFieldCategories ??
-						(result?.kind === "changed" ? ["lifecycle"] : []),
+					changedFieldCategories: result?.changedFieldCategories ?? (result?.kind === "changed" ? ["lifecycle"] : []),
 					failureCount: result?.kind === "error" ? 1 : 0,
 					unresolvedDeliveryCount: result?.unresolvedDeliveryCount ?? 0,
 					repairedDeliveryCount: result?.repairedDeliveryCount ?? 0,
@@ -166,10 +146,7 @@ export function createReconciliationCoordinator({
 			});
 	};
 	return {
-		enqueue(
-			target: PullRequestTarget,
-			trigger: ReconciliationTrigger = "scheduled",
-		) {
+		enqueue(target: PullRequestTarget, trigger: ReconciliationTrigger = "scheduled") {
 			const work = workFor(target.installationId);
 			const key = targetKey(target);
 			let resolve: (outcome: ReconciliationOutcome) => void;
@@ -193,8 +170,7 @@ export function createReconciliationCoordinator({
 			runBroad();
 		},
 		stop() {
-			for (const work of installations.values())
-				if (work.timer !== undefined) clearTimeout(work.timer);
+			for (const work of installations.values()) if (work.timer !== undefined) clearTimeout(work.timer);
 		},
 	};
 }

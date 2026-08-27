@@ -7,26 +7,14 @@ import {
 } from "#/features/command-center/sort-preference";
 
 test("accepts every supported sort preference and rejects malformed values", () => {
-	for (const mode of [
-		"opened",
-		"closest",
-		"updated",
-		"progress",
-		"repository",
-	]) {
-		expect(sortPreference(JSON.stringify({ mode, direction: "desc" }))).toEqual(
-			{
-				mode,
-				direction: "desc",
-			},
-		);
+	for (const mode of ["opened", "closest", "updated", "progress", "repository"]) {
+		expect(sortPreference(JSON.stringify({ mode, direction: "desc" }))).toEqual({
+			mode,
+			direction: "desc",
+		});
 	}
-	expect(sortPreference('{"mode":"unknown","direction":"asc"}')).toEqual(
-		defaultSortPreference,
-	);
-	expect(sortPreference('{"mode":"opened","direction":"sideways"}')).toEqual(
-		defaultSortPreference,
-	);
+	expect(sortPreference('{"mode":"unknown","direction":"asc"}')).toEqual(defaultSortPreference);
+	expect(sortPreference('{"mode":"opened","direction":"sideways"}')).toEqual(defaultSortPreference);
 	expect(sortPreference("not json")).toEqual(defaultSortPreference);
 });
 

@@ -15,12 +15,7 @@ export { avatarUrlFor } from "#/features/command-center/avatar-url";
 export { sortPreference } from "#/features/command-center/sort-preference";
 
 type CheckoutResolution = "resolved" | "unresolved";
-type CheckoutState =
-	| "Unsupported"
-	| "Permission required"
-	| "Resolved"
-	| "Unresolved"
-	| "Error";
+type CheckoutState = "Unsupported" | "Permission required" | "Resolved" | "Unresolved" | "Error";
 type OpenSpecTask = { completed: boolean; text: string };
 type OpenSpecGroup = { title: string; tasks: OpenSpecTask[] };
 type OpenSpecEvidence = {
@@ -149,59 +144,25 @@ type ReconciliationState = {
 	installationId?: string;
 };
 
-const errorName = (error: unknown) =>
-	error instanceof Error ? error.name : "unknown error";
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null;
-const hasOnlyOptionalStrings = (
-	value: Record<string, unknown>,
-	keys: string[],
-) =>
-	keys.every(
-		(key) => value[key] === undefined || typeof value[key] === "string",
-	);
-const hasOnlyOptionalNullableStrings = (
-	value: Record<string, unknown>,
-	keys: string[],
-) =>
-	keys.every(
-		(key) =>
-			value[key] === undefined ||
-			value[key] === null ||
-			typeof value[key] === "string",
-	);
+const errorName = (error: unknown) => (error instanceof Error ? error.name : "unknown error");
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+const hasOnlyOptionalStrings = (value: Record<string, unknown>, keys: string[]) =>
+	keys.every((key) => value[key] === undefined || typeof value[key] === "string");
+const hasOnlyOptionalNullableStrings = (value: Record<string, unknown>, keys: string[]) =>
+	keys.every((key) => value[key] === undefined || value[key] === null || typeof value[key] === "string");
 const isOpenSpecGroup = (value: unknown): value is OpenSpecGroup =>
 	isRecord(value) &&
 	typeof value.title === "string" &&
 	Array.isArray(value.tasks) &&
-	value.tasks.every(
-		(task) =>
-			isRecord(task) &&
-			typeof task.completed === "boolean" &&
-			typeof task.text === "string",
-	);
+	value.tasks.every((task) => isRecord(task) && typeof task.completed === "boolean" && typeof task.text === "string");
 const isOpenSpecEvidence = (value: unknown): value is OpenSpecEvidence =>
 	isRecord(value) &&
-	hasOnlyOptionalStrings(value, [
-		"change_name",
-		"source_type",
-		"installation_id",
-		"account_login",
-		"repository_id",
-	]) &&
-	hasOnlyOptionalNullableStrings(value, [
-		"source_url",
-		"source_ref",
-		"source_commit",
-	]) &&
+	hasOnlyOptionalStrings(value, ["change_name", "source_type", "installation_id", "account_login", "repository_id"]) &&
+	hasOnlyOptionalNullableStrings(value, ["source_url", "source_ref", "source_commit"]) &&
 	["completed", "total"].every(
-		(key) =>
-			value[key] === undefined ||
-			typeof value[key] === "string" ||
-			typeof value[key] === "number",
+		(key) => value[key] === undefined || typeof value[key] === "string" || typeof value[key] === "number",
 	) &&
-	(value.pre_merge_ready === undefined ||
-		typeof value.pre_merge_ready === "boolean") &&
+	(value.pre_merge_ready === undefined || typeof value.pre_merge_ready === "boolean") &&
 	(value.active_group === undefined ||
 		value.active_group === null ||
 		typeof value.active_group === "string" ||
@@ -223,33 +184,16 @@ const isPullRequest = (value: unknown): value is PullRequest =>
 		"head_sha",
 		"updated_at",
 	]) &&
-	hasOnlyOptionalNullableStrings(value, [
-		"bot_review_state",
-		"bot_review_actor",
-	]) &&
-	(value.number === undefined ||
-		typeof value.number === "number" ||
-		typeof value.number === "string") &&
-	(value.draft === undefined ||
-		typeof value.draft === "boolean" ||
-		typeof value.draft === "number") &&
-	(value.mergeable === undefined ||
-		typeof value.mergeable === "boolean" ||
-		typeof value.mergeable === "string") &&
-	(value.open_spec === undefined ||
-		value.open_spec === null ||
-		isOpenSpecEvidence(value.open_spec)) &&
-	(value.open_specs === undefined ||
-		(Array.isArray(value.open_specs) &&
-			value.open_specs.every(isOpenSpecEvidence))) &&
-	(value.needs_attention === undefined ||
-		typeof value.needs_attention === "boolean") &&
+	hasOnlyOptionalNullableStrings(value, ["bot_review_state", "bot_review_actor"]) &&
+	(value.number === undefined || typeof value.number === "number" || typeof value.number === "string") &&
+	(value.draft === undefined || typeof value.draft === "boolean" || typeof value.draft === "number") &&
+	(value.mergeable === undefined || typeof value.mergeable === "boolean" || typeof value.mergeable === "string") &&
+	(value.open_spec === undefined || value.open_spec === null || isOpenSpecEvidence(value.open_spec)) &&
+	(value.open_specs === undefined || (Array.isArray(value.open_specs) && value.open_specs.every(isOpenSpecEvidence))) &&
+	(value.needs_attention === undefined || typeof value.needs_attention === "boolean") &&
 	(value.workflow_failures === undefined ||
 		(Array.isArray(value.workflow_failures) &&
-			value.workflow_failures.every(
-				(item) =>
-					isRecord(item) && hasOnlyOptionalStrings(item, ["name", "url"]),
-			)));
+			value.workflow_failures.every((item) => isRecord(item) && hasOnlyOptionalStrings(item, ["name", "url"]))));
 const isDeployment = (value: unknown): value is DeploymentProjection =>
 	isRecord(value) &&
 	hasOnlyOptionalStrings(value, [
@@ -263,8 +207,7 @@ const isDeployment = (value: unknown): value is DeploymentProjection =>
 		"pull_request_title",
 		"pull_request_url",
 	]) &&
-	(value.pull_request_number === undefined ||
-		typeof value.pull_request_number === "number") &&
+	(value.pull_request_number === undefined || typeof value.pull_request_number === "number") &&
 	hasOnlyOptionalNullableStrings(value, ["target_url", "log_url"]);
 const isRepository = (value: unknown): value is Repository =>
 	isRecord(value) &&
@@ -272,9 +215,7 @@ const isRepository = (value: unknown): value is Repository =>
 	typeof value.repository_id === "string" &&
 	typeof value.installation_id === "string" &&
 	typeof value.full_name === "string";
-const isBrowserDirectoryHandle = (
-	value: unknown,
-): value is BrowserDirectoryHandle =>
+const isBrowserDirectoryHandle = (value: unknown): value is BrowserDirectoryHandle =>
 	isRecord(value) &&
 	typeof value.getDirectoryHandle === "function" &&
 	typeof value.getFileHandle === "function" &&
@@ -282,22 +223,13 @@ const isBrowserDirectoryHandle = (
 	typeof value.queryPermission === "function" &&
 	typeof value.requestPermission === "function";
 const isCheckoutRecord = (value: unknown): value is CheckoutRecord =>
-	isRecord(value) &&
-	typeof value.key === "string" &&
-	isBrowserDirectoryHandle(value.handle);
-export const pageFor = (pathname: unknown) =>
-	pathname === "/configuration" ? "configuration" : "dashboard";
+	isRecord(value) && typeof value.key === "string" && isBrowserDirectoryHandle(value.handle);
+export const pageFor = (pathname: unknown) => (pathname === "/configuration" ? "configuration" : "dashboard");
 const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 	if (!isRecord(value)) return null;
-	const pullRequests = Array.isArray(value.pullRequests)
-			? value.pullRequests.filter(isPullRequest)
-			: [],
-		deployments = Array.isArray(value.deployments)
-			? value.deployments.filter(isDeployment)
-			: [],
-		repositories = Array.isArray(value.repositories)
-			? value.repositories.filter(isRepository)
-			: [],
+	const pullRequests = Array.isArray(value.pullRequests) ? value.pullRequests.filter(isPullRequest) : [],
+		deployments = Array.isArray(value.deployments) ? value.deployments.filter(isDeployment) : [],
+		repositories = Array.isArray(value.repositories) ? value.repositories.filter(isRepository) : [],
 		notifications = Array.isArray(value.notifications)
 			? value.notifications.filter(
 					(item): item is NotificationProjection =>
@@ -307,17 +239,13 @@ const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 						typeof item.body === "string",
 				)
 			: [],
-		avatarUrl = isRecord(value.user)
-			? avatarUrlFor(value.user.avatar_url)
-			: null,
+		avatarUrl = isRecord(value.user) ? avatarUrlFor(value.user.avatar_url) : null,
 		user =
 			isRecord(value.user) && typeof value.user.login === "string"
 				? {
 						login: value.user.login,
 						...(avatarUrl ? { avatar_url: avatarUrl } : {}),
-						...(value.user.fixture_avatar === true
-							? { fixture_avatar: true }
-							: {}),
+						...(value.user.fixture_avatar === true ? { fixture_avatar: true } : {}),
 					}
 				: undefined;
 	return {
@@ -334,10 +262,7 @@ const root = globalThis.document?.querySelector<HTMLElement>("#app");
 const esc = (value: unknown) =>
 	String(value ?? "").replace(
 		/[&<>"']/g,
-		(char: string) =>
-			({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-				char
-			] ?? char,
+		(char: string) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char,
 	);
 const tone = (value: unknown) =>
 	/success|complete|clean|approved/i.test(String(value))
@@ -348,13 +273,7 @@ const tone = (value: unknown) =>
 				? "yellow"
 				: "blue";
 const badge = (label: string, value: unknown) =>
-	'<span class="status ' +
-	tone(value) +
-	'">' +
-	esc(label) +
-	": " +
-	esc(value ?? "unknown") +
-	"</span>";
+	'<span class="status ' + tone(value) + '">' + esc(label) + ": " + esc(value ?? "unknown") + "</span>";
 let known: Set<string> | null = null,
 	current: DashboardSnapshot | null = null,
 	localSpecs: OpenSpecEvidence[] = [],
@@ -388,9 +307,7 @@ export const appearanceFor = ({
 	preference?: unknown;
 	systemDark?: boolean;
 } = {}) => {
-	const preference = ["system", "dark", "light"].includes(
-		String(storedPreference),
-	)
+	const preference = ["system", "dark", "light"].includes(String(storedPreference))
 		? (storedPreference as "system" | "dark" | "light")
 		: "system";
 	let theme = preference;
@@ -401,8 +318,7 @@ const appearancePreference = () => {
 	try {
 		return appearanceFor({
 			preference: globalThis.localStorage?.getItem(appearanceKey),
-			systemDark: globalThis.matchMedia?.("(prefers-color-scheme: dark)")
-				.matches,
+			systemDark: globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches,
 		});
 	} catch (error) {
 		console.error("Appearance preference read failed", errorName(error));
@@ -452,9 +368,7 @@ export const fuzzyScore = (query: unknown, value: unknown) => {
 	if (haystack === needle) return 0;
 	if (haystack.startsWith(needle)) return 1;
 	if (haystack.includes(needle)) return 2;
-	return haystack
-		.split(/[^a-z0-9]+/)
-		.some((word) => word && distance(needle, word) <= 2)
+	return haystack.split(/[^a-z0-9]+/).some((word) => word && distance(needle, word) <= 2)
 		? 3
 		: Number.POSITIVE_INFINITY;
 };
@@ -471,41 +385,29 @@ const failedState = (value: unknown) =>
 		"timed_out",
 		"timed-out",
 	].includes(normalized(value));
-const specsFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) =>
-	pr.open_specs ?? (spec ? [spec] : []);
+const specsFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) => pr.open_specs ?? (spec ? [spec] : []);
 const reviewActivityFor = (pr: PullRequest) =>
 	pr.review_activity === true ||
 	pr.review_requested === true ||
 	Number(pr.completed_review_count) > 0 ||
-	["approved", "commented", "changes_requested", "complete"].includes(
-		normalized(pr.review_state),
-	) ||
-	["approved", "commented", "changes_requested", "complete"].includes(
-		normalized(pr.bot_review_state),
-	);
+	["approved", "commented", "changes_requested", "complete"].includes(normalized(pr.review_state)) ||
+	["approved", "commented", "changes_requested", "complete"].includes(normalized(pr.bot_review_state));
 const completedReviewFor = (pr: PullRequest) =>
 	Number(pr.completed_review_count) > 0 ||
 	["approved", "commented", "complete"].includes(normalized(pr.review_state)) ||
-	["approved", "commented", "complete"].includes(
-		normalized(pr.bot_review_state),
-	);
+	["approved", "commented", "complete"].includes(normalized(pr.bot_review_state));
 const requiredChecksReady = (pr: PullRequest) =>
 	Array.isArray(pr.required_checks) &&
 	pr.required_checks.every(
 		(check) =>
-			check.head_sha === pr.head_sha &&
-			["success", "neutral", "skipped"].includes(normalized(check.conclusion)),
+			check.head_sha === pr.head_sha && ["success", "neutral", "skipped"].includes(normalized(check.conclusion)),
 	);
 export type Lifecycle = {
 	stage: "closed" | "draft" | "openspec" | "ready" | "reviewing" | "mergeable";
 	blockers: string[];
 };
-export const lifecycleFor = (
-	pr: PullRequest,
-	spec?: OpenSpecEvidence | null,
-): Lifecycle => {
-	if (["closed", "merged"].includes(normalized(pr.state)))
-		return { stage: "closed", blockers: [] };
+export const lifecycleFor = (pr: PullRequest, spec?: OpenSpecEvidence | null): Lifecycle => {
+	if (["closed", "merged"].includes(normalized(pr.state))) return { stage: "closed", blockers: [] };
 	if (pr.draft) return { stage: "draft", blockers: ["Draft"] };
 	const gate = openSpecGate(specsFor(pr, spec), pr.labels ?? [], pr);
 	if (!gate.ready)
@@ -532,43 +434,28 @@ export const lifecycleFor = (
 			: pr.changes_requested === true
 				? ["Changes requested"]
 				: ["Review state unavailable"]),
-		...(pr.repository_policy_loaded === true
-			? []
-			: ["Repository policy unavailable"]),
+		...(pr.repository_policy_loaded === true ? [] : ["Repository policy unavailable"]),
 		...(requiredChecksReady(pr) ? [] : ["Required checks incomplete"]),
 		...(isProjectedMergeable(pr)
 			? []
 			: [
-					["blocked", "conflicting", "dirty", "false", "unmergeable"].includes(
-						normalized(pr.mergeable),
-					)
+					["blocked", "conflicting", "dirty", "false", "unmergeable"].includes(normalized(pr.mergeable))
 						? "Mergeability blocked"
 						: "Mergeability unknown",
 				]),
 	];
 	return { stage: blockers.length ? "reviewing" : "mergeable", blockers };
 };
-export const bucketFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) =>
-	lifecycleFor(pr, spec).stage;
-export const blockersFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) =>
-	lifecycleFor(pr, spec).blockers;
+export const bucketFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) => lifecycleFor(pr, spec).stage;
+export const blockersFor = (pr: PullRequest, spec?: OpenSpecEvidence | null) => lifecycleFor(pr, spec).blockers;
 const progressFor = (spec?: OpenSpecEvidence | null) =>
-	spec &&
-	Number.isFinite(Number(spec.completed)) &&
-	Number.isFinite(Number(spec.total)) &&
-	Number(spec.total) > 0
+	spec && Number.isFinite(Number(spec.completed)) && Number.isFinite(Number(spec.total)) && Number(spec.total) > 0
 		? Number(spec.completed) / Number(spec.total)
 		: null;
-const nullableCompare = (
-	left: number | null,
-	right: number | null,
-	direction: SortDirection = "asc",
-) => {
+const nullableCompare = (left: number | null, right: number | null, direction: SortDirection = "asc") => {
 	if (left === null) return right === null ? 0 : 1;
 	if (right === null) return -1;
-	return (
-		(left < right ? -1 : left > right ? 1 : 0) * (direction === "desc" ? -1 : 1)
-	);
+	return (left < right ? -1 : left > right ? 1 : 0) * (direction === "desc" ? -1 : 1);
 };
 const providerTime = (value?: string) => {
 	const time = Date.parse(value ?? "");
@@ -583,13 +470,8 @@ const repositoryTie = (left: DerivedPullRequest, right: DerivedPullRequest) =>
 	codePointCompare(left.pr.full_name, right.pr.full_name) ||
 	codePointCompare(left.pr.repository_id, right.pr.repository_id);
 const identityTie = (left: DerivedPullRequest, right: DerivedPullRequest) =>
-	repositoryTie(left, right) ||
-	Number(left.pr.number) - Number(right.pr.number);
-const closestCompare = (
-	left: DerivedPullRequest,
-	right: DerivedPullRequest,
-	direction: SortDirection = "asc",
-) => {
+	repositoryTie(left, right) || Number(left.pr.number) - Number(right.pr.number);
+const closestCompare = (left: DerivedPullRequest, right: DerivedPullRequest, direction: SortDirection = "asc") => {
 	const stageRank = {
 		mergeable: 0,
 		reviewing: 1,
@@ -598,9 +480,7 @@ const closestCompare = (
 		draft: 4,
 		closed: 5,
 	} as const;
-	const rank =
-		stageRank[left.bucket as keyof typeof stageRank] -
-		stageRank[right.bucket as keyof typeof stageRank];
+	const rank = stageRank[left.bucket as keyof typeof stageRank] - stageRank[right.bucket as keyof typeof stageRank];
 	const ordered =
 		rank ||
 		nullableCompare(left.blockers.length, right.blockers.length) ||
@@ -608,44 +488,24 @@ const closestCompare = (
 		identityTie(left, right);
 	return direction === "desc" ? -ordered : ordered;
 };
-const sortCompare = (
-	left: DerivedPullRequest,
-	right: DerivedPullRequest,
-	sort: SortPreference,
-) => {
+const sortCompare = (left: DerivedPullRequest, right: DerivedPullRequest, sort: SortPreference) => {
 	const fallback = () => closestCompare(left, right);
 	if (sort.mode === "opened")
 		return (
-			nullableCompare(
-				providerTime(left.pr.opened_at),
-				providerTime(right.pr.opened_at),
-				sort.direction,
-			) || identityTie(left, right)
+			nullableCompare(providerTime(left.pr.opened_at), providerTime(right.pr.opened_at), sort.direction) ||
+			identityTie(left, right)
 		);
-	if (sort.mode === "closest")
-		return closestCompare(left, right, sort.direction);
+	if (sort.mode === "closest") return closestCompare(left, right, sort.direction);
 	if (sort.mode === "updated")
 		return (
-			nullableCompare(
-				providerTime(left.pr.updated_at),
-				providerTime(right.pr.updated_at),
-				sort.direction,
-			) || fallback()
+			nullableCompare(providerTime(left.pr.updated_at), providerTime(right.pr.updated_at), sort.direction) || fallback()
 		);
-	if (sort.mode === "progress")
-		return (
-			nullableCompare(left.progress, right.progress, sort.direction) ||
-			fallback()
-		);
-	return (
-		codePointCompare(left.pr.full_name, right.pr.full_name) *
-			(sort.direction === "desc" ? -1 : 1) || fallback()
-	);
+	if (sort.mode === "progress") return nullableCompare(left.progress, right.progress, sort.direction) || fallback();
+	return codePointCompare(left.pr.full_name, right.pr.full_name) * (sort.direction === "desc" ? -1 : 1) || fallback();
 };
 const searchScore = ({ pr, spec }: PullRequestItem, query: string) => {
 	if (!query) return 0;
-	if (/^\d+$/.test(query))
-		return Number(query) === Number(pr.number) ? 0 : Number.POSITIVE_INFINITY;
+	if (/^\d+$/.test(query)) return Number(query) === Number(pr.number) ? 0 : Number.POSITIVE_INFINITY;
 	return Math.min(
 		fuzzyScore(query, pr.title),
 		fuzzyScore(query, pr.full_name),
@@ -659,15 +519,11 @@ export const derivePullRequests = (
 ): DerivedPullRequest[] => {
 	const query = normalized(filters.query);
 	const statuses = filters.statuses ?? new Set();
-	const repositories =
-		filters.repositories === undefined ? null : filters.repositories;
+	const repositories = filters.repositories === undefined ? null : filters.repositories;
 	const failedActions = filters.failedActions ?? false;
 	const failedChecks = filters.failedChecks ?? false;
 	const attention = filters.attention ?? false;
-	const sort =
-		filters.sort && isSortMode(filters.sort.mode)
-			? filters.sort
-			: defaultSortPreference;
+	const sort = filters.sort && isSortMode(filters.sort.mode) ? filters.sort : defaultSortPreference;
 	return items
 		.map((item) => {
 			const lifecycle = lifecycleFor(item.pr, item.spec);
@@ -686,23 +542,15 @@ export const derivePullRequests = (
 				(!statuses.size || statuses.has(item.bucket)) &&
 				(!failedActions || failedState(item.pr.workflow_state)) &&
 				(!failedChecks || failedState(item.pr.checks_state)) &&
-				(!attention ||
-					item.pr.needs_attention === true ||
-					item.blockers.length > 0) &&
-				(repositories === null ||
-					(typeof item.pr.full_name === "string" &&
-						repositories.has(item.pr.full_name))),
+				(!attention || item.pr.needs_attention === true || item.blockers.length > 0) &&
+				(repositories === null || (typeof item.pr.full_name === "string" && repositories.has(item.pr.full_name))),
 		)
 		.sort((left, right) => sortCompare(left, right, sort));
 };
 export const repositoryOptions = (items: PullRequestItem[]) =>
-	[
-		...new Set(
-			items
-				.map(({ pr }) => pr.full_name)
-				.filter((name): name is string => typeof name === "string"),
-		),
-	].sort(codePointCompare);
+	[...new Set(items.map(({ pr }) => pr.full_name).filter((name): name is string => typeof name === "string"))].sort(
+		codePointCompare,
+	);
 export const parseTasks = (content: string) => {
 	const groups: OpenSpecGroup[] = [];
 	let title = "Tasks";
@@ -736,8 +584,7 @@ export const parseTasks = (content: string) => {
 const checkoutDatabase = () =>
 	new Promise((resolve, reject) => {
 		const request = indexedDB.open("dcc-checkouts", 1);
-		request.onupgradeneeded = () =>
-			request.result.createObjectStore("handles", { keyPath: "key" });
+		request.onupgradeneeded = () => request.result.createObjectStore("handles", { keyPath: "key" });
 		request.onerror = () => reject(request.error);
 		request.onsuccess = () => resolve(request.result);
 	});
@@ -765,13 +612,8 @@ const checkoutStore = () =>
 	checkoutStoreFor(async () => {
 		const database = (await checkoutDatabase()) as IDBDatabase;
 		return {
-			getAll: () =>
-				database.transaction("handles").objectStore("handles").getAll(),
-			put: (record: CheckoutRecord) =>
-				database
-					.transaction("handles", "readwrite")
-					.objectStore("handles")
-					.put(record),
+			getAll: () => database.transaction("handles").objectStore("handles").getAll(),
+			put: (record: CheckoutRecord) => database.transaction("handles", "readwrite").objectStore("handles").put(record),
 		};
 	});
 const storedCheckouts = () => checkoutStore().getAll();
@@ -779,13 +621,9 @@ const persistCheckout = (record: CheckoutRecord) => checkoutStore().put(record);
 export const exactCheckoutDirectory = (
 	root: Pick<BrowserDirectoryHandle, "getDirectoryHandle">,
 	repository: Pick<Repository, "full_name">,
-) =>
-	root.getDirectoryHandle(
-		repository.full_name.split("/").at(-1) ?? repository.full_name,
-	);
-export const revalidateCheckout = (record: {
-	handle: Pick<BrowserDirectoryHandle, "queryPermission">;
-}) => record.handle.queryPermission({ mode: "read" });
+) => root.getDirectoryHandle(repository.full_name.split("/").at(-1) ?? repository.full_name);
+export const revalidateCheckout = (record: { handle: Pick<BrowserDirectoryHandle, "queryPermission"> }) =>
+	record.handle.queryPermission({ mode: "read" });
 export const persistVerifiedCheckout = async <Handle, Repo, Record>({
 	handle,
 	repository,
@@ -823,41 +661,24 @@ const setCheckoutError = (key: string, error: unknown) => {
 const clearRepositoryEvidence = (repository: Repository) => {
 	const key = checkoutKey(repository.account_login, repository.repository_id);
 	localSpecs = localSpecs.filter(
-		(item) =>
-			item.installation_id !== repository.installation_id ||
-			item.repository_id !== repository.repository_id,
+		(item) => item.installation_id !== repository.installation_id || item.repository_id !== repository.repository_id,
 	);
-	for (const name of localFiles.keys())
-		if (name.startsWith(`${key}:`)) localFiles.delete(name);
+	for (const name of localFiles.keys()) if (name.startsWith(`${key}:`)) localFiles.delete(name);
 };
-const invalidateRepositoryCheckout = (
-	repository: Repository,
-	state: Exclude<CheckoutState, "Resolved">,
-) => {
+const invalidateRepositoryCheckout = (repository: Repository, state: Exclude<CheckoutState, "Resolved">) => {
 	clearRepositoryEvidence(repository);
-	checkoutStates.set(
-		checkoutKey(repository.account_login, repository.repository_id),
-		state,
-	);
+	checkoutStates.set(checkoutKey(repository.account_login, repository.repository_id), state);
 };
-const invalidateAccountCheckouts = (
-	account: string,
-	state: Exclude<CheckoutState, "Resolved">,
-) => {
+const invalidateAccountCheckouts = (account: string, state: Exclude<CheckoutState, "Resolved">) => {
 	for (const repository of repositoryCatalog)
-		if (normalized(repository.account_login) === normalized(account))
-			invalidateRepositoryCheckout(repository, state);
+		if (normalized(repository.account_login) === normalized(account)) invalidateRepositoryCheckout(repository, state);
 };
-export const readCheckout = async (
-	handle: BrowserDirectoryHandle,
-	repository: Repository,
-) => {
+export const readCheckout = async (handle: BrowserDirectoryHandle, repository: Repository) => {
 	const git = await handle.getDirectoryHandle(".git");
 	const configHandle = await git.getFileHandle("config");
 	const config = await configHandle.getFile();
 	const configText = await config.text();
-	if (repositoryForRemote(configText) !== normalized(repository.full_name))
-		return null;
+	if (repositoryForRemote(configText) !== normalized(repository.full_name)) return null;
 	const headHandle = await git.getFileHandle("HEAD");
 	const head = await headHandle.getFile();
 	const value = (await head.text()).trim();
@@ -875,8 +696,7 @@ export const readCheckout = async (
 		throw error;
 	}
 	for await (const [name, directory] of changes.entries()) {
-		if (directory.kind !== "directory" || !/^[A-Za-z0-9._-]+$/.test(name))
-			continue;
+		if (directory.kind !== "directory" || !/^[A-Za-z0-9._-]+$/.test(name)) continue;
 		try {
 			const fileHandle = await directory.getFileHandle("tasks.md");
 			const file = await fileHandle.getFile();
@@ -893,16 +713,12 @@ export const readCheckout = async (
 			});
 			files.set(name, fileHandle);
 		} catch (error) {
-			if (errorName(error) !== "NotFoundError")
-				console.error("Local OpenSpec read failed", errorName(error));
+			if (errorName(error) !== "NotFoundError") console.error("Local OpenSpec read failed", errorName(error));
 		}
 	}
 	return { specs, files };
 };
-export const readRepositoryCheckout = async (
-	repository: Repository,
-	handle: BrowserDirectoryHandle,
-) => {
+export const readRepositoryCheckout = async (repository: Repository, handle: BrowserDirectoryHandle) => {
 	const key = checkoutKey(repository.account_login, repository.repository_id);
 	try {
 		const evidence = await readCheckout(handle, repository);
@@ -912,8 +728,7 @@ export const readRepositoryCheckout = async (
 		}
 		clearRepositoryEvidence(repository);
 		localSpecs.push(...evidence.specs);
-		for (const [name, file] of evidence.files)
-			localFiles.set(`${key}:${name}`, file);
+		for (const [name, file] of evidence.files) localFiles.set(`${key}:${name}`, file);
 		checkoutStates.set(key, "Resolved");
 		return "Resolved";
 	} catch (error) {
@@ -928,8 +743,7 @@ export const readRepositoryCheckout = async (
 };
 const resolveCheckouts = async (repositories: Repository[]) => {
 	if (!checkoutSupported()) {
-		for (const repository of repositories)
-			invalidateRepositoryCheckout(repository, "Unsupported");
+		for (const repository of repositories) invalidateRepositoryCheckout(repository, "Unsupported");
 		return;
 	}
 	for (const repository of repositories) {
@@ -951,8 +765,7 @@ const resolveCheckouts = async (repositories: Repository[]) => {
 			setCheckoutError(key, error);
 			continue;
 		}
-		if (override?.handle)
-			await readRepositoryCheckout(repository, override.handle);
+		if (override?.handle) await readRepositoryCheckout(repository, override.handle);
 		else {
 			try {
 				if (!root?.handle) throw new TypeError("Checkout root is missing");
@@ -974,12 +787,10 @@ const restoreCheckouts = async (repositories: Repository[]) => {
 		if (!checkoutSupported()) return await resolveCheckouts(repositories);
 		const stored = await storedCheckouts();
 		if (!Array.isArray(stored)) throw new TypeError("Invalid checkout storage");
-		for (const record of stored.filter(isCheckoutRecord))
-			checkoutHandles.set(record.key, record);
+		for (const record of stored.filter(isCheckoutRecord)) checkoutHandles.set(record.key, record);
 		await resolveCheckouts(repositories);
 	} catch (error) {
-		for (const repository of repositories)
-			invalidateRepositoryCheckout(repository, "Error");
+		for (const repository of repositories) invalidateRepositoryCheckout(repository, "Error");
 		console.error("Local checkout restore failed", errorName(error));
 	}
 };
@@ -997,23 +808,16 @@ const groupFor = (item: OpenSpecEvidence) => {
 const sourceFor = (item: OpenSpecEvidence) =>
 	item.source_type === "local"
 		? '<a href="#" data-local-source="' +
-			esc(
-				`${checkoutKey(item.account_login, item.repository_id)}:${item.change_name}`,
-			) +
+			esc(`${checkoutKey(item.account_login, item.repository_id)}:${item.change_name}`) +
 			'">Open local tasks</a>'
 		: item.source_url
-			? '<a href="' +
-				esc(item.source_url) +
-				'" target="_blank" rel="noopener noreferrer">Open tasks</a>'
+			? '<a href="' + esc(item.source_url) + '" target="_blank" rel="noopener noreferrer">Open tasks</a>'
 			: "";
 export const checkoutKey = (account: unknown, repositoryId: unknown) =>
 	`${normalized(account)}:${String(repositoryId)}`;
 const rootKey = (account: unknown) => `root:${normalized(account)}`;
 const checkoutSupported = () =>
-	Boolean(
-		globalThis.indexedDB &&
-			typeof browserGlobal.showDirectoryPicker === "function",
-	);
+	Boolean(globalThis.indexedDB && typeof browserGlobal.showDirectoryPicker === "function");
 export const checkoutStateFor = ({
 	supported,
 	permission,
@@ -1031,60 +835,33 @@ export const checkoutStateFor = ({
 				? "Resolved"
 				: "Unresolved";
 export const repositoryForRemote = (content: unknown) => {
-	const origin = String(content ?? "").match(
-		/^\[remote "origin"\]([\s\S]*?)(?=^\[|(?![\s\S]))/m,
-	);
+	const origin = String(content ?? "").match(/^\[remote "origin"\]([\s\S]*?)(?=^\[|(?![\s\S]))/m);
 	const match = origin?.[1].match(
 		/^\s*url\s*=\s*(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\s*$/im,
 	);
-	return match
-		? normalized(`${match[1]}/${match[2].replace(/\.git$/i, "")}`)
-		: null;
+	return match ? normalized(`${match[1]}/${match[2].replace(/\.git$/i, "")}`) : null;
 };
 const orderedSpecs = (specs: OpenSpecEvidence[]) => {
 	const unique = new Map<string, OpenSpecEvidence>();
 	for (const spec of specs)
-		if (
-			!unique.has(
-				[spec.change_name, spec.source_commit, spec.source_ref]
-					.map(String)
-					.join("\u0000"),
-			)
-		)
-			unique.set(
-				[spec.change_name, spec.source_commit, spec.source_ref]
-					.map(String)
-					.join("\u0000"),
-				spec,
-			);
+		if (!unique.has([spec.change_name, spec.source_commit, spec.source_ref].map(String).join("\u0000")))
+			unique.set([spec.change_name, spec.source_commit, spec.source_ref].map(String).join("\u0000"), spec);
 	return [...unique.values()].sort(
 		(a, b) =>
 			["change_name", "source_commit", "source_ref"]
 				.map((key) =>
-					String(a[key as keyof OpenSpecEvidence] ?? "").localeCompare(
-						String(b[key as keyof OpenSpecEvidence] ?? ""),
-					),
+					String(a[key as keyof OpenSpecEvidence] ?? "").localeCompare(String(b[key as keyof OpenSpecEvidence] ?? "")),
 				)
 				.find(Boolean) ?? 0,
 	);
 };
-export const localSpecsFor = (
-	pr: PullRequest,
-	pullRequests: PullRequest[],
-	specs = localSpecs,
-) => {
+export const localSpecsFor = (pr: PullRequest, pullRequests: PullRequest[], specs = localSpecs) => {
 	const scoped = specs.filter(
-		(item) =>
-			item.installation_id === pr.installation_id &&
-			item.repository_id === pr.repository_id,
+		(item) => item.installation_id === pr.installation_id && item.repository_id === pr.repository_id,
 	);
-	const commitMatches = scoped.filter(
-		(item) => item.source_commit && item.source_commit === pr.head_sha,
-	);
+	const commitMatches = scoped.filter((item) => item.source_commit && item.source_commit === pr.head_sha);
 	if (commitMatches.length) return orderedSpecs(commitMatches);
-	const branchMatches = scoped.filter(
-		(item) => item.source_ref && item.source_ref === pr.head_ref,
-	);
+	const branchMatches = scoped.filter((item) => item.source_ref && item.source_ref === pr.head_ref);
 	const uniqueBranch =
 		pullRequests.filter(
 			(item) =>
@@ -1095,11 +872,8 @@ export const localSpecsFor = (
 		).length === 1;
 	return uniqueBranch ? orderedSpecs(branchMatches) : [];
 };
-export const localSpecFor = (
-	pr: PullRequest,
-	pullRequests: PullRequest[],
-	specs = localSpecs,
-) => localSpecsFor(pr, pullRequests, specs)[0] ?? null;
+export const localSpecFor = (pr: PullRequest, pullRequests: PullRequest[], specs = localSpecs) =>
+	localSpecsFor(pr, pullRequests, specs)[0] ?? null;
 const openSpecMarkup = (items: ReadonlyArray<OpenSpecEvidence>) =>
 	items
 		.map((item) => {
@@ -1142,9 +916,7 @@ const detectedOpenSpecMarkup = (pr: PullRequest) =>
 			"</ul></section>"
 		: "";
 const workflowFailuresMarkup = (pr: PullRequest) => {
-	const failures = Array.isArray(pr.workflow_failures)
-		? pr.workflow_failures
-		: [];
+	const failures = Array.isArray(pr.workflow_failures) ? pr.workflow_failures : [];
 	return failures.length
 		? '<ul class="workflow-failures" aria-label="Failed Actions workflows">' +
 				failures
@@ -1160,26 +932,20 @@ const workflowFailuresMarkup = (pr: PullRequest) => {
 				"</ul>"
 		: "";
 };
-const statusKeyFor = (pr: PullRequest) =>
-	[pr.installation_id, pr.repository_id, pr.number].map(String).join(":");
+const statusKeyFor = (pr: PullRequest) => [pr.installation_id, pr.repository_id, pr.number].map(String).join(":");
 const reconciliationButtonMarkup = (active: boolean) =>
 	`${reconciliationState ? "disabled" : ""}${active ? ' aria-busy="true" class="reconciling"' : ""}`;
 const reconciliationTargets = (filter: (pr: PullRequest) => boolean) =>
 	new Set((current?.pullRequests ?? []).filter(filter).map(statusKeyFor));
-const reconciliationActiveFor = (pr: PullRequest) =>
-	Boolean(reconciliationState?.targets.has(statusKeyFor(pr)));
-const reconciliationFailedFor = (pr: PullRequest) =>
-	reconciliationFailures.has(statusKeyFor(pr));
+const reconciliationActiveFor = (pr: PullRequest) => Boolean(reconciliationState?.targets.has(statusKeyFor(pr)));
+const reconciliationFailedFor = (pr: PullRequest) => reconciliationFailures.has(statusKeyFor(pr));
 export const statusDetailHoverDelay = 350;
 export const statusDetailPositionFor = (
 	trigger: { left: number; top: number; width: number; height: number },
 	viewport: { width: number; height: number },
 ) => ({
 	left: Math.max(12, Math.min(trigger.left, viewport.width - 372)),
-	top: Math.max(
-		12,
-		Math.min(trigger.top + trigger.height + 8, viewport.height - 252),
-	),
+	top: Math.max(12, Math.min(trigger.top + trigger.height + 8, viewport.height - 252)),
 });
 export const statusDetailStateFor = (
 	state: { key: string | null; pinned: boolean },
@@ -1188,8 +954,7 @@ export const statusDetailStateFor = (
 ) => {
 	if (event === "dismiss") return { key: null, pinned: false };
 	if (event === "leave") return state;
-	if (event === "activate" && state.key === key && state.pinned)
-		return { key: null, pinned: false };
+	if (event === "activate" && state.key === key && state.pinned) return { key: null, pinned: false };
 	return { key, pinned: event === "activate" };
 };
 const stageLabel = (bucket: string) =>
@@ -1212,8 +977,7 @@ const lifecycleMarkup = (item: DerivedPullRequest) => {
 	return `<div class="lifecycle-rail"><span class="sr-only">PR lifecycle. Current stage: ${esc(stageLabel(item.bucket))}</span><span class="lifecycle-pills" aria-hidden="true">${pills}</span></div>`;
 };
 const warningMarkup = (item: DerivedPullRequest) => {
-	const warning =
-		item.blockers[0] ?? (item.pr.needs_attention ? "Needs attention" : "");
+	const warning = item.blockers[0] ?? (item.pr.needs_attention ? "Needs attention" : "");
 	return warning
 		? `<button type="button" class="status warning" data-status-detail="${esc(statusKeyFor(item.pr))}">${esc(warning)}</button>`
 		: "";
@@ -1225,9 +989,7 @@ const warningRowMarkup = (item: DerivedPullRequest) => {
 	return warning ? `<div class="pr-warning-row">${warning}</div>` : "";
 };
 export const pullRequestStatusMarkup = (item: DerivedPullRequest) =>
-	lifecycleFrameMarkup(item) +
-	warningRowMarkup(item) +
-	statusDetailMarkup(item);
+	lifecycleFrameMarkup(item) + warningRowMarkup(item) + statusDetailMarkup(item);
 const statusDetailMarkup = (item: DerivedPullRequest) => {
 	const { pr, blockers } = item;
 	return `<aside id="status-detail" class="status-detail" role="dialog" aria-label="Pull request status detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close status detail">×</button><p><strong>${esc(stageLabel(item.bucket))}</strong>${blockers.length ? ` · ${esc(blockers.join(", "))}` : ""}</p><p>Actions: ${esc(pr.workflow_state ?? "unknown")} · Checks: ${esc(pr.checks_state ?? "unknown")} · Review: ${esc(pr.review_state ?? "unknown")} · Mergeability: ${esc(pr.mergeable ?? "unknown")}</p>${pr.bot_review_state ? `<p>Automated review${pr.bot_review_actor ? ` · ${esc(pr.bot_review_actor)}` : ""}: ${esc(pr.bot_review_state)}</p>` : ""}${workflowFailuresMarkup(pr)}<p class="muted">Branch: ${esc(pr.head_ref ?? "unknown")} · SHA: ${esc(pr.head_sha ?? "unknown")} · Updated: ${esc(pr.updated_at ?? "unknown")}</p>${openSpecMarkup(specsFor(pr, item.spec))}${detectedOpenSpecMarkup(pr)}</aside>`;
@@ -1237,30 +999,18 @@ const deploymentLabel = (deployment: DeploymentProjection) =>
 		.filter((value): value is string => Boolean(value?.trim()))
 		.join(" · ");
 const isGitHubFullName = (value: string | undefined) =>
-	Boolean(
-		value?.match(
-			/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?\/[a-z\d](?:[a-z\d._-]*[a-z\d])?$/i,
-		),
-	);
-const isGitHubSha = (value: string | undefined) =>
-	Boolean(value?.match(/^[a-f\d]{40}$/i));
+	Boolean(value?.match(/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?\/[a-z\d](?:[a-z\d._-]*[a-z\d])?$/i));
+const isGitHubSha = (value: string | undefined) => Boolean(value?.match(/^[a-f\d]{40}$/i));
 const completedDeployment = (deployments: DeploymentProjection[]) =>
 	deployments
 		.filter((deployment) => {
 			const timestamp = Date.parse(deployment.updated_at ?? "");
 			return (
-				["success", "failure", "error"].includes(
-					deployment.state?.toLowerCase() ?? "",
-				) && Number.isFinite(timestamp)
+				["success", "failure", "error"].includes(deployment.state?.toLowerCase() ?? "") && Number.isFinite(timestamp)
 			);
 		})
-		.sort(
-			(left, right) =>
-				Date.parse(right.updated_at!) - Date.parse(left.updated_at!),
-		)[0];
-const deploymentHeadlineMarkup = (
-	deployment: DeploymentProjection | undefined,
-) => {
+		.sort((left, right) => Date.parse(right.updated_at!) - Date.parse(left.updated_at!))[0];
+const deploymentHeadlineMarkup = (deployment: DeploymentProjection | undefined) => {
 	if (!deployment) return "No completed deployment in the last 48 hours";
 	if (
 		isGitHubFullName(deployment.full_name) &&
@@ -1295,9 +1045,7 @@ const deploymentRowsMarkup = (deployments: DeploymentProjection[]) =>
 								esc(deployment.target_url) +
 								'" target="_blank" rel="noopener noreferrer">Deployment</a>' +
 								(deployment.log_url
-									? ' · <a href="' +
-										esc(deployment.log_url) +
-										'" target="_blank" rel="noopener noreferrer">Logs</a>'
+									? ' · <a href="' + esc(deployment.log_url) + '" target="_blank" rel="noopener noreferrer">Logs</a>'
 									: "") +
 								"</p>"
 							: "") +
@@ -1307,9 +1055,7 @@ const deploymentRowsMarkup = (deployments: DeploymentProjection[]) =>
 		: '<p class="muted">No recent deployment evidence.</p>';
 const deploymentDetailMarkup = (deployments: DeploymentProjection[]) =>
 	`<aside id="status-detail" class="status-detail" role="dialog" aria-label="Deployment detail" style="left:${statusDetailPosition.left}px;top:${statusDetailPosition.top}px"><button type="button" data-status-detail-close aria-label="Close deployment detail">×</button><h2>GitHub deployments · last 48 hours</h2>${deploymentRowsMarkup(deployments.slice(0, 5))}${deployments.length > 5 ? `<details class="more-deployments"><summary>More deployments</summary>${deploymentRowsMarkup(deployments.slice(5))}</details>` : ""}</aside>`;
-export const deploymentSummaryMarkup = (
-	deployments: DeploymentProjection[],
-) => {
+export const deploymentSummaryMarkup = (deployments: DeploymentProjection[]) => {
 	const deployment = completedDeployment(deployments);
 	return `<button type="button" class="deployment-summary" data-status-detail="deployments" aria-expanded="${statusDetailKey === "deployments"}" aria-controls="status-detail"><span class="deployment-summary-label">Latest deployment</span><span class="deployment-summary-detail">${deploymentHeadlineMarkup(deployment)}</span>${deployment ? `<span class="status">${deployment.state?.toLowerCase() === "success" ? "Success" : "Failed"}</span>` : ""}</button>`;
 };
@@ -1319,8 +1065,7 @@ type MergeControl =
 			state: "permission-required" | "closed" | "draft" | "blocked";
 			reason: string;
 	  };
-const mergeUnavailableReason =
-	"GitHub App Pull requests write permission approval is required.";
+const mergeUnavailableReason = "GitHub App Pull requests write permission approval is required.";
 export const mergeControlFor = (pr: PullRequest): MergeControl => {
 	const gates: Array<{ blocked: boolean; state: MergeControl["state"] }> = [
 		{
@@ -1351,10 +1096,7 @@ export const mergeMarkup = (pr: PullRequest) =>
 			esc(pr.head_sha) +
 			'"><button type="submit">Merge</button></form>'
 		: "";
-const controlsMarkup = (
-	all: PullRequestItem[],
-	visible: DerivedPullRequest[],
-) => {
+const controlsMarkup = (all: PullRequestItem[], visible: DerivedPullRequest[]) => {
 	const repositories = repositoryOptions(all);
 	const statusLabel = {
 		mergeable: "Mergeable",
@@ -1405,23 +1147,14 @@ const checkoutMarkup = () => {
 	const rows = repositoryCatalog
 		.map((repository) => ({
 			repository,
-			state:
-				checkoutStates.get(
-					checkoutKey(repository.account_login, repository.repository_id),
-				) ?? "Unresolved",
+			state: checkoutStates.get(checkoutKey(repository.account_login, repository.repository_id)) ?? "Unresolved",
 		}))
 		.sort((left, right) =>
-			left.repository.full_name.localeCompare(
-				right.repository.full_name,
-				undefined,
-				{
-					sensitivity: "accent",
-				},
-			),
+			left.repository.full_name.localeCompare(right.repository.full_name, undefined, {
+				sensitivity: "accent",
+			}),
 		);
-	const roots = [
-		...new Set(repositoryCatalog.map(({ account_login }) => account_login)),
-	]
+	const roots = [...new Set(repositoryCatalog.map(({ account_login }) => account_login))]
 		.map(
 			(account, index) =>
 				`<p><strong>${esc(account)}</strong> <button id="checkout-root-${index}" type="button" data-connect-root="${esc(account)}">Connect organization root</button></p>`,
@@ -1455,11 +1188,7 @@ const configurationMarkup = () =>
 	'<section class="card configuration" aria-labelledby="configuration-title"><h2 id="configuration-title">Configuration</h2><p><a href="/">Back to dashboard</a></p>' +
 	checkoutMarkup() +
 	'<div class="actions"><button id="notify" type="button">Enable notifications</button>' +
-	([
-		...new Set(
-			repositoryCatalog.map((repository) => repository.installation_id),
-		),
-	]
+	([...new Set(repositoryCatalog.map((repository) => repository.installation_id))]
 		.map(
 			(installationId) =>
 				`<button id="reconcile-installation-${esc(installationId)}" type="button" data-reconcile-installation="${esc(installationId)}" ${reconciliationButtonMarkup(reconciliationState?.kind === "installation" && reconciliationState.installationId === installationId)}>${reconciliationState?.kind === "installation" && reconciliationState.installationId === installationId ? "Reconciling…" : "Reconcile installation"}</button>`,
@@ -1490,79 +1219,57 @@ const rerender = (focusSelector: string, restoreStatusDetailFocus = false) => {
 			statusDetailFocusRestoring = false;
 		}
 	} else control?.focus();
-	if (control?.setSelectionRange)
-		control.setSelectionRange(control.value.length, control.value.length);
+	if (control?.setSelectionRange) control.setSelectionRange(control.value.length, control.value.length);
 };
 const bindControls = () => {
-	document
-		.querySelector<HTMLInputElement>("#pr-search")
-		?.addEventListener("input", (event) => {
-			view.query = (event.currentTarget as HTMLInputElement).value;
-			rerender("#pr-search");
+	document.querySelector<HTMLInputElement>("#pr-search")?.addEventListener("input", (event) => {
+		view.query = (event.currentTarget as HTMLInputElement).value;
+		rerender("#pr-search");
+	});
+	document.querySelectorAll<HTMLInputElement>("[data-status]").forEach((input) => {
+		input.addEventListener("change", () => {
+			const status = input.dataset.status;
+			if (!status) return;
+			input.checked ? view.statuses.add(status) : view.statuses.delete(status);
+			rerender(`#${input.id}`);
 		});
-	document
-		.querySelectorAll<HTMLInputElement>("[data-status]")
-		.forEach((input) => {
-			input.addEventListener("change", () => {
-				const status = input.dataset.status;
-				if (!status) return;
-				input.checked
-					? view.statuses.add(status)
-					: view.statuses.delete(status);
-				rerender(`#${input.id}`);
-			});
+	});
+	document.querySelectorAll<HTMLInputElement>("[data-attention-filter]").forEach((input) => {
+		input.addEventListener("change", () => {
+			view.attention = input.checked;
+			rerender(`#${input.id}`);
 		});
-	document
-		.querySelectorAll<HTMLInputElement>("[data-attention-filter]")
-		.forEach((input) => {
-			input.addEventListener("change", () => {
-				view.attention = input.checked;
-				rerender(`#${input.id}`);
-			});
+	});
+	document.querySelector<HTMLSelectElement>("#pr-sort")?.addEventListener("change", (event) => {
+		view.sort = {
+			...view.sort,
+			mode: (event.currentTarget as HTMLSelectElement).value as SortMode,
+		};
+		saveSortPreference(view.sort, globalThis.localStorage, console.error);
+		rerender("#pr-sort");
+	});
+	document.querySelector<HTMLSelectElement>("#pr-direction")?.addEventListener("change", (event) => {
+		view.sort = {
+			...view.sort,
+			direction: (event.currentTarget as HTMLSelectElement).value as SortDirection,
+		};
+		saveSortPreference(view.sort, globalThis.localStorage, console.error);
+		rerender("#pr-direction");
+	});
+	document.querySelectorAll<HTMLInputElement>("[data-repository]").forEach((input) => {
+		input.addEventListener("change", () => {
+			const repository = input.dataset.repository;
+			if (!repository) return;
+			if (view.repositories === null)
+				view.repositories = new Set(
+					[...document.querySelectorAll<HTMLInputElement>("[data-repository]")]
+						.map(({ dataset }) => dataset.repository)
+						.filter((name): name is string => Boolean(name)),
+				);
+			input.checked ? view.repositories.add(repository) : view.repositories.delete(repository);
+			rerender(`#${input.id}`);
 		});
-	document
-		.querySelector<HTMLSelectElement>("#pr-sort")
-		?.addEventListener("change", (event) => {
-			view.sort = {
-				...view.sort,
-				mode: (event.currentTarget as HTMLSelectElement).value as SortMode,
-			};
-			saveSortPreference(view.sort, globalThis.localStorage, console.error);
-			rerender("#pr-sort");
-		});
-	document
-		.querySelector<HTMLSelectElement>("#pr-direction")
-		?.addEventListener("change", (event) => {
-			view.sort = {
-				...view.sort,
-				direction: (event.currentTarget as HTMLSelectElement)
-					.value as SortDirection,
-			};
-			saveSortPreference(view.sort, globalThis.localStorage, console.error);
-			rerender("#pr-direction");
-		});
-	document
-		.querySelectorAll<HTMLInputElement>("[data-repository]")
-		.forEach((input) => {
-			input.addEventListener("change", () => {
-				const repository = input.dataset.repository;
-				if (!repository) return;
-				if (view.repositories === null)
-					view.repositories = new Set(
-						[
-							...document.querySelectorAll<HTMLInputElement>(
-								"[data-repository]",
-							),
-						]
-							.map(({ dataset }) => dataset.repository)
-							.filter((name): name is string => Boolean(name)),
-					);
-				input.checked
-					? view.repositories.add(repository)
-					: view.repositories.delete(repository);
-				rerender(`#${input.id}`);
-			});
-		});
+	});
 	document.querySelector("#clear-pr-filters")?.addEventListener("click", () => {
 		view = {
 			query: "",
@@ -1581,101 +1288,77 @@ const bindStatusDetails = () => {
 		if (statusDetailTimer) clearTimeout(statusDetailTimer);
 		statusDetailTimer = null;
 	};
-	document
-		.querySelectorAll<HTMLElement>("[data-status-detail]")
-		.forEach((trigger) => {
-			const focusSelector = `[data-status-detail="${trigger.dataset.statusDetail}"]`;
-			const position = () => {
-				const rect = trigger.getBoundingClientRect();
-				statusDetailPosition = statusDetailPositionFor(rect, {
-					width: globalThis.innerWidth || 1024,
-					height: globalThis.innerHeight || 768,
-				});
-			};
-			const show = (restoreFocus = false) => {
-				const next = statusDetailStateFor(
-					{ key: statusDetailKey, pinned: statusDetailPinned },
-					trigger.dataset.statusDetail ?? null,
-					"inspect",
-				);
-				statusDetailKey = next.key;
-				statusDetailPinned = next.pinned;
-				position();
-				if (restoreFocus) rerender(focusSelector, true);
-				else render(current);
-			};
-			trigger.addEventListener("pointerenter", () => {
-				clearStatusDetailTimer();
-				statusDetailTimer = setTimeout(show, statusDetailHoverDelay);
+	document.querySelectorAll<HTMLElement>("[data-status-detail]").forEach((trigger) => {
+		const focusSelector = `[data-status-detail="${trigger.dataset.statusDetail}"]`;
+		const position = () => {
+			const rect = trigger.getBoundingClientRect();
+			statusDetailPosition = statusDetailPositionFor(rect, {
+				width: globalThis.innerWidth || 1024,
+				height: globalThis.innerHeight || 768,
 			});
-			trigger.addEventListener("pointerleave", () => {
-				clearStatusDetailTimer();
-				const next = statusDetailStateFor(
-					{ key: statusDetailKey, pinned: statusDetailPinned },
-					null,
-					"leave",
-				);
-				if (next.key !== statusDetailKey) {
-					statusDetailKey = next.key;
-					statusDetailPinned = next.pinned;
-					render(current);
-				}
-			});
-			trigger.addEventListener("focus", () => {
-				if (statusDetailFocusRestoring) return;
-				clearStatusDetailTimer();
-				show(true);
-			});
-			trigger.addEventListener("click", () => {
-				clearStatusDetailTimer();
-				const next = statusDetailStateFor(
-					{ key: statusDetailKey, pinned: statusDetailPinned },
-					trigger.dataset.statusDetail ?? null,
-					"activate",
-				);
-				statusDetailKey = next.key;
-				statusDetailPinned = next.pinned;
-				position();
-				rerender(focusSelector, true);
-			});
-		});
-	document
-		.querySelector("[data-status-detail-close]")
-		?.addEventListener("click", () => {
+		};
+		const show = (restoreFocus = false) => {
 			const next = statusDetailStateFor(
 				{ key: statusDetailKey, pinned: statusDetailPinned },
-				null,
-				"dismiss",
+				trigger.dataset.statusDetail ?? null,
+				"inspect",
 			);
 			statusDetailKey = next.key;
 			statusDetailPinned = next.pinned;
-			render(current);
+			position();
+			if (restoreFocus) rerender(focusSelector, true);
+			else render(current);
+		};
+		trigger.addEventListener("pointerenter", () => {
+			clearStatusDetailTimer();
+			statusDetailTimer = setTimeout(show, statusDetailHoverDelay);
 		});
+		trigger.addEventListener("pointerleave", () => {
+			clearStatusDetailTimer();
+			const next = statusDetailStateFor({ key: statusDetailKey, pinned: statusDetailPinned }, null, "leave");
+			if (next.key !== statusDetailKey) {
+				statusDetailKey = next.key;
+				statusDetailPinned = next.pinned;
+				render(current);
+			}
+		});
+		trigger.addEventListener("focus", () => {
+			if (statusDetailFocusRestoring) return;
+			clearStatusDetailTimer();
+			show(true);
+		});
+		trigger.addEventListener("click", () => {
+			clearStatusDetailTimer();
+			const next = statusDetailStateFor(
+				{ key: statusDetailKey, pinned: statusDetailPinned },
+				trigger.dataset.statusDetail ?? null,
+				"activate",
+			);
+			statusDetailKey = next.key;
+			statusDetailPinned = next.pinned;
+			position();
+			rerender(focusSelector, true);
+		});
+	});
+	document.querySelector("[data-status-detail-close]")?.addEventListener("click", () => {
+		const next = statusDetailStateFor({ key: statusDetailKey, pinned: statusDetailPinned }, null, "dismiss");
+		statusDetailKey = next.key;
+		statusDetailPinned = next.pinned;
+		render(current);
+	});
 };
 const render = (x: DashboardSnapshot | null) => {
 	if (!root || !x) return;
 	current = x;
 	if (x.error) {
-		root.innerHTML =
-			'<div class="card error">' +
-			esc(x.error) +
-			' <a href="/auth/github">Sign in</a></div>';
+		root.innerHTML = '<div class="card error">' + esc(x.error) + ' <a href="/auth/github">Sign in</a></div>';
 		return;
 	}
-	const rows = <Item>(
-		items: Item[],
-		empty: string,
-		fn: (item: Item) => string,
-	) =>
-		items.length
-			? `<div class="stack">${items.map(fn).join("")}</div>`
-			: `<p class="muted">${empty}</p>`;
+	const rows = <Item>(items: Item[], empty: string, fn: (item: Item) => string) =>
+		items.length ? `<div class="stack">${items.map(fn).join("")}</div>` : `<p class="muted">${empty}</p>`;
 	const allPullRequests = x.pullRequests.map((pr) => {
 		const local = localSpecsFor(pr, x.pullRequests);
-		const specs = orderedSpecs([
-			...local,
-			...(pr.open_specs ?? (pr.open_spec ? [pr.open_spec] : [])),
-		]);
+		const specs = orderedSpecs([...local, ...(pr.open_specs ?? (pr.open_spec ? [pr.open_spec] : []))]);
 		return {
 			pr: { ...pr, open_specs: specs, open_spec: specs[0] ?? null },
 			spec: specs[0] ?? null,
@@ -1683,9 +1366,7 @@ const render = (x: DashboardSnapshot | null) => {
 	});
 	const prs = derivePullRequests(allPullRequests, view);
 	const statusDetail = statusDetailKey
-		? derivePullRequests(allPullRequests).find(
-				(item) => statusKeyFor(item.pr) === statusDetailKey,
-			)
+		? derivePullRequests(allPullRequests).find((item) => statusKeyFor(item.pr) === statusDetailKey)
 		: null;
 	const headerMarkup =
 		'<header><a class="brand brand-home" href="/"><img class="brand-icon" src="/icon-adaptive.svg" alt=""><div><h1>Command Deck.ai</h1><p class="muted">Open pull requests you authored.</p></div></a>' +
@@ -1725,134 +1406,81 @@ const render = (x: DashboardSnapshot | null) => {
 		}) +
 		`</section>${statusDetail ? statusDetailMarkup(statusDetail) : statusDetailKey === "deployments" ? deploymentDetailMarkup(x.deployments) : ""}`;
 	const page = pageFor(globalThis.location?.pathname);
-	const pageMarkup =
-		page === "configuration" ? configurationMarkup() : dashboardMarkup;
+	const pageMarkup = page === "configuration" ? configurationMarkup() : dashboardMarkup;
 	root.innerHTML =
-		headerMarkup +
-		(x.stale
-			? '<p class="card error">Provider reconciliation is stale.</p>'
-			: "") +
-		pageMarkup;
-	document
-		.querySelector("#notify")
-		?.addEventListener("click", () =>
-			globalThis.Notification?.requestPermission(),
+		headerMarkup + (x.stale ? '<p class="card error">Provider reconciliation is stale.</p>' : "") + pageMarkup;
+	document.querySelector("#notify")?.addEventListener("click", () => globalThis.Notification?.requestPermission());
+	document.querySelectorAll<HTMLButtonElement>("[data-connect-root]").forEach((button) => {
+		button.addEventListener("click", () => connectOrganization(button.dataset.connectRoot ?? ""));
+	});
+	document.querySelectorAll<HTMLButtonElement>("[data-connect-repository]").forEach((button) => {
+		button.addEventListener("click", () => connectRepository(button.dataset.connectRepository ?? ""));
+	});
+	document.querySelectorAll<HTMLButtonElement>("[data-checkout-permission]").forEach((button) => {
+		button.addEventListener("click", () => grantCheckoutPermission(button.dataset.checkoutPermission ?? ""));
+	});
+	document.querySelectorAll<HTMLInputElement>("[data-appearance-choice]").forEach((input) => {
+		input.addEventListener("change", () => {
+			saveAppearance(input.value);
+			render(current);
+		});
+	});
+	document.querySelectorAll<HTMLButtonElement>("[data-reconcile-pr]").forEach((button) => {
+		const target = button.dataset.reconcilePr ? JSON.parse(button.dataset.reconcilePr) : {};
+		button.addEventListener("click", () =>
+			reconcileNow("/api/reconcile/pull-request", target, "PR reconciliation complete.", `#${button.id}`, {
+				kind: "pr",
+				targets: reconciliationTargets(
+					(pr) =>
+						statusKeyFor(pr) === [target.installationId, target.repositoryId, target.number].map(String).join(":"),
+				),
+			}),
 		);
-	document
-		.querySelectorAll<HTMLButtonElement>("[data-connect-root]")
-		.forEach((button) => {
-			button.addEventListener("click", () =>
-				connectOrganization(button.dataset.connectRoot ?? ""),
-			);
-		});
-	document
-		.querySelectorAll<HTMLButtonElement>("[data-connect-repository]")
-		.forEach((button) => {
-			button.addEventListener("click", () =>
-				connectRepository(button.dataset.connectRepository ?? ""),
-			);
-		});
-	document
-		.querySelectorAll<HTMLButtonElement>("[data-checkout-permission]")
-		.forEach((button) => {
-			button.addEventListener("click", () =>
-				grantCheckoutPermission(button.dataset.checkoutPermission ?? ""),
-			);
-		});
-	document
-		.querySelectorAll<HTMLInputElement>("[data-appearance-choice]")
-		.forEach((input) => {
-			input.addEventListener("change", () => {
-				saveAppearance(input.value);
-				render(current);
-			});
-		});
-	document
-		.querySelectorAll<HTMLButtonElement>("[data-reconcile-pr]")
-		.forEach((button) => {
-			const target = button.dataset.reconcilePr
-				? JSON.parse(button.dataset.reconcilePr)
-				: {};
-			button.addEventListener("click", () =>
-				reconcileNow(
-					"/api/reconcile/pull-request",
-					target,
-					"PR reconciliation complete.",
-					`#${button.id}`,
-					{
-						kind: "pr",
-						targets: reconciliationTargets(
-							(pr) =>
-								statusKeyFor(pr) ===
-								[target.installationId, target.repositoryId, target.number]
-									.map(String)
-									.join(":"),
-						),
-					},
-				),
-			);
-		});
-	document
-		.querySelectorAll<HTMLButtonElement>("[data-reconcile-all]")
-		.forEach((button) => {
-			button.addEventListener("click", () => reconcileAllNow(`#${button.id}`));
-		});
-	document
-		.querySelectorAll<HTMLButtonElement>("[data-reconcile-installation]")
-		.forEach((button) => {
-			const installationId = button.dataset.reconcileInstallation;
-			button.addEventListener("click", () =>
-				reconcileNow(
-					"/api/reconcile",
-					installationId ? { installationId } : undefined,
-					"Installation reconciliation complete.",
-					`#${button.id}`,
-					{
-						kind: "installation",
-						installationId,
-						targets: reconciliationTargets((pr) =>
-							installationId
-								? pr.installation_id === installationId
-								: pr.state === "open",
-						),
-					},
-				),
-			);
-		});
+	});
+	document.querySelectorAll<HTMLButtonElement>("[data-reconcile-all]").forEach((button) => {
+		button.addEventListener("click", () => reconcileAllNow(`#${button.id}`));
+	});
+	document.querySelectorAll<HTMLButtonElement>("[data-reconcile-installation]").forEach((button) => {
+		const installationId = button.dataset.reconcileInstallation;
+		button.addEventListener("click", () =>
+			reconcileNow(
+				"/api/reconcile",
+				installationId ? { installationId } : undefined,
+				"Installation reconciliation complete.",
+				`#${button.id}`,
+				{
+					kind: "installation",
+					installationId,
+					targets: reconciliationTargets((pr) =>
+						installationId ? pr.installation_id === installationId : pr.state === "open",
+					),
+				},
+			),
+		);
+	});
 	const avatarMenu = document.querySelector<HTMLDetailsElement>(".avatar-menu");
 	avatarMenu?.addEventListener("focusout", (event) => {
 		const next = event.relatedTarget;
-		if (!(next instanceof Node) || !avatarMenu.contains(next))
-			avatarMenu.open = false;
+		if (!(next instanceof Node) || !avatarMenu.contains(next)) avatarMenu.open = false;
 	});
-	document
-		.querySelectorAll<HTMLAnchorElement>("[data-local-source]")
-		.forEach((link) => {
-			link.addEventListener("click", openLocalSource);
-		});
+	document.querySelectorAll<HTMLAnchorElement>("[data-local-source]").forEach((link) => {
+		link.addEventListener("click", openLocalSource);
+	});
 	bindControls();
 	bindStatusDetails();
 };
 async function reconcileAllNow(focusSelector: string) {
-	const count =
-		current?.pullRequests.filter((pullRequest) => pullRequest.state === "open")
-			.length ?? 0;
+	const count = current?.pullRequests.filter((pullRequest) => pullRequest.state === "open").length ?? 0;
 	if (
 		!globalThis.confirm(
 			`Reconcile ${count} known PR${count === 1 ? "" : "s"}? Estimated provider requests: ${count * 4}.`,
 		)
 	)
 		return;
-	await reconcileNow(
-		"/api/reconcile/pull-requests",
-		undefined,
-		"All known PRs reconciled.",
-		focusSelector,
-		{
-			kind: "all",
-			targets: reconciliationTargets((pr) => pr.state === "open"),
-		},
-	);
+	await reconcileNow("/api/reconcile/pull-requests", undefined, "All known PRs reconciled.", focusSelector, {
+		kind: "all",
+		targets: reconciliationTargets((pr) => pr.state === "open"),
+	});
 }
 async function reconcileNow(
 	path: string,
@@ -1912,10 +1540,7 @@ async function reconcileNow(
 	}
 }
 const browserGlobal = globalThis as typeof globalThis & {
-	showDirectoryPicker?: (options: {
-		id: string;
-		mode: "read";
-	}) => Promise<BrowserDirectoryHandle>;
+	showDirectoryPicker?: (options: { id: string; mode: "read" }) => Promise<BrowserDirectoryHandle>;
 };
 const directoryPicker = () => {
 	const picker = browserGlobal.showDirectoryPicker;
@@ -1945,9 +1570,7 @@ const connectOrganization = async (account: string) => {
 };
 export const connectRepository = async (key: string) => {
 	if (!checkoutSupported()) return;
-	const repository = repositoryCatalog.find(
-		(item) => checkoutKey(item.account_login, item.repository_id) === key,
-	);
+	const repository = repositoryCatalog.find((item) => checkoutKey(item.account_login, item.repository_id) === key);
 	if (!repository) return;
 	try {
 		const handle = await directoryPicker();
@@ -1980,18 +1603,14 @@ export const connectRepository = async (key: string) => {
 	}
 };
 const grantCheckoutPermission = async (key: string) => {
-	const record =
-		checkoutHandles.get(key) ??
-		checkoutHandles.get(`root:${key.split(":")[0]}`);
+	const record = checkoutHandles.get(key) ?? checkoutHandles.get(`root:${key.split(":")[0]}`);
 	if (!record?.handle) return;
 	try {
 		await record.handle.requestPermission({ mode: "read" });
 		await resolveCheckouts(repositoryCatalog);
 		render(current);
 	} catch (error) {
-		const repository = repositoryCatalog.find(
-			(item) => checkoutKey(item.account_login, item.repository_id) === key,
-		);
+		const repository = repositoryCatalog.find((item) => checkoutKey(item.account_login, item.repository_id) === key);
 		if (repository) clearRepositoryEvidence(repository);
 		setCheckoutError(key, error);
 	}
@@ -2025,9 +1644,7 @@ export const loadFailureFor = ({
 	log?: (...values: unknown[]) => void;
 }) => {
 	log("Command center load failed", errorName(error));
-	return online
-		? "Sign in to view your command center."
-		: "Offline: live command-center data is unavailable.";
+	return online ? "Sign in to view your command center." : "Offline: live command-center data is unavailable.";
 };
 const load = () =>
 	fetch("/api/snapshot")
@@ -2068,12 +1685,9 @@ const load = () =>
 if (root) {
 	view.sort = loadSortPreference(globalThis.localStorage, console.error);
 	applyAppearance(appearancePreference().preference);
-	globalThis
-		.matchMedia?.("(prefers-color-scheme: dark)")
-		.addEventListener("change", () => {
-			if (appearancePreference().preference === "system")
-				applyAppearance("system");
-		});
+	globalThis.matchMedia?.("(prefers-color-scheme: dark)").addEventListener("change", () => {
+		if (appearancePreference().preference === "system") applyAppearance("system");
+	});
 	load().then((ok) => {
 		if (ok) new EventSource("/events").addEventListener("refresh", load);
 	});
@@ -2082,11 +1696,7 @@ if (root) {
 			avatarMenu = document.querySelector<HTMLDetailsElement>(".avatar-menu"),
 			target = event.target as Element | null;
 		if (event.key === "Escape" && statusDetailKey) {
-			const next = statusDetailStateFor(
-				{ key: statusDetailKey, pinned: statusDetailPinned },
-				null,
-				"dismiss",
-			);
+			const next = statusDetailStateFor({ key: statusDetailKey, pinned: statusDetailPinned }, null, "dismiss");
 			statusDetailKey = next.key;
 			statusDetailPinned = next.pinned;
 			render(current);
@@ -2095,10 +1705,7 @@ if (root) {
 			avatarMenu.open = false;
 			avatarMenu.querySelector<HTMLElement>("summary")?.focus();
 		}
-		if (
-			event.key === "/" &&
-			!target?.matches?.("input, textarea, select, [contenteditable]")
-		) {
+		if (event.key === "/" && !target?.matches?.("input, textarea, select, [contenteditable]")) {
 			event.preventDefault();
 			search?.focus();
 		}
@@ -2108,29 +1715,16 @@ if (root) {
 		}
 	});
 	document.addEventListener("click", (event) => {
-		const avatarMenu =
-			document.querySelector<HTMLDetailsElement>(".avatar-menu");
+		const avatarMenu = document.querySelector<HTMLDetailsElement>(".avatar-menu");
 		const target = event.target as {
 			closest?: (selector: string) => unknown;
 		} | null;
-		if (
-			statusDetailKey &&
-			!target?.closest?.("[data-status-detail], #status-detail")
-		) {
-			const next = statusDetailStateFor(
-				{ key: statusDetailKey, pinned: statusDetailPinned },
-				null,
-				"dismiss",
-			);
+		if (statusDetailKey && !target?.closest?.("[data-status-detail], #status-detail")) {
+			const next = statusDetailStateFor({ key: statusDetailKey, pinned: statusDetailPinned }, null, "dismiss");
 			statusDetailKey = next.key;
 			statusDetailPinned = next.pinned;
 			render(current);
 		}
-		if (
-			avatarMenu?.open &&
-			event.target instanceof Node &&
-			!avatarMenu.contains(event.target)
-		)
-			avatarMenu.open = false;
+		if (avatarMenu?.open && event.target instanceof Node && !avatarMenu.contains(event.target)) avatarMenu.open = false;
 	});
 }

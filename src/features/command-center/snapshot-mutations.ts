@@ -10,12 +10,9 @@ export type ReconcilePullRequest = {
 const post = async (path: string, body?: BodyInit, headers?: HeadersInit) => {
 	const response = await fetch(
 		path,
-		body === undefined
-			? { method: "POST" }
-			: { method: "POST", headers: headers ?? {}, body },
+		body === undefined ? { method: "POST" } : { method: "POST", headers: headers ?? {}, body },
 	);
-	if (!response.ok)
-		throw new Error(`Snapshot mutation failed: ${response.status}`);
+	if (!response.ok) throw new Error(`Snapshot mutation failed: ${response.status}`);
 };
 
 const snapshotMutationOptions = <Variables>(
@@ -37,16 +34,10 @@ export const reconcilePullRequestMutationOptions = (queryClient: QueryClient) =>
 		}),
 	);
 
-export const reconcilePullRequestsMutationOptions = (
-	queryClient: QueryClient,
-) =>
-	snapshotMutationOptions(queryClient, () =>
-		post("/api/reconcile/pull-requests"),
-	);
+export const reconcilePullRequestsMutationOptions = (queryClient: QueryClient) =>
+	snapshotMutationOptions(queryClient, () => post("/api/reconcile/pull-requests"));
 
-export const reconcileInstallationMutationOptions = (
-	queryClient: QueryClient,
-) =>
+export const reconcileInstallationMutationOptions = (queryClient: QueryClient) =>
 	snapshotMutationOptions(queryClient, (installationId: string) =>
 		post("/api/reconcile", JSON.stringify({ installationId }), {
 			"content-type": "application/json",
@@ -55,9 +46,7 @@ export const reconcileInstallationMutationOptions = (
 
 export const mergeConfirmMutationOptions = (queryClient: QueryClient) =>
 	snapshotMutationOptions(queryClient, (confirmation: string) =>
-		post(
-			"/api/merge/confirm",
-			new URLSearchParams({ confirmation }).toString(),
-			{ "content-type": "application/x-www-form-urlencoded" },
-		),
+		post("/api/merge/confirm", new URLSearchParams({ confirmation }).toString(), {
+			"content-type": "application/x-www-form-urlencoded",
+		}),
 	);

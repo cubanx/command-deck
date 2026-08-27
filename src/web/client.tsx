@@ -11,9 +11,7 @@ if (!root) throw new Error("Command Center frontend root is missing");
 
 const FrontendRouter = () => {
 	const queryClient = useQueryClient();
-	const [router] = useState(() =>
-		createRouter({ routeTree, context: { queryClient } }),
-	);
+	const [router] = useState(() => createRouter({ routeTree, context: { queryClient } }));
 
 	return <RouterProvider router={router} />;
 };
