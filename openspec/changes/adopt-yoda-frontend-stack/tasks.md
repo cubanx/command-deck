@@ -14,10 +14,10 @@
 
 ## 3. Port the dashboard view model and authority gates
 
-- [ ] 3.1 Port focused failing tests for lifecycle precedence, attention, filters, fuzzy search, repository selection, exclusive status buckets, ordering preferences, multi-OpenSpec presentation, and lifecycle-ready merge controls from string assertions to view-model assertions.
-- [ ] 3.2 Implement the minimum pure dashboard view model by reusing the current algorithms once, and verify the ported behavior tests pass.
-- [ ] 3.3 Add failing tests proving browser-local detected OpenSpecs remain separate from authoritative `open_specs` and cannot change lifecycle, attention, or merge availability; then implement the separation and verify the tests pass.
-- [ ] 3.4 Verify the existing access, OpenSpec projection, and action-time merge suites still pass, then run `bun run typecheck`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
+- [x] 3.1 Port focused failing tests for lifecycle precedence, attention, filters, fuzzy search, repository selection, exclusive status buckets, ordering preferences, multi-OpenSpec presentation, and lifecycle-ready merge controls from string assertions to view-model assertions.
+- [x] 3.2 Implement the minimum pure dashboard view model by reusing the current algorithms once, and verify the ported behavior tests pass.
+- [x] 3.3 Add failing tests proving browser-local detected OpenSpecs remain separate from authoritative `open_specs` and cannot change lifecycle, attention, or merge availability; then implement the separation and verify the tests pass.
+- [x] 3.4 Verify the existing access, OpenSpec projection, and action-time merge suites still pass, then run `bun run typecheck`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
 
 ## 4. Migrate the operational dashboard components
 
