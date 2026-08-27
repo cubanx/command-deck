@@ -21,10 +21,10 @@
 
 ## 4. Migrate the operational dashboard components
 
-- [ ] 4.1 Add Testing Library failures for accessible dashboard cards, lifecycle rails, status/deployment detail focus and dismissal, filters, search, repository selection, ordering, empty/error states, and narrow-viewport semantics.
-- [ ] 4.2 Implement the Mantine-backed dashboard, lifecycle, OpenSpec, status, deployment, filter, search, and ordering components and verify the focused accessibility and parity tests pass.
-- [ ] 4.3 Add failing tests for reconciliation and exact-head merge controls, sanitized status announcements, lifecycle fail-closed visibility, confirmation, focus return, and post-mutation refresh; implement the components against existing endpoints and verify the tests pass.
-- [ ] 4.4 Run `bun run typecheck`, all focused component tests plus existing reconciliation/merge tests, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
+- [x] 4.1 Add Testing Library failures for accessible dashboard cards, lifecycle rails, status/deployment detail focus and dismissal, filters, search, repository selection, ordering, empty/error states, and narrow-viewport semantics.
+- [x] 4.2 Implement the Mantine-backed dashboard, lifecycle, OpenSpec, status, deployment, filter, search, and ordering components and verify the focused accessibility and parity tests pass.
+- [x] 4.3 Add failing tests for reconciliation and exact-head merge controls, sanitized status announcements, lifecycle fail-closed visibility, confirmation, focus return, and post-mutation refresh; implement the components against existing endpoints and verify the tests pass.
+- [x] 4.4 Run `bun run typecheck`, all focused component tests plus existing reconciliation/merge tests, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
 
 ## 5. Migrate configuration, local checkout, appearance, and PWA behavior
 

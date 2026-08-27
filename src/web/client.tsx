@@ -1,3 +1,5 @@
+import "@mantine/core/styles.css";
+import "#/web/app.css";
 import { useQueryClient } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { useState } from "react";

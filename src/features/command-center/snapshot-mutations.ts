@@ -6,6 +6,7 @@ export type ReconcilePullRequest = {
 	repositoryId: string;
 	number: number;
 };
+export type MutationStatus = "success" | "running" | "failed" | "blocked";
 
 const post = async (path: string, body?: BodyInit, headers?: HeadersInit) => {
 	const response = await fetch(
@@ -13,11 +14,26 @@ const post = async (path: string, body?: BodyInit, headers?: HeadersInit) => {
 		body === undefined ? { method: "POST" } : { method: "POST", headers: headers ?? {}, body },
 	);
 	if (!response.ok) throw new Error(`Snapshot mutation failed: ${response.status}`);
+	let result: unknown;
+	try {
+		result = await response.json();
+	} catch {
+		throw new TypeError("Invalid snapshot mutation response");
+	}
+	if (
+		typeof result !== "object" ||
+		result === null ||
+		!(["success", "running", "failed", "blocked"] as const).includes(
+			(result as { status?: unknown }).status as MutationStatus,
+		)
+	)
+		throw new TypeError("Invalid snapshot mutation response");
+	return { status: (result as { status: MutationStatus }).status };
 };
 
 const snapshotMutationOptions = <Variables>(
 	queryClient: QueryClient,
-	mutationFn: (variables: Variables) => Promise<void>,
+	mutationFn: (variables: Variables) => Promise<{ status: MutationStatus }>,
 ) =>
 	mutationOptions({
 		mutationFn,

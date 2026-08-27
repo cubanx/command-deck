@@ -1,12 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
 import { avatarUrlFor } from "#/features/command-center/avatar-url";
+import type { PullRequest } from "#/features/command-center/view-model";
 
 export type DashboardSnapshot = {
 	error?: string;
 	stale?: boolean;
 	user?: { login: string; avatar_url?: string; fixture_avatar?: boolean };
 	repositories: unknown[];
-	pullRequests: unknown[];
+	pullRequests: PullRequest[];
 	deployments: unknown[];
 	notifications: unknown[];
 };
@@ -41,7 +42,7 @@ export const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 					},
 				}),
 		repositories: value.repositories as unknown[],
-		pullRequests: value.pullRequests as unknown[],
+		pullRequests: value.pullRequests as PullRequest[],
 		deployments: value.deployments as unknown[],
 		notifications: value.notifications as unknown[],
 	};
