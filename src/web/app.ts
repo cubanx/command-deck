@@ -1,10 +1,19 @@
+import { avatarUrlFor } from "#/features/command-center/avatar-url";
+import {
+	defaultSortPreference,
+	isSortMode,
+	loadSortPreference,
+	type SortDirection,
+	type SortMode,
+	type SortPreference,
+	saveSortPreference,
+} from "#/features/command-center/sort-preference";
 import { openSpecGate } from "#/openspec-gate";
-
 import { activeOpenSpecGroup } from "#/openspec-tasks";
 
-type SortMode = "opened" | "closest" | "updated" | "progress" | "repository";
-type SortDirection = "asc" | "desc";
-type SortPreference = { mode: SortMode; direction: SortDirection };
+export { avatarUrlFor } from "#/features/command-center/avatar-url";
+export { sortPreference } from "#/features/command-center/sort-preference";
+
 type CheckoutResolution = "resolved" | "unresolved";
 type CheckoutState =
 	| "Unsupported"
@@ -276,17 +285,6 @@ const isCheckoutRecord = (value: unknown): value is CheckoutRecord =>
 	isRecord(value) &&
 	typeof value.key === "string" &&
 	isBrowserDirectoryHandle(value.handle);
-export const avatarUrlFor = (value: unknown) => {
-	if (typeof value !== "string") return null;
-	try {
-		const url = new URL(value);
-		return url.protocol === "https:" && !url.username && !url.password
-			? url.href
-			: null;
-	} catch {
-		return null;
-	}
-};
 export const pageFor = (pathname: unknown) =>
 	pathname === "/configuration" ? "configuration" : "dashboard";
 const snapshotFor = (value: unknown): DashboardSnapshot | null => {
@@ -433,45 +431,6 @@ const normalized = (value: unknown) =>
 	String(value ?? "")
 		.trim()
 		.toLowerCase();
-const defaultSort: SortPreference = { mode: "closest", direction: "asc" };
-const sortModes = new Set<string>([
-	"opened",
-	"closest",
-	"updated",
-	"progress",
-	"repository",
-]);
-const isSortMode = (value: unknown): value is SortMode =>
-	typeof value === "string" && sortModes.has(value);
-const isSortDirection = (value: unknown): value is SortDirection =>
-	value === "asc" || value === "desc";
-export const sortPreference = (stored: unknown): SortPreference => {
-	try {
-		const value: unknown = JSON.parse(String(stored));
-		return isRecord(value) &&
-			isSortMode(value.mode) &&
-			isSortDirection(value.direction)
-			? { mode: value.mode, direction: value.direction }
-			: defaultSort;
-	} catch {
-		return defaultSort;
-	}
-};
-const loadSortPreference = () => {
-	try {
-		return sortPreference(globalThis.localStorage?.getItem("dcc-pr-sort"));
-	} catch (error) {
-		console.error("Pull request sort read failed", errorName(error));
-		return defaultSort;
-	}
-};
-const saveSortPreference = () => {
-	try {
-		globalThis.localStorage?.setItem("dcc-pr-sort", JSON.stringify(view.sort));
-	} catch (error) {
-		console.error("Pull request sort save failed", errorName(error));
-	}
-};
 const distance = (left: string, right: string) => {
 	let prior = Array.from({ length: right.length + 1 }, (_, index) => index);
 	for (let row = 1; row <= left.length; row++) {
@@ -706,9 +665,9 @@ export const derivePullRequests = (
 	const failedChecks = filters.failedChecks ?? false;
 	const attention = filters.attention ?? false;
 	const sort =
-		filters.sort && sortModes.has(filters.sort.mode)
+		filters.sort && isSortMode(filters.sort.mode)
 			? filters.sort
-			: defaultSort;
+			: defaultSortPreference;
 	return items
 		.map((item) => {
 			const lifecycle = lifecycleFor(item.pr, item.spec);
@@ -1568,7 +1527,7 @@ const bindControls = () => {
 				...view.sort,
 				mode: (event.currentTarget as HTMLSelectElement).value as SortMode,
 			};
-			saveSortPreference();
+			saveSortPreference(view.sort, globalThis.localStorage, console.error);
 			rerender("#pr-sort");
 		});
 	document
@@ -1579,7 +1538,7 @@ const bindControls = () => {
 				direction: (event.currentTarget as HTMLSelectElement)
 					.value as SortDirection,
 			};
-			saveSortPreference();
+			saveSortPreference(view.sort, globalThis.localStorage, console.error);
 			rerender("#pr-direction");
 		});
 	document
@@ -2107,7 +2066,7 @@ const load = () =>
 			return false;
 		});
 if (root) {
-	view.sort = loadSortPreference();
+	view.sort = loadSortPreference(globalThis.localStorage, console.error);
 	applyAppearance(appearancePreference().preference);
 	globalThis
 		.matchMedia?.("(prefers-color-scheme: dark)")

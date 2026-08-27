@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
+import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { AppProvider } from "#/web/app-provider";
 
