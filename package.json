@@ -2,6 +2,7 @@
 	"name": "command-center-ai",
 	"devDependencies": {
 		"@biomejs/biome": "2.5.6",
+		"@playwright/test": "1.62.1",
 		"@types/bun": "latest",
 		"@varlock/1password-plugin": "^2.0.3",
 		"@vitest/coverage-v8": "4.1.10",
@@ -24,6 +25,8 @@
 		"dev:demo": "NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
 		"start": "bun src/server.ts",
 		"test": "bun run build:web && vitest run",
+		"test:e2e": "playwright test",
+		"e2e:server": "bun e2e/fixture-server.ts",
 		"test:coverage": "bun run build:web && vitest run --coverage",
 		"check:crap": "bun run test:coverage && crap-ts score src --coverage-file coverage/unit/coverage-final.json --max 30 --limit 20",
 		"quality": "bun run validate:all",
