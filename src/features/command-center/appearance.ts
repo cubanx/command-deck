@@ -17,6 +17,7 @@ export const applyAppearance = (value: unknown) => {
 		systemDark: globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches,
 	});
 	document.documentElement.dataset.appearance = appearance.theme;
+	document.documentElement.dataset.mantineColorScheme = appearance.theme;
 	document.documentElement.style.colorScheme = appearance.theme;
 	return appearance;
 };

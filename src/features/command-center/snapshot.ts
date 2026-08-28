@@ -5,6 +5,7 @@ import type { PullRequest } from "#/features/command-center/view-model";
 export type DashboardSnapshot = {
 	error?: string;
 	stale?: boolean;
+	installationCount?: number;
 	user?: { login: string; avatar_url?: string; fixture_avatar?: boolean };
 	repositories: unknown[];
 	pullRequests: PullRequest[];
@@ -20,6 +21,10 @@ export const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 		!["repositories", "pullRequests", "deployments", "notifications"].every((key) => Array.isArray(value[key])) ||
 		(value.error !== undefined && typeof value.error !== "string") ||
 		(value.stale !== undefined && typeof value.stale !== "boolean") ||
+		(value.installationCount !== undefined &&
+			(typeof value.installationCount !== "number" ||
+				!Number.isSafeInteger(value.installationCount) ||
+				value.installationCount < 0)) ||
 		(value.user !== undefined &&
 			(!isRecord(value.user) ||
 				typeof value.user.login !== "string" ||
@@ -32,6 +37,7 @@ export const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 	return {
 		...(value.error === undefined ? {} : { error: value.error }),
 		...(value.stale === undefined ? {} : { stale: value.stale }),
+		...(value.installationCount === undefined ? {} : { installationCount: value.installationCount as number }),
 		...(user === undefined
 			? {}
 			: {

@@ -53,6 +53,9 @@ export const reconcilePullRequestMutationOptions = (queryClient: QueryClient) =>
 export const reconcilePullRequestsMutationOptions = (queryClient: QueryClient) =>
 	snapshotMutationOptions(queryClient, () => post("/api/reconcile/pull-requests"));
 
+export const reconcileAllInstallationsMutationOptions = (queryClient: QueryClient) =>
+	snapshotMutationOptions(queryClient, () => post("/api/reconcile"));
+
 export const reconcileInstallationMutationOptions = (queryClient: QueryClient) =>
 	snapshotMutationOptions(queryClient, (installationId: string) =>
 		post("/api/reconcile", JSON.stringify({ installationId }), {

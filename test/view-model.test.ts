@@ -66,6 +66,7 @@ test("keeps lifecycle buckets exclusive while composing attention, failure, repo
 	];
 	expect(numbers(derivePullRequests(items, { attention: true, failedActions: true, failedChecks: true }))).toEqual([1]);
 	expect(numbers(derivePullRequests(items, { statuses: new Set(["ready"]) }))).toEqual([2]);
+	expect(numbers(derivePullRequests(items, { statuses: new Set() }))).toEqual([]);
 	expect(numbers(derivePullRequests(items, { repositories: new Set(["ds9/ops"]) }))).toEqual([1, 3]);
 	expect(repositoryOptions(items)).toEqual(["ds9/ops", "ds9/science"]);
 	expect([

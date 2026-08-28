@@ -5,7 +5,8 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 	request,
 }) => {
 	await page.goto("/");
-	await expect(page.getByRole("heading", { name: "Command Center" })).toBeVisible();
+	await expect(page.getByRole("main", { name: "Command Center" })).toBeVisible();
+	await expect(page.getByRole("link", { name: /Command Deck\.ai/ })).toHaveAttribute("href", "/");
 
 	const search = page.getByRole("textbox", { name: "Search pull requests" });
 	const sort = page.getByRole("combobox", { name: "Sort pull requests" });
@@ -14,7 +15,10 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 	await search.fill("Bajoran");
 	await expect(cards).toHaveCount(1);
 	await expect(page.getByRole("article", { name: "Restore the Bajoran relay" })).toBeVisible();
-	await page.getByRole("checkbox", { name: "openspec" }).check();
+	await page.getByRole("button", { name: "Status: All (8)" }).click();
+	await page.getByRole("checkbox", { name: "All" }).uncheck();
+	await page.getByRole("checkbox", { name: "OpenSpec" }).check();
+	await expect(page.getByRole("button", { name: "Status (1)" })).toBeVisible();
 	await expect(cards).toHaveCount(1);
 	await expect(page.getByRole("article", { name: "Restore the Bajoran relay" })).toBeVisible();
 	await page.getByRole("button", { name: "Clear filters" }).click();

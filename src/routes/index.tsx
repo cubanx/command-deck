@@ -1,6 +1,6 @@
 import { type QueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { OperationalDashboard } from "#/features/command-center/dashboard";
+import { DashboardLoadError, OperationalDashboard } from "#/features/command-center/dashboard";
 import { snapshotQueryOptions } from "#/features/command-center/snapshot";
 
 export const dashboardLoader = ({ context }: { context: { queryClient: QueryClient } }) =>
@@ -9,6 +9,7 @@ export const dashboardLoader = ({ context }: { context: { queryClient: QueryClie
 export const Route = createFileRoute("/")({
 	loader: dashboardLoader,
 	component: Dashboard,
+	errorComponent: DashboardLoadError,
 });
 
 export function Dashboard() {

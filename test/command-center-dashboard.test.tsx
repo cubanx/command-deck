@@ -3,7 +3,8 @@
 import { QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { OperationalDashboard } from "#/features/command-center/dashboard";
+import { DashboardLoadError, OperationalDashboard } from "#/features/command-center/dashboard";
+import { Route } from "#/routes/index";
 import { renderFrontend } from "#/web/test-harness";
 
 afterEach(() => {
@@ -12,6 +13,7 @@ afterEach(() => {
 });
 
 const snapshot = {
+	installationCount: 1,
 	pullRequests: [
 		{
 			number: 9,
@@ -277,14 +279,6 @@ test("reconciles an installation with the exact JSON target", async () => {
 	);
 });
 
-test("reconciles all pull requests without a request body", async () => {
-	const fetch = vi.fn(async () => new Response(JSON.stringify({ status: "success" }), { status: 200 }));
-	vi.stubGlobal("fetch", fetch);
-	renderFrontend(<OperationalDashboard snapshot={snapshot} />, new QueryClient());
-	fireEvent.click(screen.getByRole("button", { name: "Reconcile all pull requests" }));
-	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/reconcile/pull-requests", { method: "POST" }));
-});
-
 test("never reveals failed response bodies and restores focus", async () => {
 	const fetch = vi.fn(async () => new Response("secret-DS9-token", { status: 502 }));
 	vi.stubGlobal("fetch", fetch);
@@ -302,8 +296,21 @@ test("never reveals failed response bodies and restores focus", async () => {
 test("renders lifecycle and evidence separately and provides dismissible status detail", async () => {
 	renderFrontend(<OperationalDashboard snapshot={evidenceSnapshot} />);
 	const card = within(screen.getByRole("article", { name: /Defiant readiness/i }));
-	expect(card.getByRole("list", { name: "PR Lifecycle" }).textContent).toContain("Draft complete");
-	expect(card.getByRole("list", { name: "PR Lifecycle" }).textContent).toContain("Mergeable upcoming");
+	const lifecycle = card.getByRole("group", { name: "PR Lifecycle" });
+	expect(lifecycle.classList.contains("pr-lifecycle")).toBe(true);
+	expect(lifecycle.querySelector("legend.pr-lifecycle-title")?.textContent).toBe("PR Lifecycle");
+	expect(lifecycle.querySelector(".sr-only")?.textContent).toBe("PR lifecycle. Current stage: OpenSpec ready");
+	const pills = lifecycle.querySelector(".lifecycle-pills[aria-hidden='true']");
+	expect([...(pills?.querySelectorAll(".lifecycle-pill") ?? [])].map((pill) => pill.textContent)).toEqual([
+		"✓ Draft · Complete",
+		"◐ OpenSpec ready · Current",
+		"○ Ready for review · Upcoming",
+		"○ Reviewing · Upcoming",
+		"○ Mergeable · Upcoming",
+	]);
+	expect(pills?.querySelector(".lifecycle-pill.complete")?.textContent).toBe("✓ Draft · Complete");
+	expect(pills?.querySelector(".lifecycle-pill.current")?.textContent).toBe("◐ OpenSpec ready · Current");
+	expect(pills?.querySelectorAll(".lifecycle-pill.upcoming")).toHaveLength(3);
 	expect(card.getByText("OpenSpec · hold-the-line · 1/2")).toBeTruthy();
 	expect(card.getByText("OpenSpec · save-the-prophets · 3/3")).toBeTruthy();
 	expect(card.getByText(/Detected OpenSpec candidates \(informational\): local-runabout/)).toBeTruthy();
@@ -336,37 +343,28 @@ test("renders lifecycle and evidence separately and provides dismissible status 
 	expect(document.activeElement).toBe(trigger);
 });
 
-test("presents deployment evidence, empty state, and dismissible deployment detail", async () => {
-	const { rerender } = renderFrontend(<OperationalDashboard snapshot={evidenceSnapshot} />);
-	const trigger = screen.getByRole("button", { name: /Latest deployment.*ds9\/ops/i });
-	trigger.focus();
-	fireEvent.click(trigger);
-	expect(trigger.getAttribute("aria-expanded")).toBe("true");
-	const dialog = await screen.findByRole("dialog", { name: "Deployment detail" });
-	expect(dialog.textContent).toContain("ds9/ops");
-	expect(dialog.textContent).toContain("production");
-	expect(dialog.textContent).toContain("success");
-	expect(dialog.textContent).toContain("main");
-	expect(dialog.textContent).toContain("b".repeat(40));
-	expect(within(dialog).getByRole("link", { name: "Deployment" }).getAttribute("href")).toBe(
-		"https://deploy.example.test/9",
-	);
-	expect(within(dialog).getByRole("link", { name: "Logs" }).getAttribute("href")).toBe("https://logs.example.test/9");
-	fireEvent.keyDown(dialog, { key: "Escape" });
-	await waitFor(() => expect(screen.queryByRole("dialog", { name: "Deployment detail" })).toBeNull());
-	expect(document.activeElement).toBe(trigger);
-	fireEvent.click(trigger);
-	await dismissByOverlay();
-	await waitFor(() => expect(screen.queryByRole("dialog", { name: "Deployment detail" })).toBeNull());
-	expect(document.activeElement).toBe(trigger);
-	rerender(<OperationalDashboard snapshot={{ ...snapshot, pullRequests: [] }} />);
-	fireEvent.click(screen.getByRole("button", { name: /Latest deployment/i }));
-	expect((await screen.findByRole("dialog", { name: "Deployment detail" })).textContent).toContain(
-		"No recent deployment evidence.",
-	);
+test("keeps filter controls in a shared wrapping row", () => {
+	renderFrontend(<OperationalDashboard snapshot={snapshot} />);
+	const row = screen.getByRole("textbox", { name: "Search pull requests" }).closest(".command-center-filter-row");
+	expect(row).toBeTruthy();
+	expect(screen.getByRole("textbox", { name: "Search pull requests" }).closest(".filter-grow")).toBeTruthy();
+	expect(row?.contains(screen.getByRole("button", { name: "Status: All (8)" }))).toBe(true);
+	expect(screen.getByRole("combobox", { name: "Sort pull requests" }).closest(".filter-sort")).toBeTruthy();
+	expect(screen.getByRole("combobox", { name: "Sort direction" }).closest(".filter-direction")).toBeTruthy();
+	expect(row?.contains(screen.getByRole("button", { name: "Clear filters" }))).toBe(true);
+	const filters = row?.closest(".command-center-filters");
+	if (!filters) throw new Error("Expected the filter card");
+	expect(filters.compareDocumentPosition(screen.getByRole("status")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
-test("filters, orders, clears, and persists the operational card view", () => {
+test("keeps deployment and broad reconciliation controls out of the dashboard", () => {
+	renderFrontend(<OperationalDashboard snapshot={snapshot} />);
+	expect(screen.queryByRole("button", { name: /Latest deployment/i })).toBeNull();
+	expect(screen.queryByRole("button", { name: "Sync GitHub installations" })).toBeNull();
+	expect(screen.queryByRole("button", { name: "Reconcile all PRs" })).toBeNull();
+});
+
+test("filters, orders, clears, and persists the operational card view", async () => {
 	const store = new Map<string, string>();
 	vi.stubGlobal("localStorage", {
 		getItem: (key: string) => store.get(key) ?? null,
@@ -374,36 +372,62 @@ test("filters, orders, clears, and persists the operational card view", () => {
 	});
 	renderFrontend(<OperationalDashboard snapshot={controlSnapshot} />);
 	const search = screen.getByRole("textbox", { name: "Search pull requests" });
+	const repositoryPills = screen.getByRole("group", { name: "Repositories" });
+	const dukat = screen.getByRole("button", { name: "ds9/dukat" });
+	expect(dukat.getAttribute("aria-pressed")).toBe("true");
+	expect(dukat.querySelector("[aria-hidden='true']")?.textContent).toBe("✓\u00a0");
+	fireEvent.click(dukat);
+	const unselectedDukat = screen.getByRole("button", { name: "ds9/dukat" });
+	expect(unselectedDukat.getAttribute("aria-pressed")).toBe("false");
+	expect(unselectedDukat.querySelector("[aria-hidden='true']")).toBeNull();
+	fireEvent.click(unselectedDukat);
 	fireEvent.change(search, { target: { value: "202" } });
 	expect(articleTitles()).toEqual(["Kira ready"]);
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+	fireEvent.click(screen.getByRole("button", { name: "Status: All (8)" }));
+	const all = () => screen.getByRole("checkbox", { hidden: true, name: "All" }) as HTMLInputElement;
+	await screen.findByRole("checkbox", { hidden: true, name: "All" });
+	expect(all().checked).toBe(true);
+	expect(screen.getByText("Lifecycle")).toBeTruthy();
+	expect(screen.getByText("Attention")).toBeTruthy();
+	fireEvent.click(screen.getByRole("checkbox", { hidden: true, name: "Draft" }));
+	expect(screen.getByRole("button", { name: "Status (7)" })).toBeTruthy();
+	expect(all().indeterminate).toBe(true);
+	fireEvent.click(all());
+	expect(screen.getByRole("button", { name: "Status: All (8)" })).toBeTruthy();
+	fireEvent.click(all());
+	expect(screen.getByRole("button", { name: "Status: None (0)" })).toBeTruthy();
+	expect(all().checked).toBe(false);
+	expect(screen.queryAllByRole("article")).toEqual([]);
+	fireEvent.click(all());
+	expect(articleTitles()).toHaveLength(5);
 	for (const [stage, title] of [
-		["draft", "Dukat draft"],
-		["openspec", "Odo OpenSpec"],
-		["ready", "Kira ready"],
-		["reviewing", "Quark reviewing"],
-		["mergeable", "Sisko mergeable"],
+		["Draft", "Dukat draft"],
+		["OpenSpec", "Odo OpenSpec"],
+		["Ready", "Kira ready"],
+		["Reviewing", "Quark reviewing"],
+		["Mergeable", "Sisko mergeable"],
 	] as const) {
-		fireEvent.click(screen.getByRole("checkbox", { name: stage }));
+		fireEvent.click(all());
+		fireEvent.click(screen.getByRole("checkbox", { hidden: true, name: stage }));
 		expect(articleTitles()).toEqual([title]);
-		fireEvent.click(screen.getByRole("checkbox", { name: stage }));
+		fireEvent.click(all());
 	}
 	for (const [name, expected] of [
 		["Needs attention", ["Quark reviewing", "Odo OpenSpec", "Dukat draft"]],
 		["Failed Actions", ["Quark reviewing"]],
 		["Failed Checks", ["Quark reviewing"]],
 	] as const) {
-		fireEvent.click(screen.getByRole("checkbox", { name }));
+		fireEvent.click(all());
+		fireEvent.click(screen.getByRole("checkbox", { hidden: true, name }));
 		expect(articleTitles()).toEqual(expected);
-		fireEvent.click(screen.getByRole("checkbox", { name }));
+		fireEvent.click(all());
 	}
-	const repository = screen.getByRole("combobox", { name: "Repository" });
-	fireEvent.click(repository);
-	for (const name of ["ds9/dukat", "ds9/odo", "ds9/quark", "ds9/sisko"])
-		fireEvent.click(screen.getByRole("option", { name }));
-	expect(articleTitles()).toEqual(["Kira ready"]);
-	fireEvent.click(screen.getByRole("option", { name: "ds9/sisko" }));
-	expect(articleTitles()).toEqual(["Sisko mergeable", "Kira ready"]);
+	for (const name of ["ds9/dukat", "ds9/kira", "ds9/odo", "ds9/quark", "ds9/sisko"])
+		fireEvent.click(within(repositoryPills).getByRole("button", { name }));
+	expect(screen.queryAllByRole("article")).toEqual([]);
+	fireEvent.click(within(repositoryPills).getByRole("button", { name: "ds9/sisko" }));
+	expect(articleTitles()).toEqual(["Sisko mergeable"]);
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 	const sort = screen.getByRole("combobox", { name: "Sort pull requests" });
 	const direction = screen.getByRole("combobox", { name: "Sort direction" });
@@ -458,6 +482,24 @@ test("keeps snapshot failures sanitized while stale and empty states remain usab
 	expect(screen.getByRole("article", { name: "Defiant readiness" })).toBeTruthy();
 	rerender(<OperationalDashboard snapshot={{ ...snapshot, pullRequests: [] }} />);
 	expect(screen.getByRole("alert").textContent).toBe("No open authored pull requests.");
+});
+
+test("distinguishes GitHub setup from an ordinary empty pull request list", () => {
+	const { rerender } = renderFrontend(
+		<OperationalDashboard snapshot={{ ...snapshot, installationCount: 0, pullRequests: [] }} />,
+	);
+	expect(screen.getByRole("link", { name: "Install GitHub" }).getAttribute("href")).toBe("/install/github");
+	expect(screen.queryByText("No open authored pull requests.")).toBeNull();
+	rerender(<OperationalDashboard snapshot={{ ...snapshot, installationCount: 1, pullRequests: [] }} />);
+	expect(screen.getByText("No open authored pull requests.")).toBeTruthy();
+	expect(screen.queryByRole("link", { name: "Install GitHub" })).toBeNull();
+});
+
+test("renders a GitHub sign-in path for route load failures", () => {
+	expect(Route.options.errorComponent).toBe(DashboardLoadError);
+	renderFrontend(<DashboardLoadError />);
+	expect(screen.getByRole("alert").textContent).toContain("Unable to load Command Center.");
+	expect(screen.getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe("/auth/github");
 });
 
 test("renders one responsive semantic dashboard surface without duplicate controls", () => {

@@ -1,4 +1,4 @@
-import { Button, Text } from "@mantine/core";
+import { Button, Table, Text } from "@mantine/core";
 import { useEffect, useState } from "react";
 import {
 	type BrowserDirectoryHandle,
@@ -13,6 +13,7 @@ import {
 } from "#/features/command-center/browser-checkout";
 
 export type Repository = { account_login: string; installation_id: string; repository_id: string; full_name: string };
+type CheckoutResult = { state: string; candidates: string[] };
 
 const matchingRecord = (records: unknown, key: string) =>
 	Array.isArray(records)
@@ -26,24 +27,26 @@ const matchingRecord = (records: unknown, key: string) =>
 		: undefined;
 
 export function CheckoutControls({ repositories }: { repositories: Repository[] }) {
-	const [checkoutState, setCheckoutState] = useState<string | null>(null);
-	const [localCandidates, setLocalCandidates] = useState<string[]>([]);
+	const [results, setResults] = useState<Record<string, CheckoutResult>>({});
+	const setResult = (repository: Repository, result: CheckoutResult) =>
+		setResults((current) => ({
+			...current,
+			[checkoutKey(repository.account_login, repository.repository_id)]: result,
+		}));
 	useEffect(() => {
 		if (!globalThis.indexedDB || !repositories.length) return;
 		let active = true;
 		const restore = async () => {
 			try {
 				const records = await storedCheckouts();
-				const candidates: string[] = [];
-				let restored = false;
+				const restored: Record<string, CheckoutResult> = {};
 				for (const repository of repositories) {
-					const record =
-						matchingRecord(records, checkoutKey(repository.account_login, repository.repository_id)) ??
-						matchingRecord(records, `root:${repository.account_login}`);
+					const key = checkoutKey(repository.account_login, repository.repository_id);
+					const record = matchingRecord(records, key) ?? matchingRecord(records, `root:${repository.account_login}`);
 					if (!record?.handle) continue;
 					try {
 						if ((await revalidateCheckout({ handle: record.handle })) !== "granted") {
-							if (active) setCheckoutState(`Permission required for ${repository.full_name}.`);
+							restored[key] = { state: `Permission required for ${repository.full_name}.`, candidates: [] };
 							continue;
 						}
 						const handle = record.key.startsWith("root:")
@@ -51,23 +54,30 @@ export function CheckoutControls({ repositories }: { repositories: Repository[] 
 							: record.handle;
 						const specs = await readCheckout(handle, repository);
 						if (specs === null) {
-							if (active) setCheckoutState(`Checkout does not match ${repository.full_name}.`);
+							restored[key] = { state: `Checkout does not match ${repository.full_name}.`, candidates: [] };
 							continue;
 						}
-						candidates.push(...specs.specs.map((spec) => spec.change_name ?? "Unnamed OpenSpec"));
-						restored = true;
+						restored[key] = {
+							state: `Checkout restored for ${repository.full_name}.`,
+							candidates: specs.specs.map((spec) => spec.change_name ?? "Unnamed OpenSpec"),
+						};
 					} catch (error) {
 						console.error("Local checkout restore failed", error instanceof Error ? error.name : "unknown error");
-						if (active) setCheckoutState("Checkout restore failed.");
+						restored[key] = { state: "Checkout restore failed.", candidates: [] };
 					}
 				}
-				if (active && restored) {
-					setLocalCandidates(candidates);
-					setCheckoutState("Checkout restored.");
-				}
+				if (active) setResults((current) => ({ ...current, ...restored }));
 			} catch (error) {
 				console.error("Local checkout restore failed", error instanceof Error ? error.name : "unknown error");
-				if (active) setCheckoutState("Checkout restore failed.");
+				if (active)
+					setResults(
+						Object.fromEntries(
+							repositories.map((repository) => [
+								checkoutKey(repository.account_login, repository.repository_id),
+								{ state: "Checkout restore failed.", candidates: [] },
+							]),
+						),
+					);
 			}
 		};
 		void restore();
@@ -97,26 +107,57 @@ export function CheckoutControls({ repositories }: { repositories: Repository[] 
 				record,
 			});
 			if (!configured || checkout.evidence === null) throw new TypeError("Checkout remote does not match repository");
-			setLocalCandidates(checkout.evidence.specs.map((spec) => spec.change_name ?? "Unnamed OpenSpec"));
-			setCheckoutState(`Checkout configured for ${repository.full_name}.`);
+			setResult(repository, {
+				state: `Checkout configured for ${repository.full_name}.`,
+				candidates: checkout.evidence.specs.map((spec) => spec.change_name ?? "Unnamed OpenSpec"),
+			});
 		} catch (error) {
 			if (error instanceof DOMException && error.name === "AbortError") return;
 			console.error("Local checkout setup failed", error instanceof Error ? error.name : "unknown error");
-			setCheckoutState("Checkout setup failed.");
+			setResult(repository, { state: "Checkout setup failed.", candidates: [] });
 		}
 	};
 	return (
-		<>
-			{repositories.map((repository) => (
-				<Button
-					key={`${repository.account_login}:${repository.repository_id}`}
-					onClick={() => void chooseCheckout(repository)}
-				>
-					Choose checkout for {repository.full_name}
-				</Button>
-			))}
-			{checkoutState && <Text role="status">{checkoutState}</Text>}
-			{localCandidates.length ? <Text>Detected local candidates: {localCandidates.join(", ")}</Text> : null}
-		</>
+		<Table aria-label="Repository checkouts">
+			<Table.Thead>
+				<Table.Tr>
+					<Table.Th>Repository</Table.Th>
+					<Table.Th>Account</Table.Th>
+					<Table.Th>State</Table.Th>
+					<Table.Th>Action</Table.Th>
+				</Table.Tr>
+			</Table.Thead>
+			<Table.Tbody>
+				{repositories.map((repository) => (
+					<Table.Tr key={`${repository.account_login}:${repository.repository_id}`}>
+						<Table.Td>{repository.full_name}</Table.Td>
+						<Table.Td>{repository.account_login}</Table.Td>
+						<Table.Td>
+							{results[checkoutKey(repository.account_login, repository.repository_id)] ? (
+								<Text role="status">
+									{results[checkoutKey(repository.account_login, repository.repository_id)].state}
+								</Text>
+							) : (
+								"Not configured"
+							)}
+							{results[checkoutKey(repository.account_login, repository.repository_id)]?.candidates.length ? (
+								<Text>
+									Detected local candidates:{" "}
+									{results[checkoutKey(repository.account_login, repository.repository_id)].candidates.join(", ")}
+								</Text>
+							) : null}
+						</Table.Td>
+						<Table.Td>
+							<Button
+								aria-label={`Choose checkout for ${repository.full_name}`}
+								onClick={() => void chooseCheckout(repository)}
+							>
+								Choose checkout
+							</Button>
+						</Table.Td>
+					</Table.Tr>
+				))}
+			</Table.Tbody>
+		</Table>
 	);
 }

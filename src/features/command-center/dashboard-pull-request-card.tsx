@@ -79,7 +79,14 @@ export function PullRequestCard({
 	const { pr } = item;
 	const prHref = safeHref(pr.url);
 	return (
-		<Card component="article" withBorder aria-busy={busy === `pr:${pr.number}`} aria-label={pr.title}>
+		<Card
+			className="command-center-card"
+			component="article"
+			padding="sm"
+			withBorder
+			aria-busy={busy === `pr:${pr.number}`}
+			aria-label={pr.title}
+		>
 			<Stack gap="xs">
 				<Group justify="space-between">
 					<Title order={3}>{prHref ? <a href={prHref}>{pr.title}</a> : pr.title}</Title>

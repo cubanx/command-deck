@@ -62,12 +62,8 @@ test("prefetches the dashboard through one snapshot cache", async () => {
 	const queryClient = new QueryClient();
 
 	await dashboardLoader({ context: { queryClient } } as never);
-	const { getByText } = renderFrontend(<Dashboard />, queryClient);
-	await waitFor(() =>
-		expect(
-			getByText((_, element) => element?.tagName === "P" && element.textContent === "Signed in as Kira Nerys"),
-		).toBeDefined(),
-	);
+	const { queryByText } = renderFrontend(<Dashboard />, queryClient);
+	expect(queryByText(/Signed in as Kira Nerys/)).toBeNull();
 
 	expect(fetch).toHaveBeenCalledTimes(1);
 	expect(queryClient.getQueryData(snapshotQueryOptions.queryKey)).toEqual(snapshot);
@@ -78,6 +74,7 @@ test("normalizes the legacy snapshot contract without discarding optional projec
 		snapshotFor({
 			error: "temporarily unavailable",
 			stale: true,
+			installationCount: 0,
 			user: {
 				login: "Kira Nerys",
 				avatar_url: "https://example.test/kira.png",
@@ -91,6 +88,7 @@ test("normalizes the legacy snapshot contract without discarding optional projec
 	).toEqual({
 		error: "temporarily unavailable",
 		stale: true,
+		installationCount: 0,
 		user: {
 			login: "Kira Nerys",
 			avatar_url: "https://example.test/kira.png",
@@ -132,6 +130,15 @@ test("normalizes the legacy snapshot contract without discarding optional projec
 			notifications: [],
 		}),
 	).toMatchObject({ user: { login: "Kira Nerys" } });
+	expect(
+		snapshotFor({
+			installationCount: -1,
+			repositories: [],
+			pullRequests: [],
+			deployments: [],
+			notifications: [],
+		}),
+	).toBeNull();
 });
 
 test("invalidates the snapshot for refresh events and reconnects without polling", () => {
@@ -168,16 +175,11 @@ test("preserves dashboard preferences while the snapshot changes", async () => {
 		vi.fn(async () => Response.json(snapshot)),
 	);
 	const queryClient = new QueryClient();
-	const { getByLabelText, getByText } = renderFrontend(<Dashboard />, queryClient);
-
-	await waitFor(() =>
-		expect(
-			getByText((_, element) => element?.tagName === "P" && element.textContent === "Signed in as Kira Nerys"),
-		).toBeDefined(),
-	);
-	const search = getByLabelText("Search pull requests");
-	const sort = getByLabelText("Sort pull requests");
-	const direction = getByLabelText("Sort direction");
+	const { findByLabelText, queryByText } = renderFrontend(<Dashboard />, queryClient);
+	const search = await findByLabelText("Search pull requests");
+	expect(queryByText(/Signed in as Kira Nerys/)).toBeNull();
+	const sort = await findByLabelText("Sort pull requests");
+	const direction = await findByLabelText("Sort direction");
 	fireEvent.change(search, { target: { value: "defiant" } });
 	fireEvent.change(sort, { target: { value: "updated" } });
 	fireEvent.change(direction, { target: { value: "desc" } });
@@ -185,13 +187,7 @@ test("preserves dashboard preferences while the snapshot changes", async () => {
 		...snapshot,
 		user: { login: "Kira Nerys (refreshed)" },
 	});
-	await waitFor(() =>
-		expect(
-			getByText(
-				(_, element) => element?.tagName === "P" && element.textContent === "Signed in as Kira Nerys (refreshed)",
-			),
-		).toBeDefined(),
-	);
+	await waitFor(() => expect(queryByText(/Signed in as Kira Nerys \(refreshed\)/)).toBeNull());
 
 	expect((search as HTMLInputElement).value).toBe("defiant");
 	expect((sort as HTMLSelectElement).value).toBe("updated");

@@ -486,14 +486,23 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 test("reconcile route requires an authenticated user with an approved bound installation", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, testConfig);
-		const request = (headers?: HeadersInit) =>
-			app.fetch(new Request("http://local/api/reconcile", { method: "POST", headers }));
+		const request = (headers?: HeadersInit, body?: BodyInit) =>
+			app.fetch(new Request("http://local/api/reconcile", { method: "POST", headers, body }));
 		expect((await request()).status).toBe(401);
 		await upsertIdentity(db, "u", "kira");
 		const session = await createSession(db, "u");
 		expect((await request({ cookie: `dcc_session=${session.token}` })).status).toBe(404);
 		await bindInstallation(db, "u", "12", "external");
 		expect((await request({ cookie: `dcc_session=${session.token}` })).status).toBe(404);
+		await bindInstallation(db, "u", "13", "cubanx");
+		expect(
+			(
+				await request(
+					{ cookie: `dcc_session=${session.token}`, "content-type": "application/json" },
+					JSON.stringify({}),
+				)
+			).status,
+		).toBe(400);
 	}));
 
 test("manual PR reconciliation is scoped to known open PRs and all-known repair stays targeted", () =>

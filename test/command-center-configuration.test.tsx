@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { QueryClient } from "@tanstack/react-query";
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { syncAppearance } from "#/features/command-center/appearance";
 import {
@@ -10,6 +10,7 @@ import {
 	revalidateCheckout,
 } from "#/features/command-center/browser-checkout";
 import { Configuration } from "#/features/command-center/configuration";
+import { OperationalDashboard } from "#/features/command-center/dashboard";
 import { CommandCenterNavigation } from "#/features/command-center/navigation";
 import { configurationLoader } from "#/routes/configuration";
 import { renderFrontend } from "#/web/test-harness";
@@ -25,7 +26,7 @@ const client = () => {
 		user: { login: "Kira", fixture_avatar: true },
 		repositories: [{ account_login: "ds9", installation_id: "9", repository_id: "ops", full_name: "ds9/ops" }],
 		pullRequests: [],
-		deployments: [],
+		deployments: [{ full_name: "ds9/ops", environment: "production", state: "success" }],
 		notifications: [],
 	});
 	return queryClient;
@@ -75,14 +76,84 @@ test("renders responsive avatar navigation and preserves local checkout evidence
 	Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
 	try {
 		renderFrontend(<CommandCenterNavigation />, client());
-		expect(screen.getByRole("button", { name: "User menu" })).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: "User menu" }));
+		const brand = screen.getByRole("link", { name: "Command Deck.ai" });
+		expect(screen.queryByText("Open pull requests you authored.")).toBeNull();
+		const header = brand.closest(".command-center-navigation");
+		expect(header?.querySelector(".command-center-header-brand")?.contains(brand)).toBe(true);
+		expect(header?.querySelector(".command-center-header-deployment .deployment-summary")).toBeTruthy();
+		expect(brand.getAttribute("href")).toBe("/");
+		expect(brand.querySelector('img[src="/icon-adaptive.svg"]')).toBeTruthy();
+		expect(header?.querySelector(".avatar-menu-caret")).toBeTruthy();
+		expect(screen.queryByRole("link", { name: "Dashboard" })).toBeNull();
+		const userMenu = screen.getByRole("button", { name: "User menu" });
+		expect(header?.querySelector(".command-center-header-avatar")?.contains(userMenu)).toBe(true);
+		expect(userMenu.classList.contains("avatar-menu-button")).toBe(true);
+		userMenu.focus();
+		expect(document.activeElement).toBe(userMenu);
+		fireEvent.click(userMenu);
 		expect((await screen.findByRole("menuitem", { name: "Configuration" })).getAttribute("href")).toBe(
 			"/configuration",
 		);
+		expect(screen.getByRole("menuitem", { hidden: true, name: "Reconcile all PRs" })).toBeTruthy();
 	} finally {
 		Object.defineProperty(window, "innerWidth", { configurable: true, value: originalViewport });
 	}
+});
+
+test("presents operational configuration controls and announces sanitized reconciliation and notification results", async () => {
+	const queryClient = client();
+	const currentSnapshot = queryClient.getQueryData(["snapshot"]);
+	const fetch = vi.fn(
+		async (path: string) =>
+			new Response(JSON.stringify(path === "/api/snapshot" ? currentSnapshot : { status: "success" }), { status: 200 }),
+	);
+	vi.stubGlobal("fetch", fetch);
+	vi.stubGlobal("Notification", { permission: "default", requestPermission: vi.fn(async () => "granted") });
+	renderFrontend(<Configuration />, queryClient);
+	const configuration = screen.getByRole("main", { name: "Configuration" });
+	expect(within(configuration).queryByRole("button", { name: /Latest deployment/i })).toBeNull();
+	expect(screen.getByRole("button", { name: "Sync GitHub installations" })).toBeTruthy();
+	expect(screen.getByRole("button", { name: "Reconcile all PRs" })).toBeTruthy();
+	expect(screen.getByRole("table", { name: "Repository checkouts" })).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", { name: "Sync GitHub installations" }));
+	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/reconcile", { method: "POST" }));
+	expect(await screen.findByText("Reconciliation completed.")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", { name: "Reconcile all PRs" }));
+	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/reconcile/pull-requests", { method: "POST" }));
+	fireEvent.click(screen.getByRole("button", { name: "Enable notifications" }));
+	expect(await screen.findByText("Notifications enabled.")).toBeTruthy();
+});
+
+test("shares compact deployment detail in navigation without placing it in route content", async () => {
+	const queryClient = client();
+	renderFrontend(
+		<>
+			<CommandCenterNavigation />
+			<OperationalDashboard snapshot={queryClient.getQueryData(["snapshot"]) as never} />
+		</>,
+		queryClient,
+	);
+	const dashboard = screen.getByRole("main", { name: "Command Center" });
+	expect(within(dashboard).queryByRole("button", { name: /Latest deployment/i })).toBeNull();
+	const deployment = screen.getByRole("button", { name: /Latest deployment.*ds9\/ops/i });
+	expect(deployment.classList.contains("deployment-summary")).toBe(true);
+	const userMenu = screen.getByRole("button", { name: "User menu" });
+	const avatarTarget = userMenu.querySelector(".avatar-menu-target");
+	expect(avatarTarget?.querySelector(".avatar-menu-caret")).toBeTruthy();
+	expect(avatarTarget?.querySelector(".mantine-Avatar-root")).toBeTruthy();
+	fireEvent.click(deployment);
+	expect((await screen.findByRole("dialog", { name: "Deployment detail" })).textContent).toContain("production");
+	cleanup();
+	renderFrontend(
+		<>
+			<CommandCenterNavigation />
+			<Configuration />
+		</>,
+		queryClient,
+	);
+	const configuration = screen.getByRole("main", { name: "Configuration" });
+	expect(within(configuration).queryByRole("button", { name: /Latest deployment/i })).toBeNull();
+	expect(screen.getByRole("button", { name: /Latest deployment.*ds9\/ops/i })).toBeTruthy();
 });
 
 test("prefetches the configuration snapshot and refreshes the subscribed avatar", async () => {
@@ -126,6 +197,7 @@ test("applies persisted appearance at startup and cleans up system changes", () 
 	}));
 	const stop = syncAppearance();
 	expect(document.documentElement.dataset.appearance).toBe("light");
+	expect(document.documentElement.dataset.mantineColorScheme).toBe("light");
 	for (const listener of listeners) listener();
 	stop();
 	expect(listeners.size).toBe(0);
@@ -141,6 +213,7 @@ test("persists appearance and labels checkout discovery as local informational e
 	fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
 	expect(store.get("dcc-appearance")).toBe("dark");
 	expect(document.documentElement.dataset.appearance).toBe("dark");
+	expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
 	expect(screen.getByText("Detected OpenSpec candidates are local and informational.")).toBeTruthy();
 	expect(screen.getByRole("button", { name: "Choose checkout for ds9/ops" })).toBeTruthy();
 });
@@ -216,7 +289,7 @@ test("reads, persists, and restores local checkout evidence without changing the
 	expect((await screen.findByRole("status")).textContent).toContain("Checkout restored");
 });
 
-test("restores legacy account-root checkouts for every repository as local evidence", async () => {
+test("keeps legacy account-root checkout results local to each repository", async () => {
 	const records = checkoutStorage();
 	const file = (text: string) => ({ getFile: async () => ({ text: async () => text }) });
 	const checkoutFor = (repository: string, candidate: string) => ({
@@ -257,7 +330,13 @@ test("restores legacy account-root checkouts for every repository as local evide
 		],
 	});
 	renderFrontend(<Configuration />, queryClient);
-	expect(await screen.findByText(/hold-the-line/)).toBeTruthy();
-	expect(await screen.findByText(/wormhole-study/)).toBeTruthy();
+	const table = screen.getByRole("table", { name: "Repository checkouts" });
+	const ops = within(screen.getByRole("row", { name: /ds9\/ops\s+ds9/ }));
+	const science = within(screen.getByRole("row", { name: /ds9\/science\s+ds9/ }));
+	expect((await ops.findByRole("status")).textContent).toBe("Checkout restored for ds9/ops.");
+	expect((await science.findByRole("status")).textContent).toBe("Checkout restored for ds9/science.");
+	expect(ops.getByText("Detected local candidates: hold-the-line")).toBeTruthy();
+	expect(science.getByText("Detected local candidates: wormhole-study")).toBeTruthy();
+	expect(table.textContent).not.toContain("Detected local candidates: hold-the-line, wormhole-study");
 	expect(screen.getByText("Detected OpenSpec candidates are local and informational.")).toBeTruthy();
 });

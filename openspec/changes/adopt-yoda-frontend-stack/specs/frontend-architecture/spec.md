@@ -9,11 +9,19 @@ The browser application SHALL render the authenticated dashboard and configurati
 
 #### Scenario: Developer opens the migrated dashboard
 - **WHEN** an authenticated developer opens the application with projected pull requests and deployments
-- **THEN** the application presents the same ordered operational summary, lifecycle stages, attention states, filters, and available actions as the authoritative snapshot
+- **THEN** the application presents filters followed by the filtered pull-request count, the bordered PR Lifecycle wizard with Complete, Current, and Upcoming stage pills, attention states, and available actions without duplicating signed-in identity or explanatory brand copy in the dashboard surface
 
 #### Scenario: Developer preferences survive a refresh
 - **WHEN** an event-driven snapshot refresh occurs after the developer changes filters or ordering
 - **THEN** the selected filters, ordering, appearance, and applicable interaction state remain in effect
+
+#### Scenario: Developer filters repositories and statuses
+- **WHEN** a developer uses the dashboard filter bar
+- **THEN** visible repository pills toggle each repository with one action, selected repository pills display a checkmark with visual separation from the repository name without changing their accessible names, and one multi-select Status dropdown provides the eight lifecycle and attention filters with an All checkbox that is checked for eight selections, indeterminate for partial selection, and unchecked for none
+
+#### Scenario: Developer selects no statuses
+- **WHEN** the developer clears every status in the Status dropdown
+- **THEN** the dashboard labels the selection `Status: None` and renders no pull requests until a status or All is selected
 
 #### Scenario: Multiple OpenSpecs are associated with a pull request
 - **WHEN** the authoritative snapshot correlates multiple committed OpenSpecs to one pull request
@@ -51,6 +59,18 @@ The migrated application SHALL retain semantic names, focus indicators, keyboard
 #### Scenario: Action result is announced
 - **WHEN** reconciliation or merge confirmation succeeds or fails
 - **THEN** the sanitized outcome is exposed through an appropriate accessible status or alert region and the relevant authoritative data is refreshed
+
+#### Scenario: Developer manages operational configuration
+- **WHEN** an authenticated developer opens Configuration
+- **THEN** installation and pull-request reconciliation, checkout mapping results, appearance, and notification permission are presented as accessible configuration controls with announced outcomes
+
+#### Scenario: Developer reviews deployment evidence
+- **WHEN** an authenticated developer opens either the dashboard or Configuration
+- **THEN** compact deployment evidence and its accessible detail are centered in the shared application header without becoming route-specific content
+
+#### Scenario: Developer opens avatar navigation
+- **WHEN** an authenticated developer opens the avatar menu
+- **THEN** an unboxed avatar target, visible side-by-side dropdown affordance, and PR-wide reconciliation shortcut are available alongside Configuration navigation while retaining keyboard focus visibility
 
 ### Requirement: Mutating controls remain fail closed
 The migrated application SHALL preserve authenticated reconciliation and exact-head merge flows, and SHALL render a mutating control only when the corresponding current server-projected permission and lifecycle prerequisites are satisfied. Server-side action-time checks remain authoritative.

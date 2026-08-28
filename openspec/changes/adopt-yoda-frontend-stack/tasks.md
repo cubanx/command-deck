@@ -40,3 +40,50 @@
 - [x] 6.3 Run `bun run typecheck`, the full `bun run test` suite with every component/UI test included and zero failures, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`.
 - [x] 6.4 Record the exact validation results and remaining deployment/observation gates; stop without commit, push, PR, deploy, production access, or external mutation.
 - [x] 6.5 Keep development frontend assets live-rebuilt and refresh the development manifest after hashed output changes, while production assets remain stably cached; verify focused and full gates.
+
+## 7. Incorporate configuration and navigation review feedback
+
+- [x] 7.1 Add focused failing component tests proving the dashboard omits deployment and global reconciliation controls; Configuration presents deployment detail, broad installation sync, PR-wide reconciliation with announced results, repository checkout mapping results, and notification permission; and the avatar menu exposes a chevron plus PR-wide reconciliation.
+- [x] 7.2 Move the existing deployment and reconciliation components into Configuration, restore the compact repository mapping/result presentation and native notification affordance, and add the avatar-menu shortcut without changing server contracts or adding parallel state.
+- [x] 7.3 Run focused dashboard/configuration/navigation tests, `bun run typecheck`, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`, `bun run test:e2e`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; record the exact results and stop without committing.
+
+## 8. Correct shared-header placement from final review
+
+- [x] 8.1 Add focused failing tests proving deployment evidence is present in the shared navigation header, absent from dashboard and Configuration content, and the avatar chevron renders beside rather than beneath the avatar.
+- [x] 8.2 Move the existing deployment summary/detail into the shared navigation component and align the avatar/chevron horizontally without changing snapshot ownership, endpoint contracts, or menu behavior.
+- [x] 8.3 Run focused navigation/configuration/dashboard tests, `bun run typecheck`, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`, `bun run test:e2e`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; record exact results and stop without committing.
+
+## 9. Polish shared-header alignment from final review
+
+- [x] 9.1 Add focused assertions for an independently centered deployment summary and a borderless avatar menu target that retains accessible focus treatment.
+- [x] 9.2 Apply the minimum shared-header layout and avatar-button styling changes without changing navigation behavior or responsive wrapping.
+- [x] 9.3 Run focused navigation tests, `bun run typecheck`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; stop without committing.
+
+## 10. Restore lifecycle wizard visual parity
+
+- [x] 10.1 Add focused component assertions for the bordered PR Lifecycle group, exact ordered Draft/OpenSpec ready/Ready for review/Reviewing/Mergeable pills, Complete/Current/Upcoming state text and icons, and screen-reader current-stage summary.
+- [x] 10.2 Replace the plain lifecycle list markup with the existing legacy-compatible semantic fieldset and pill classes while reusing the current lifecycle view-model output unchanged.
+- [x] 10.3 Run focused dashboard and view-model tests, `bun run typecheck`, `bun run test:e2e`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; stop without committing.
+
+## 11. Organize repository and status filtering
+
+- [x] 11.1 Add focused tests for visible one-click repository pills; the Status dropdown's eight multi-select options; checked, indeterminate, and unchecked All states; `Status: All`, `Status (N)`, and `Status: None` labels; zero-selection results; clear behavior; and existing search/sort/filter composition.
+- [x] 11.2 Implement the two-row filter bar by reusing the current view state and pure filtering logic, preserving `null` repository wildcard and omitted-status compatibility while making the dashboard's explicit empty status selection match zero pull requests.
+- [x] 11.3 Run focused dashboard/view-model/route tests, `bun run typecheck`, `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`, `bun run test:e2e`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; record exact results and stop without committing.
+
+## 12. Mark selected repository pills
+
+- [x] 12.1 Add a focused component assertion that selected repository pills show an accessibility-neutral checkmark while unselected pills do not and accessible names remain unchanged.
+- [x] 12.2 Render the checkmark inside the existing repository pill without adding a component, stylesheet, dependency, or parallel selection state.
+- [x] 12.3 Run the focused dashboard test, `bun run typecheck`, `bun run test:e2e`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; stop without committing.
+
+## 13. Remove duplicate dashboard copy and place the result count
+
+- [x] 13.1 Add focused assertions that the brand omits its explanatory tagline, the dashboard omits duplicate signed-in text, and the filtered pull-request count follows the filter card.
+- [x] 13.2 Remove the two redundant text nodes and move the existing filtered count immediately below `DashboardFilters` without changing its calculation or authentication behavior.
+- [x] 13.3 Run focused navigation/dashboard/route tests, `bun run typecheck`, `bun run test:e2e`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; stop without committing.
+
+## 14. Space the selected repository marker
+
+- [x] 14.1 Add a focused assertion that the accessibility-neutral selected marker includes visible separation before the repository name, then implement the minimum markup-only fix without CSS or a new component.
+- [x] 14.2 Run the focused dashboard test, `bun run typecheck`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; stop without committing.

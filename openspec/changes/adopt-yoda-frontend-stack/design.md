@@ -50,6 +50,14 @@ Add one Mantine provider/theme and use Mantine controls, cards, details/overlays
 
 Port browser behavior assertions from string matching to Testing Library role, label, focus, keyboard, status, and visible-state assertions using a small QueryClient/Mantine test provider. Keep server, access, merge, OpenSpec, reconciliation, and PWA integration tests intact. Add a production client-build smoke test and delete legacy renderer tests only after equivalent component coverage exists.
 
+### 7. Keep the dashboard operational, deployment evidence global, and setup controls in Configuration
+
+Keep filtering, ordering, lifecycle, and pull-request actions on the dashboard. Present compact deployment evidence in the shared header so it is neither dashboard content nor configuration. Put broad installation synchronization, checkout mappings, notification permission, and reconciliation status on Configuration, where the legacy UI presented setup and operational evidence. Retain the avatar menu shortcut for PR-wide reconciliation and make its dropdown affordance visible beside the avatar. Reuse the existing query mutations and deployment detail component; do not add a second client state boundary or change server endpoints.
+
+### 8. Make repository and status filtering explicit and one-click
+
+Use visible repository toggle pills as the first filter row so each repository can be included or excluded with one click. Put the eight lifecycle/attention filters in one accessible multi-select Status dropdown with a real checked/indeterminate/unchecked All control. All eight selected means all results; zero selected means zero results. Keep search, sort, direction, and clear in a compact second row, and continue routing every selection through the existing pure dashboard view model rather than adding another filtering implementation.
+
 ## Risks / Trade-offs
 
 - [Large migration can hide regressions] → Cut over by numbered behavior groups; every group starts with focused failing compatibility tests and runs the existing relevant suite.

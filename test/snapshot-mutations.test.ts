@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { snapshotQueryOptions } from "#/features/command-center/snapshot";
 import {
 	mergeConfirmMutationOptions,
+	reconcileAllInstallationsMutationOptions,
 	reconcileInstallationMutationOptions,
 	reconcilePullRequestMutationOptions,
 	reconcilePullRequestsMutationOptions,
@@ -16,7 +17,7 @@ const runSuccess = (options: { onSuccess?: unknown }, variables?: unknown) =>
 afterEach(() => vi.unstubAllGlobals());
 
 test("uses the existing reconciliation and merge-confirmation contracts", async () => {
-	const statuses = ["running", "success", "blocked", "failed"];
+	const statuses = ["running", "success", "blocked", "failed", "success"];
 	const fetch = vi.fn(async () => new Response(JSON.stringify({ status: statuses.shift() }), { status: 200 }));
 	vi.stubGlobal("fetch", fetch);
 	const queryClient = new QueryClient();
@@ -27,10 +28,11 @@ test("uses the existing reconciliation and merge-confirmation contracts", async 
 			number: 9,
 		}),
 	).toEqual({ status: "running" });
-	expect(await runMutation(reconcilePullRequestsMutationOptions(queryClient))).toEqual({ status: "success" });
-	expect(await runMutation(reconcileInstallationMutationOptions(queryClient), "ds9")).toEqual({ status: "blocked" });
+	expect(await runMutation(reconcileAllInstallationsMutationOptions(queryClient))).toEqual({ status: "success" });
+	expect(await runMutation(reconcilePullRequestsMutationOptions(queryClient))).toEqual({ status: "blocked" });
+	expect(await runMutation(reconcileInstallationMutationOptions(queryClient), "ds9")).toEqual({ status: "failed" });
 	expect(await runMutation(mergeConfirmMutationOptions(queryClient), "confirmation-token")).toEqual({
-		status: "failed",
+		status: "success",
 	});
 
 	expect(fetch.mock.calls).toEqual([
@@ -46,6 +48,7 @@ test("uses the existing reconciliation and merge-confirmation contracts", async 
 				}),
 			},
 		],
+		["/api/reconcile", { method: "POST" }],
 		["/api/reconcile/pull-requests", { method: "POST" }],
 		[
 			"/api/reconcile",
@@ -70,10 +73,11 @@ test("uses the existing reconciliation and merge-confirmation contracts", async 
 		repositoryId: "defiant",
 		number: 9,
 	});
+	await runSuccess(reconcileAllInstallationsMutationOptions(queryClient));
 	await runSuccess(reconcilePullRequestsMutationOptions(queryClient));
 	await runSuccess(reconcileInstallationMutationOptions(queryClient), "ds9");
 	await runSuccess(mergeConfirmMutationOptions(queryClient), "confirmation-token");
-	expect(invalidate).toHaveBeenCalledTimes(4);
+	expect(invalidate).toHaveBeenCalledTimes(5);
 	expect(invalidate).toHaveBeenCalledWith({
 		queryKey: snapshotQueryOptions.queryKey,
 	});

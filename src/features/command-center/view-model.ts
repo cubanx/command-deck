@@ -244,11 +244,16 @@ export const derivePullRequests = (
 	filters: Partial<ViewState> = {},
 ): DerivedPullRequest[] => {
 	const query = normalized(filters.query);
-	const statuses = filters.statuses ?? new Set();
+	const statuses = filters.statuses;
 	const repositories = filters.repositories === undefined ? null : filters.repositories;
 	const failedActions = filters.failedActions ?? false;
 	const failedChecks = filters.failedChecks ?? false;
 	const attention = filters.attention ?? false;
+	const matchesSelection = (item: DerivedPullRequest) =>
+		statuses?.has(item.bucket) ||
+		(attention && (item.pr.needs_attention === true || item.blockers.length > 0)) ||
+		(failedActions && failedState(item.pr.workflow_state)) ||
+		(failedChecks && failedState(item.pr.checks_state));
 	const sort = filters.sort && isSortMode(filters.sort.mode) ? filters.sort : defaultSortPreference;
 	return items
 		.map((item) => {
@@ -265,10 +270,11 @@ export const derivePullRequests = (
 			(item) =>
 				item.bucket !== "closed" &&
 				Number.isFinite(item.score) &&
-				(!statuses.size || statuses.has(item.bucket)) &&
-				(!failedActions || failedState(item.pr.workflow_state)) &&
-				(!failedChecks || failedState(item.pr.checks_state)) &&
-				(!attention || item.pr.needs_attention === true || item.blockers.length > 0) &&
+				(statuses === undefined
+					? (!failedActions || failedState(item.pr.workflow_state)) &&
+						(!failedChecks || failedState(item.pr.checks_state)) &&
+						(!attention || item.pr.needs_attention === true || item.blockers.length > 0)
+					: matchesSelection(item)) &&
 				(repositories === null || (typeof item.pr.full_name === "string" && repositories.has(item.pr.full_name))),
 		)
 		.sort((left, right) => sortCompare(left, right, sort));
