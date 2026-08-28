@@ -82,7 +82,8 @@ main {
 }
 
 .command-center-filter-row .filter-grow {
-	flex: 1 1 14rem;
+	flex: 0 1 20rem;
+	min-width: 14rem;
 }
 .command-center-filter-row .filter-status {
 	flex: 0 0 auto;
@@ -91,12 +92,8 @@ main {
 	flex-basis: 16rem;
 }
 .command-center-filter-row .filter-sort {
-	flex: 0 0 9rem;
-	min-width: 9rem;
-}
-.command-center-filter-row .filter-direction {
-	flex: 0 0 7rem;
-	min-width: 7rem;
+	flex: 0 0 14rem;
+	min-width: 14rem;
 }
 header,
 .brand,
@@ -231,6 +228,13 @@ p {
 }
 .brand h1 {
 	white-space: nowrap;
+}
+.command-center-navigation .brand {
+	align-items: center;
+}
+.command-center-navigation .brand strong {
+	font-size: 1.25rem;
+	line-height: 1.1;
 }
 header,
 .brand {
@@ -635,8 +639,7 @@ summary:focus-visible {
 	}
 	.command-center-filter-row .filter-grow,
 	.command-center-filter-row .filter-status,
-	.command-center-filter-row .filter-sort,
-	.command-center-filter-row .filter-direction {
+	.command-center-filter-row .filter-sort {
 		flex-basis: 100%;
 	}
 	.command-center-navigation .brand {

@@ -349,12 +349,35 @@ test("keeps filter controls in a shared wrapping row", () => {
 	expect(row).toBeTruthy();
 	expect(screen.getByRole("textbox", { name: "Search pull requests" }).closest(".filter-grow")).toBeTruthy();
 	expect(row?.contains(screen.getByRole("button", { name: "Status: All (8)" }))).toBe(true);
-	expect(screen.getByRole("combobox", { name: "Sort pull requests" }).closest(".filter-sort")).toBeTruthy();
-	expect(screen.getByRole("combobox", { name: "Sort direction" }).closest(".filter-direction")).toBeTruthy();
+	const sort = screen.getByRole("combobox", { name: "Sort pull requests" });
+	expect(sort.closest(".filter-sort")).toBeTruthy();
+	expect(screen.queryByRole("combobox", { name: "Sort direction" })).toBeNull();
+	expect(
+		within(sort)
+			.getAllByRole("option")
+			.map((option) => [option.getAttribute("value"), option.textContent]),
+	).toEqual([
+		["closest:asc", "Closest to merge"],
+		["closest:desc", "Furthest from merge"],
+		["opened:asc", "Oldest opened"],
+		["opened:desc", "Newest opened"],
+		["updated:asc", "Least recently updated"],
+		["updated:desc", "Most recently updated"],
+		["progress:asc", "Least complete"],
+		["progress:desc", "Most complete"],
+		["repository:asc", "Repository A–Z"],
+		["repository:desc", "Repository Z–A"],
+	]);
 	expect(row?.contains(screen.getByRole("button", { name: "Clear filters" }))).toBe(true);
 	const filters = row?.closest(".command-center-filters");
 	if (!filters) throw new Error("Expected the filter card");
-	expect(filters.compareDocumentPosition(screen.getByRole("status")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	const results = within(filters as HTMLElement).getByRole("status") as HTMLElement;
+	expect(results.textContent).toBe("2 results");
+	expect(results.style.color).toBe("var(--mantine-color-dimmed)");
+	expect(results.style.alignSelf).toBe("center");
+	const clear = screen.getByRole("button", { name: "Clear filters" });
+	expect(row?.contains(results)).toBe(true);
+	expect(results.previousElementSibling).toBe(clear);
 });
 
 test("keeps deployment and broad reconciliation controls out of the dashboard", () => {
@@ -430,45 +453,25 @@ test("filters, orders, clears, and persists the operational card view", async ()
 	expect(articleTitles()).toEqual(["Sisko mergeable"]);
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 	const sort = screen.getByRole("combobox", { name: "Sort pull requests" });
-	const direction = screen.getByRole("combobox", { name: "Sort direction" });
-	for (const [mode, asc, desc] of [
-		[
-			"opened",
-			["Sisko mergeable", "Kira ready", "Quark reviewing", "Odo OpenSpec", "Dukat draft"],
-			["Dukat draft", "Odo OpenSpec", "Quark reviewing", "Kira ready", "Sisko mergeable"],
-		],
-		[
-			"updated",
-			["Sisko mergeable", "Dukat draft", "Quark reviewing", "Odo OpenSpec", "Kira ready"],
-			["Kira ready", "Odo OpenSpec", "Quark reviewing", "Dukat draft", "Sisko mergeable"],
-		],
-		[
-			"repository",
-			["Dukat draft", "Kira ready", "Odo OpenSpec", "Quark reviewing", "Sisko mergeable"],
-			["Sisko mergeable", "Quark reviewing", "Odo OpenSpec", "Kira ready", "Dukat draft"],
-		],
-		[
-			"closest",
-			["Sisko mergeable", "Quark reviewing", "Kira ready", "Odo OpenSpec", "Dukat draft"],
-			["Dukat draft", "Odo OpenSpec", "Kira ready", "Quark reviewing", "Sisko mergeable"],
-		],
-		[
-			"progress",
-			["Odo OpenSpec", "Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"],
-			["Odo OpenSpec", "Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"],
-		],
+	for (const [value, expected] of [
+		["opened:asc", ["Sisko mergeable", "Kira ready", "Quark reviewing", "Odo OpenSpec", "Dukat draft"]],
+		["opened:desc", ["Dukat draft", "Odo OpenSpec", "Quark reviewing", "Kira ready", "Sisko mergeable"]],
+		["updated:asc", ["Sisko mergeable", "Dukat draft", "Quark reviewing", "Odo OpenSpec", "Kira ready"]],
+		["updated:desc", ["Kira ready", "Odo OpenSpec", "Quark reviewing", "Dukat draft", "Sisko mergeable"]],
+		["repository:asc", ["Dukat draft", "Kira ready", "Odo OpenSpec", "Quark reviewing", "Sisko mergeable"]],
+		["repository:desc", ["Sisko mergeable", "Quark reviewing", "Odo OpenSpec", "Kira ready", "Dukat draft"]],
+		["closest:asc", ["Sisko mergeable", "Quark reviewing", "Kira ready", "Odo OpenSpec", "Dukat draft"]],
+		["closest:desc", ["Dukat draft", "Odo OpenSpec", "Kira ready", "Quark reviewing", "Sisko mergeable"]],
+		["progress:asc", ["Odo OpenSpec", "Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"]],
+		["progress:desc", ["Odo OpenSpec", "Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"]],
 	] as const) {
-		fireEvent.change(sort, { target: { value: mode } });
-		fireEvent.change(direction, { target: { value: "asc" } });
-		expect(articleTitles()).toEqual(asc);
-		fireEvent.change(direction, { target: { value: "desc" } });
-		expect(articleTitles()).toEqual(desc);
+		fireEvent.change(sort, { target: { value } });
+		expect(articleTitles()).toEqual(expected);
 	}
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-	expect((sort as HTMLSelectElement).value).toBe("progress");
-	expect((direction as HTMLSelectElement).value).toBe("desc");
+	expect((sort as HTMLSelectElement).value).toBe("progress:desc");
 	expect(store.get("dcc-pr-sort")).toBe('{"mode":"progress","direction":"desc"}');
-	expect(screen.getByRole("status").textContent).toBe("5 pull requests");
+	expect(screen.getByRole("status").textContent).toBe("5 results");
 });
 
 test("keeps snapshot failures sanitized while stale and empty states remain usable", () => {

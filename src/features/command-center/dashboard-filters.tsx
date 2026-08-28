@@ -1,6 +1,10 @@
-import { Button, Checkbox, Group, Menu, NativeSelect, Stack, TextInput } from "@mantine/core";
+import { Button, Checkbox, Group, Menu, NativeSelect, Stack, Text, TextInput } from "@mantine/core";
 import { stageLabel, stages } from "#/features/command-center/dashboard-lifecycle";
-import { defaultSortPreference, isSortMode, type SortPreference } from "#/features/command-center/sort-preference";
+import {
+	defaultSortPreference,
+	sortPreferenceFromValue,
+	sortPreferenceValue,
+} from "#/features/command-center/sort-preference";
 import { type PullRequest, repositoryOptions, type ViewState } from "#/features/command-center/view-model";
 
 const attentionFilters = [
@@ -14,11 +18,13 @@ export function DashboardFilters({
 	set,
 	clear,
 	pullRequests,
+	resultCount,
 }: {
 	view: Partial<ViewState>;
 	set: <Key extends keyof ViewState>(key: Key, value: ViewState[Key]) => void;
 	clear: () => void;
 	pullRequests: PullRequest[];
+	resultCount: number;
 }) {
 	const repositories = repositoryOptions(pullRequests.map((pr) => ({ pr })));
 	const selectedRepositories = view.repositories ?? new Set(repositories);
@@ -107,29 +113,29 @@ export function DashboardFilters({
 					className="filter-sort"
 					label="Sort pull requests"
 					size="sm"
-					data={["closest", "opened", "updated", "progress", "repository"]}
-					value={view.sort?.mode ?? "closest"}
+					data={[
+						{ value: "closest:asc", label: "Closest to merge" },
+						{ value: "closest:desc", label: "Furthest from merge" },
+						{ value: "opened:asc", label: "Oldest opened" },
+						{ value: "opened:desc", label: "Newest opened" },
+						{ value: "updated:asc", label: "Least recently updated" },
+						{ value: "updated:desc", label: "Most recently updated" },
+						{ value: "progress:asc", label: "Least complete" },
+						{ value: "progress:desc", label: "Most complete" },
+						{ value: "repository:asc", label: "Repository A–Z" },
+						{ value: "repository:desc", label: "Repository Z–A" },
+					]}
+					value={sortPreferenceValue(view.sort ?? defaultSortPreference)}
 					onChange={(event) =>
-						isSortMode(event.currentTarget.value) &&
-						set("sort", { ...(view.sort ?? defaultSortPreference), mode: event.currentTarget.value })
-					}
-				/>
-				<NativeSelect
-					className="filter-direction"
-					label="Sort direction"
-					size="sm"
-					data={["asc", "desc"]}
-					value={view.sort?.direction ?? "asc"}
-					onChange={(event) =>
-						set("sort", {
-							...(view.sort ?? defaultSortPreference),
-							direction: event.currentTarget.value as SortPreference["direction"],
-						})
+						set("sort", sortPreferenceFromValue(event.currentTarget.value, view.sort ?? defaultSortPreference))
 					}
 				/>
 				<Button className="filter-clear" size="sm" onClick={clear}>
 					Clear filters
 				</Button>
+				<Text c="dimmed" role="status" style={{ alignSelf: "center" }}>
+					{resultCount} results
+				</Text>
 			</Group>
 		</Stack>
 	);

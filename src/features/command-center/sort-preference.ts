@@ -12,8 +12,19 @@ export const defaultSortPreference: SortPreference = {
 };
 
 const sortModes = new Set<SortMode>(["opened", "closest", "updated", "progress", "repository"]);
+const sortDirections = new Set<SortDirection>(["asc", "desc"]);
 
 export const isSortMode = (value: string): value is SortMode => sortModes.has(value as SortMode);
+const isSortDirection = (value: string): value is SortDirection => sortDirections.has(value as SortDirection);
+
+export const sortPreferenceValue = ({ mode, direction }: SortPreference) => `${mode}:${direction}`;
+
+export const sortPreferenceFromValue = (value: string, fallback: SortPreference): SortPreference => {
+	const [mode, direction, ...rest] = value.split(":");
+	return mode && direction && rest.length === 0 && isSortMode(mode) && isSortDirection(direction)
+		? { mode, direction }
+		: fallback;
+};
 
 const errorName = (error: unknown) => (error instanceof Error ? error.name : "UnknownError");
 

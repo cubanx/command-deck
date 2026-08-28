@@ -56,7 +56,15 @@ Keep filtering, ordering, lifecycle, and pull-request actions on the dashboard. 
 
 ### 8. Make repository and status filtering explicit and one-click
 
-Use visible repository toggle pills as the first filter row so each repository can be included or excluded with one click. Put the eight lifecycle/attention filters in one accessible multi-select Status dropdown with a real checked/indeterminate/unchecked All control. All eight selected means all results; zero selected means zero results. Keep search, sort, direction, and clear in a compact second row, and continue routing every selection through the existing pure dashboard view model rather than adding another filtering implementation.
+Use visible repository toggle pills as the first filter row so each repository can be included or excluded with one click. Put the eight lifecycle/attention filters in one accessible multi-select Status dropdown with a real checked/indeterminate/unchecked All control. All eight selected means all results; zero selected means zero results. Keep search, one semantic sort dropdown, and clear in a compact second row, and continue routing every selection through the existing pure dashboard view model rather than adding another filtering implementation.
+
+Keep the existing filtered count immediately after Clear filters in the existing wrapping control row as vertically self-centered muted `<N> results` status text. Reuse the derived item count and existing row alignment; do not add count state, a second calculation, CSS, or another wrapper.
+
+Bound the existing Search flex hook to `20rem` on wide screens with a `14rem` minimum, while retaining the existing full-width mobile override. Do not add another layout wrapper or component.
+
+Encode the existing five sort modes and two directions as ten semantic options in one control: closest/furthest from merge, oldest/newest opened, least/most recently updated, least/most complete, and repository A–Z/Z–A. Keep the persisted `{ mode, direction }` object and comparator unchanged so saved preferences remain compatible.
+
+Keep the existing `44px` brand icon and increase only the adjacent brand label to `1.25rem` with a compact line-height. Center the brand contents through the existing navigation flex boundary; do not alter the three-column header grid that independently centers deployment evidence.
 
 ## Risks / Trade-offs
 

@@ -10,7 +10,6 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 
 	const search = page.getByRole("textbox", { name: "Search pull requests" });
 	const sort = page.getByRole("combobox", { name: "Sort pull requests" });
-	const direction = page.getByRole("combobox", { name: "Sort direction" });
 	const cards = page.getByRole("article");
 	await search.fill("Bajoran");
 	await expect(cards).toHaveCount(1);
@@ -22,8 +21,7 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 	await expect(cards).toHaveCount(1);
 	await expect(page.getByRole("article", { name: "Restore the Bajoran relay" })).toBeVisible();
 	await page.getByRole("button", { name: "Clear filters" }).click();
-	await sort.selectOption("repository");
-	await direction.selectOption("asc");
+	await sort.selectOption("repository:asc");
 	await expect(cards).toHaveCount(2);
 	await expect(cards.nth(0)).toHaveAccessibleName("Restore the Bajoran relay");
 	await expect(cards.nth(1)).toHaveAccessibleName("Calibrate the Defiant sensor array");
@@ -50,18 +48,15 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 	await page.getByRole("button", { name: "Close deployment detail" }).click();
 
 	await search.fill("Defiant");
-	await sort.selectOption("repository");
-	await direction.selectOption("asc");
+	await sort.selectOption("repository:asc");
 	await request.post("/__e2e__/refresh");
 	await expect(cards).toHaveCount(2);
 	await expect(cards.nth(0)).toHaveAccessibleName("Refresh the Defiant Bajoran relay");
 	await expect(cards.nth(1)).toHaveAccessibleName("Refresh the Defiant sensor array");
 	await expect(search).toHaveValue("Defiant");
-	await expect(sort).toHaveValue("repository");
-	await expect(direction).toHaveValue("asc");
+	await expect(sort).toHaveValue("repository:asc");
 	await page.reload();
-	await expect(sort).toHaveValue("repository");
-	await expect(direction).toHaveValue("asc");
+	await expect(sort).toHaveValue("repository:asc");
 
 	const rejected = await request.post("/api/merge/start", {
 		form: {

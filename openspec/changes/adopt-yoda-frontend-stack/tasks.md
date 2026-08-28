@@ -87,3 +87,40 @@
 
 - [x] 14.1 Add a focused assertion that the accessibility-neutral selected marker includes visible separation before the repository name, then implement the minimum markup-only fix without CSS or a new component.
 - [x] 14.2 Run the focused dashboard test, `bun run typecheck`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; stop without committing.
+
+## 15. Integrate the filtered result count
+
+- [x] 15.1 Add a focused failing assertion that the existing filtered count renders as muted `<N> results` status text aligned at the bottom-right inside the filter card.
+- [x] 15.2 Pass the existing derived item count into `DashboardFilters`, render it once inside the existing filter card, and remove the orphaned external count without adding state, calculation, CSS, or a component.
+- [x] 15.3 Run the focused dashboard test, `bun run typecheck`, `openspec validate adopt-yoda-frontend-stack --strict`, and `git diff --check`; stop without committing.
+
+## 16. Align the filtered result count left
+
+- [x] 16.1 Update the focused result-count assertion from bottom-right to bottom-left alignment.
+- [x] 16.2 Change only the existing Mantine text alignment prop, then run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 17. Reduce the search field width
+
+- [x] 17.1 Add a focused stylesheet contract proving the existing Search flex hook is bounded to `20rem` with a `14rem` minimum on wide screens while its mobile rule retains `flex-basis: 100%`.
+- [x] 17.2 Update only the existing Search flex rule, then run the focused quality-contract and dashboard tests, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 18. Combine sort mode and direction
+
+- [x] 18.1 Add focused component, route-preference, and fixture-journey failures proving one Sort pull requests dropdown exposes all ten semantic orderings, restores existing persisted `{ mode, direction }` values, drives every current ordering, and removes the separate Sort direction control.
+- [x] 18.2 Encode and decode the existing sort preference in the single control while leaving persistence and comparator logic unchanged; remove only the obsolete direction markup and styling.
+- [x] 18.3 Run focused dashboard, route, sort-preference, and E2E tests, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 19. Increase and center the brand label
+
+- [x] 19.1 Add a focused stylesheet contract proving the existing `44px` icon remains unchanged while the navigation-scoped brand label uses `1.25rem`, a compact line-height, and vertically centered flex alignment.
+- [x] 19.2 Update only the existing brand styling, then run focused quality-contract and navigation tests, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 20. Place the result total with filter actions
+
+- [x] 20.1 Add a focused failing assertion that the muted `<N> results` status is inside the filter row immediately after Clear filters while retaining accessible status semantics.
+- [x] 20.2 Move the existing text node into the existing wrapping group without new state, calculation, CSS, or another wrapper, then run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 21. Vertically center the result total
+
+- [x] 21.1 Add a focused failing assertion that the existing results status self-centers vertically without changing the filter row's bottom alignment.
+- [x] 21.2 Apply only the existing Mantine text style prop, then run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.

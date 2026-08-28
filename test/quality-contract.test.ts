@@ -73,6 +73,31 @@ test("development startup builds the ignored frontend assets before starting the
 	expect(text("scripts/dev.ts")).toContain('"src/web/frontend-build.ts", "--watch"');
 });
 
+test("Search width is bounded on wide filter rows without changing mobile wrapping", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(/\.command-center-filter-row \.filter-grow\s*\{\s*flex: 0 1 20rem;\s*min-width: 14rem;\s*\}/);
+	expect(css).toMatch(
+		/@media \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-filter-row \.filter-grow,[\s\S]*?\{\s*flex-basis: 100%;/,
+	);
+});
+
+test("Sort width accommodates semantic ordering labels without changing mobile wrapping", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(/\.command-center-filter-row \.filter-sort\s*\{\s*flex: 0 0 14rem;\s*min-width: 14rem;\s*\}/);
+	expect(css).toMatch(
+		/@media \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-filter-row \.filter-sort\s*\{\s*flex-basis: 100%;/,
+	);
+});
+
+test("Navigation brand keeps its icon size while centering the larger label", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(/\.brand-icon\s*\{\s*width: 44px;\s*height: 44px;/);
+	expect(css).toMatch(/\.command-center-navigation \.brand\s*\{\s*align-items: center;\s*\}/);
+	expect(css).toMatch(
+		/\.command-center-navigation \.brand strong\s*\{\s*font-size: 1\.25rem;\s*line-height: 1\.1;\s*\}/,
+	);
+});
+
 test("Railway deploys only when runtime inputs change", () => {
 	const railway = JSON.parse(text("railway.json")) as {
 		build: { watchPatterns?: string[] };

@@ -95,6 +95,7 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 					view={view}
 					set={set}
 					pullRequests={snapshot.pullRequests}
+					resultCount={items.length}
 					clear={() =>
 						setView({
 							sort: view.sort ?? defaultSortPreference,
@@ -107,7 +108,6 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 						})
 					}
 				/>
-				<Text role="status">{items.length} pull requests</Text>
 				{!items.length ? (
 					snapshot.installationCount === 0 ? (
 						<Alert>

@@ -179,10 +179,8 @@ test("preserves dashboard preferences while the snapshot changes", async () => {
 	const search = await findByLabelText("Search pull requests");
 	expect(queryByText(/Signed in as Kira Nerys/)).toBeNull();
 	const sort = await findByLabelText("Sort pull requests");
-	const direction = await findByLabelText("Sort direction");
 	fireEvent.change(search, { target: { value: "defiant" } });
-	fireEvent.change(sort, { target: { value: "updated" } });
-	fireEvent.change(direction, { target: { value: "desc" } });
+	fireEvent.change(sort, { target: { value: "updated:desc" } });
 	queryClient.setQueryData(snapshotQueryOptions.queryKey, {
 		...snapshot,
 		user: { login: "Kira Nerys (refreshed)" },
@@ -190,6 +188,6 @@ test("preserves dashboard preferences while the snapshot changes", async () => {
 	await waitFor(() => expect(queryByText(/Signed in as Kira Nerys \(refreshed\)/)).toBeNull());
 
 	expect((search as HTMLInputElement).value).toBe("defiant");
-	expect((sort as HTMLSelectElement).value).toBe("updated");
-	expect((direction as HTMLSelectElement).value).toBe("desc");
+	expect((sort as HTMLSelectElement).value).toBe("updated:desc");
+	expect(queryByText("Sort direction")).toBeNull();
 });
