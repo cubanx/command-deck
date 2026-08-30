@@ -236,3 +236,9 @@
 - [x] 40.1 Add focused responsive-header contracts proving flex wrapping, symmetric brand/avatar rails, auto-width centered deployment, and removal of the forced brand row.
 - [x] 40.2 Replace only the premature narrow header grid/brand rule with the wrapping flex layout while retaining the deployment summary, modal, avatar menu, and desktop header behavior.
 - [x] 40.3 Run focused navigation/configuration and quality-contract tests, typecheck, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 41. Centralize server failure and reconciliation audit boundaries
+
+- [x] 41.1 Add focused failing tests for a sanitized Bun request-error fallback and the single non-throwing server-composed reconciliation audit sink.
+- [x] 41.2 Add the global server error callback and one shared server-composed best-effort audit sink, pass it to targeted and broad reconciliation, and remove duplicate lower-level audit catches without changing provider failures or outcomes.
+- [x] 41.3 Run focused server, reconciliation, and GitHub tests, typecheck, strict OpenSpec validation, and `git diff --check`; record any environment-blocked full validation without committing.

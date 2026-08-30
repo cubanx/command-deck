@@ -2,8 +2,44 @@ import { expect, test } from "vitest";
 import { bindInstallation, createSession, upsertIdentity } from "#/access";
 import { mutateUser } from "#/db";
 import { acceptGitHubDelivery } from "#/events";
-import { createApp } from "#/server";
+import { auditReconciliationRun, createApp, serverError } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
+
+test("sanitizes unhandled Bun request errors", async () => {
+	const originalError = console.error,
+		logs: unknown[][] = [];
+	console.error = (...args: unknown[]) => logs.push(args);
+	try {
+		const response = serverError(Object.assign(new Error("token=must-not-escape"), { name: "RequestFailure" }));
+		expect(response.status).toBe(500);
+		expect(await response.text()).toBe("Internal server error");
+	} finally {
+		console.error = originalError;
+	}
+	expect(logs).toEqual([["server request failed", "RequestFailure"]]);
+	expect(JSON.stringify(logs)).not.toContain("must-not-escape");
+});
+
+test("keeps provider outcomes independent from server audit persistence", async () => {
+	const originalError = console.error,
+		logs: unknown[][] = [];
+	console.error = (...args: unknown[]) => logs.push(args);
+	try {
+		await auditReconciliationRun(
+			{
+				reconciliationRuns: {
+					insertOne: async () =>
+						Promise.reject(Object.assign(new Error("token=must-not-escape"), { name: "AuditWriteFailure" })),
+				},
+			} as never,
+			{} as never,
+		);
+	} finally {
+		console.error = originalError;
+	}
+	expect(logs).toEqual([["reconciliation audit failed", "AuditWriteFailure"]]);
+	expect(JSON.stringify(logs)).not.toContain("must-not-escape");
+});
 
 test("starts one non-blocking broad repair after the inbox drain", async () =>
 	withDatabase(async (db) => {

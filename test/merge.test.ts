@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createSession, upsertIdentity } from "#/access";
 import {
 	advanceMergeIntent,
@@ -181,6 +181,32 @@ test("role proof happens before installation authority and exact-head merge read
 		}),
 	).toBeNull();
 	expect(deniedInstallationCalls).toBe(0);
+	const signal = AbortSignal.abort(new DOMException("timed out", "TimeoutError"));
+	const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
+	let timedOutInstallationCalls = 0;
+	try {
+		await expect(
+			authorizeBeforeInstallation({
+				fetcher: async (_, init) => {
+					expect(init?.signal).toBe(signal);
+					init?.signal?.throwIfAborted();
+					return Response.json({ permission: "write" });
+				},
+				userToken: "request-local-only",
+				login: "sisko",
+				fullName: "Crisp-Inc/dev-command-center",
+				installationToken: async () => {
+					timedOutInstallationCalls++;
+					return "must-not-mint";
+				},
+			}),
+		).rejects.toThrow(
+			"GitHub request timed out after 30000ms: GET https://api.github.com/repos/Crisp-Inc/dev-command-center/collaborators/sisko/permission",
+		);
+	} finally {
+		timeout.mockRestore();
+	}
+	expect(timedOutInstallationCalls).toBe(0);
 	let reads = 0;
 	let variables: Record<string, string> | undefined;
 	expect(

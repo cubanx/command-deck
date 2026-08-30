@@ -12,7 +12,7 @@ import {
 } from "#/access";
 import type { Config } from "#/config";
 import { loadConfig } from "#/config";
-import type { Db, MergeIntent } from "#/db";
+import type { Db, MergeIntent, ReconciliationRun } from "#/db";
 import { databaseReady, initializeDatabase, openDatabase } from "#/db";
 import {
 	acceptGitHubDelivery,
@@ -73,6 +73,11 @@ const lifecycleChangedFields = (before: Record<string, unknown> | undefined, aft
 	].flatMap(([field, category]) =>
 		JSON.stringify(before?.[field]) === JSON.stringify((after as Record<string, unknown>)[field]) ? [] : [category],
 	);
+};
+
+export const serverError = (error: unknown) => {
+	console.error("server request failed", error instanceof Error ? error.name : "unknown");
+	return new Response("Internal server error", { status: 500 });
 };
 
 const directReconciliationCounts = (result: ReadResult) => {
@@ -976,6 +981,14 @@ type ReconciliationOptions = {
 	refresh(userId: string): void;
 };
 
+export const auditReconciliationRun = async (db: Db, run: ReconciliationRun) => {
+	try {
+		await db.reconciliationRuns.insertOne(run);
+	} catch (error) {
+		console.error("reconciliation audit failed", error instanceof Error ? error.name : "unknown");
+	}
+};
+
 const reconcileTargetedPullRequest = async (options: ReconciliationOptions, target: PullRequestTarget) => {
 	const { db, config, dependencies, reconcileTarget, refresh } = options;
 	const counted = countedFetch(fetch);
@@ -1023,7 +1036,7 @@ const createTargetedCoordinator = (options: ReconciliationOptions) =>
 		reconcilePullRequest: (target) => reconcileTargetedPullRequest(options, target),
 		reconcileInstallations: async () => {},
 		recordRun: async (run) => {
-			await options.db.reconciliationRuns.insertOne(run);
+			await auditReconciliationRun(options.db, run);
 		},
 	});
 
@@ -1088,7 +1101,7 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 						.find({ provider: "github", status: "pending_verification" }, { projection: { payload: 1 } })
 						.toArray()
 				).filter((delivery) => githubPayloadInstallationId(delivery.payload) === installationId).length;
-				await db.reconciliationRuns.insertOne({
+				await auditReconciliationRun(db, {
 					installationId,
 					trigger,
 					startedAt,
@@ -1285,6 +1298,7 @@ if (import.meta.main) {
 				hostname: config.hostname,
 				idleTimeout: 255,
 				fetch: app.fetch,
+				error: serverError,
 			});
 			void app.drain();
 		})

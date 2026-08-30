@@ -136,6 +136,14 @@ The migrated application SHALL preserve authenticated reconciliation and exact-h
 ### Requirement: Existing shell and endpoint contracts remain compatible
 The migration SHALL preserve the installable application shell, authenticated snapshot and event endpoints, reconciliation and merge routes, OAuth and webhook routes, service-worker behavior, and provider projection boundaries until a separately governed change replaces them.
 
+#### Scenario: Server runtime failure is sanitized
+- **WHEN** an unhandled request error reaches the Bun server boundary
+- **THEN** the server returns a generic `500 Internal server error` response and logs only safe error classification metadata
+
+#### Scenario: Reconciliation audit persistence fails
+- **WHEN** a targeted or broad reconciliation provider result is available but its server-composed audit write fails
+- **THEN** the server logs only the safe audit-failure classification and preserves the existing provider result, waiter outcome, and HTTP outcome
+
 #### Scenario: Installed application receives the migrated frontend
 - **WHEN** a developer opens an installed or browser-hosted application shell after the migration
 - **THEN** the shell loads the migrated frontend while retaining manifest, icon, service-worker, authentication, and safe-delivery behavior

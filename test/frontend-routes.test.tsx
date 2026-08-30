@@ -168,6 +168,76 @@ test("invalidates the snapshot for refresh events and reconnects without polling
 	expect(events.closed).toBe(true);
 });
 
+test("opens snapshot events only while the current snapshot is authenticated and healthy", async () => {
+	vi.stubGlobal("EventSource", FixtureEventSource);
+	const queryClient = new QueryClient();
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, { ...snapshot, user: undefined });
+	renderFrontend(<SnapshotEvents />, queryClient);
+	expect(FixtureEventSource.instances).toHaveLength(0);
+
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, snapshot);
+	await waitFor(() => expect(FixtureEventSource.instances).toHaveLength(1));
+	const authenticatedEvents = FixtureEventSource.instances[0];
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, { ...snapshot, error: "Sign in required" });
+	await waitFor(() => expect(authenticatedEvents.closed).toBe(true));
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, snapshot);
+	await waitFor(() => expect(FixtureEventSource.instances).toHaveLength(2));
+});
+
+test("delivers each newly observed notification once without replaying the initial snapshot", async () => {
+	vi.stubGlobal("EventSource", FixtureEventSource);
+	const notification = vi.fn();
+	Object.assign(notification, { permission: "granted" });
+	vi.stubGlobal("Notification", notification);
+	const queryClient = new QueryClient();
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, {
+		...snapshot,
+		notifications: [{ id: "existing", title: "Already seen", body: "No replay" }],
+	});
+	renderFrontend(<SnapshotEvents />, queryClient);
+	expect(notification).not.toHaveBeenCalled();
+
+	const updatedSnapshot = {
+		...snapshot,
+		notifications: [
+			{ id: "new", title: "New deployment", body: "The Defiant is ready" },
+			{ id: "existing", title: "Already seen", body: "No replay" },
+		],
+	};
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, updatedSnapshot);
+	await waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, updatedSnapshot);
+	await waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
+});
+
+test("drops notifications observed before permission without replaying them after permission is granted", async () => {
+	vi.stubGlobal("EventSource", FixtureEventSource);
+	let permission = "default";
+	const notification = vi.fn();
+	Object.defineProperty(notification, "permission", { get: () => permission });
+	vi.stubGlobal("Notification", notification);
+	const queryClient = new QueryClient();
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, snapshot);
+	renderFrontend(<SnapshotEvents />, queryClient);
+
+	const droppedSnapshot = {
+		...snapshot,
+		notifications: [{ id: "dropped", title: "Old deployment", body: "Do not replay" }],
+	};
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, droppedSnapshot);
+	await waitFor(() => expect(notification).not.toHaveBeenCalled());
+	permission = "granted";
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, {
+		...snapshot,
+		notifications: [
+			{ id: "new", title: "New deployment", body: "The Defiant is ready" },
+			...droppedSnapshot.notifications,
+		],
+	});
+	await waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
+	expect(notification).toHaveBeenCalledWith("New deployment", { body: "The Defiant is ready" });
+});
+
 test("preserves dashboard preferences while the snapshot changes", async () => {
 	localStorage.setItem("dcc-pr-sort", JSON.stringify({ mode: "updated", direction: "desc" }));
 	vi.stubGlobal(

@@ -10,9 +10,9 @@ import {
 	revalidateCheckout,
 } from "#/features/command-center/browser-checkout";
 import { Configuration } from "#/features/command-center/configuration";
-import { OperationalDashboard } from "#/features/command-center/dashboard";
+import { DashboardLoadError, OperationalDashboard } from "#/features/command-center/dashboard";
 import { CommandCenterNavigation } from "#/features/command-center/navigation";
-import { configurationLoader } from "#/routes/configuration";
+import { configurationLoader, Route } from "#/routes/configuration";
 import { renderFrontend } from "#/web/test-harness";
 
 afterEach(() => {
@@ -122,6 +122,12 @@ test("presents operational configuration controls and announces sanitized reconc
 	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/reconcile/pull-requests", { method: "POST" }));
 	fireEvent.click(screen.getByRole("button", { name: "Enable notifications" }));
 	expect(await screen.findByText("Notifications enabled.")).toBeTruthy();
+});
+
+test("uses the shared sign-in affordance when Configuration cannot load an authenticated snapshot", () => {
+	expect(Route.options.errorComponent).toBe(DashboardLoadError);
+	renderFrontend(<DashboardLoadError />);
+	expect(screen.getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe("/auth/github");
 });
 
 test("shares compact deployment detail in navigation without placing it in route content", async () => {

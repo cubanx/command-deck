@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Db, MergeIntent } from "#/db";
+import { githubFetch } from "#/github";
 import { openSpecGate } from "#/openspec-gate";
 
 const failed = new Set([
@@ -122,7 +123,8 @@ export const authorizeBeforeInstallation = async ({
 	fullName: string;
 	installationToken: () => Promise<string>;
 }) => {
-	const response = await fetcher(
+	const response = await githubFetch(
+		fetcher,
 		`https://api.github.com/repos/${fullName.split("/").map(encodeURIComponent).join("/")}/collaborators/${encodeURIComponent(login)}/permission`,
 		{ headers: { authorization: `Bearer ${userToken}` } },
 	);

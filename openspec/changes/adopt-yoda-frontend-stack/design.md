@@ -74,6 +74,10 @@ Encode the existing five sort modes and two directions as ten semantic options i
 
 Keep the existing `44px` brand icon and increase only the adjacent brand label to `1.25rem` with a compact line-height. Center the brand contents through the existing navigation flex boundary; do not alter the three-column header grid that independently centers deployment evidence.
 
+### 9. Centralize server failure and reconciliation audit boundaries
+
+Use Bun's existing `error` callback as the sole global request-error fallback: log only an error name or `unknown`, then return the generic `500 Internal server error` response. Compose one server-owned best-effort reconciliation audit sink that catches only audit persistence failures, logs the same safe classification, and is passed to both targeted and broad reconciliation paths. Provider results, failures, waiter outcomes, and HTTP outcomes remain authoritative; lower-level GitHub and coordinator modules call their supplied audit callback without adding duplicate catches, result types, retries, or persistence schema.
+
 ## Risks / Trade-offs
 
 - [Large migration can hide regressions] → Cut over by numbered behavior groups; every group starts with focused failing compatibility tests and runs the existing relevant suite.
@@ -85,6 +89,7 @@ Keep the existing `44px` brand icon and increase only the adjacent brand label t
 - [Older projected OpenSpecs lack the next group] → Fall back to the existing single `active_group`; the next incomplete group appears after the next authoritative reconciliation populates `active_groups`.
 - [Older projected OpenSpecs lack every group] → Preserve their incomplete counts, label task detail unavailable until reconciliation, and never claim completion from missing detail alone.
 - [Showing post-merge tasks can accidentally block merge] → Project display-only incomplete groups separately and retain the existing non-post-merge readiness calculation unchanged.
+- [Audit persistence can fail after a provider succeeds] → Log a sanitized classification and preserve the provider result; audit durability is best-effort rather than a hidden reconciliation failure.
 
 ## Migration Plan
 

@@ -98,6 +98,7 @@ test("dashboard shows every open authored PR across allowed installations, atten
 					state: "open",
 					checks_state: "success",
 					updated_at: "2030-01-01T00:00:00Z",
+					labels: ["openspec-not-required"],
 				},
 				{ number: 3, title: "Closed", author_login: "odo", state: "closed" },
 				{ number: 4, title: "Not Odo", author_login: "quark", state: "open" },
@@ -116,6 +117,7 @@ test("dashboard shows every open authored PR across allowed installations, atten
 					state: "open",
 					checks_state: "success",
 					updated_at: "2030-01-03T00:00:00Z",
+					labels: ["openspec-not-required"],
 				},
 				{
 					number: 2,
@@ -291,6 +293,73 @@ test("dashboard ignores post-merge-only OpenSpec work for attention", () =>
 		expect(pullRequests.pullRequests.find((pr) => pr.number === 2)?.needs_attention).toBe(true);
 	}));
 
+test("dashboard derives OpenSpec attention from the canonical gate", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "1", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]?.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{
+						number: 1,
+						author_login: "sisko",
+						state: "open",
+					},
+					{
+						number: 2,
+						author_login: "sisko",
+						state: "open",
+						labels: ["openspec-not-required"],
+					},
+					{
+						number: 3,
+						author_login: "sisko",
+						state: "open",
+						open_spec_declaration: "invalid",
+					},
+					{
+						number: 4,
+						author_login: "sisko",
+						state: "open",
+						open_spec_declaration: "empty",
+					},
+					{
+						number: 5,
+						author_login: "sisko",
+						state: "open",
+						open_spec_declaration: "empty",
+						labels: ["openspec-not-required"],
+					},
+					{
+						number: 6,
+						author_login: "sisko",
+						state: "open",
+						open_spec_declaration: "absent",
+						detected_open_specs: ["repair-wolf-359"],
+					},
+					{
+						number: 7,
+						author_login: "sisko",
+						state: "open",
+						open_specs: [{ completed: "not-a-number", total: 2 }],
+					},
+				],
+				openSpecs: [],
+				deployments: [],
+			});
+		});
+		const pullRequests = await dashboardForUser(db, "u");
+		expect(pullRequests.pullRequests.find((pr) => pr.number === 1)?.needs_attention).toBe(true);
+		expect(pullRequests.pullRequests.find((pr) => pr.number === 2)?.needs_attention).toBe(false);
+		expect(pullRequests.pullRequests.find((pr) => pr.number === 3)?.needs_attention).toBe(true);
+		expect(pullRequests.pullRequests.find((pr) => pr.number === 4)?.needs_attention).toBe(true);
+		expect(pullRequests.pullRequests.find((pr) => pr.number === 5)?.needs_attention).toBe(false);
+		expect(pullRequests.pullRequests.find((pr) => pr.number === 6)?.needs_attention).toBe(true);
+		expect(pullRequests.pullRequests.find((pr) => pr.number === 7)?.needs_attention).toBe(true);
+	}));
+
 test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or ambiguous links", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
@@ -330,6 +399,7 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					state: "open",
 					updated_at: "2030-01-02",
 					head_ref: "shared",
+					labels: ["openspec-not-required"],
 				},
 				{
 					number: 4,
@@ -339,6 +409,7 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					updated_at: "2030-01-01T01:00:00Z",
 					head_sha: sha,
 					head_ref: "other",
+					labels: ["openspec-not-required"],
 				},
 			],
 			openSpecs: [

@@ -3,6 +3,7 @@ import type { UpdateFilter } from "mongodb";
 import type { Db, PullRequest, UserAggregate } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
+import { openSpecGate } from "#/openspec-gate";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export const LOCAL_DEMO_USER = {
@@ -64,6 +65,7 @@ const localDemoPullRequests = [
 	workflow_state: index % 3 === 0 ? "failure" : "success",
 	bot_review_actor: "odo[bot]",
 	bot_review_state: index % 3 === 0 ? "in_progress" : "approved",
+	...([117, 118].includes(119 - index) ? { labels: ["openspec-not-required"] } : {}),
 }));
 const pullRequestUrl = (fullName: unknown, number: unknown) => {
 	if (fullName == null || number == null) return null;
@@ -292,19 +294,17 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
 						? [pr.open_spec as Record<string, unknown>]
 						: [],
 			);
+			const labels = Array.isArray(pr.labels)
+				? pr.labels.filter((label): label is string => typeof label === "string")
+				: [];
+			const openSpecGateResult = openSpecGate(correlatedOpenSpecs, labels, pr);
 			const openSpec = correlatedOpenSpecs[0] ?? null;
 			return {
 				...pr,
 				url: pullRequestUrl(pr.full_name, pr.number),
 				open_specs: correlatedOpenSpecs,
 				open_spec: openSpec,
-				needs_attention:
-					needsAttention(pr) ||
-					Boolean(
-						correlatedOpenSpecs.some(
-							(item) => item.pre_merge_ready !== true && Number(item.completed) < Number(item.total),
-						),
-					),
+				needs_attention: needsAttention(pr) || !openSpecGateResult.ready,
 			};
 		})
 		.sort(
