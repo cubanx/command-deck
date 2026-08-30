@@ -15,9 +15,7 @@ test("Varlock schema loads the approved local Environment through its official p
 		"@setValuesBulk(opLoadEnvironment(axpdch34cfdzlzyaziox2dvopy), omit=[GITHUB_CLIENT_ID,GITHUB_CLIENT_SECRET,GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY])",
 	);
 	expect(schema).toContain('@type=enum("0","1")');
-	expect(schema).toMatch(
-		/@type=opServiceAccountToken[^\n]*@sensitive[^\n]*@internal[^\n]*\nOP_SERVICE_ACCOUNT_TOKEN=/,
-	);
+	expect(schema).toMatch(/@type=opServiceAccountToken[^\n]*@sensitive[^\n]*@internal[^\n]*\nOP_SERVICE_ACCOUNT_TOKEN=/);
 	for (const name of [
 		"PORT",
 		"MONGODB_URI_BASE",
@@ -64,19 +62,13 @@ test("Varlock schema loads the approved local Environment through its official p
 		["GITHUB_APP_ID", refs[2]],
 		["GITHUB_APP_PRIVATE_KEY", refs[3]],
 	])
-		expect(schema).toMatch(
-			new RegExp(
-				`^${name}=op\\(${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\)$`,
-				"m",
-			),
-		);
+		expect(schema).toMatch(new RegExp(`^${name}=op\\(${ref.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\)$`, "m"));
 	expect(schema.match(/op:\/\/[^)\s]+/g)).toEqual(refs);
 	expect(schema).not.toContain("allowAppAuth");
 	const manifest = text("package.json");
 	expect(JSON.parse(manifest).scripts).toMatchObject({
-		dev: "DCC_LOCAL_DEMO=0 NODE_ENV=development bunx varlock run -- bun --watch src/server.ts",
-		"dev:demo":
-			"NODE_ENV=development DCC_LOCAL_DEMO=1 bun --watch src/server.ts",
+		dev: "bun run build:web && DCC_LOCAL_DEMO=0 NODE_ENV=development bunx varlock run -- bun scripts/dev.ts",
+		"dev:demo": "bun run build:web && NODE_ENV=development DCC_LOCAL_DEMO=1 bun scripts/dev.ts",
 	});
 	expect(JSON.parse(manifest)).toMatchObject({
 		devDependencies: {

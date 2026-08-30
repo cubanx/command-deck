@@ -1,30 +1,11 @@
 import { expect, test } from "vitest";
-import {
-	createWeekdayReconciliationScheduler,
-	nextWeekdayReconciliationAt,
-} from "#/reconciliation-scheduler";
+import { createWeekdayReconciliationScheduler, nextWeekdayReconciliationAt } from "#/reconciliation-scheduler";
 
 test("selects New York weekday ten-minute boundaries across DST", () => {
-	expect(
-		nextWeekdayReconciliationAt(
-			new Date("2026-03-09T10:59:00Z"),
-		)?.toISOString(),
-	).toBe("2026-03-09T11:00:00.000Z");
-	expect(
-		nextWeekdayReconciliationAt(
-			new Date("2026-11-02T11:59:00Z"),
-		)?.toISOString(),
-	).toBe("2026-11-02T12:00:00.000Z");
-	expect(
-		nextWeekdayReconciliationAt(
-			new Date("2026-08-24T22:50:00Z"),
-		)?.toISOString(),
-	).toBe("2026-08-25T11:00:00.000Z");
-	expect(
-		nextWeekdayReconciliationAt(
-			new Date("2026-08-22T16:00:00Z"),
-		)?.toISOString(),
-	).toBe("2026-08-24T11:00:00.000Z");
+	expect(nextWeekdayReconciliationAt(new Date("2026-03-09T10:59:00Z"))?.toISOString()).toBe("2026-03-09T11:00:00.000Z");
+	expect(nextWeekdayReconciliationAt(new Date("2026-11-02T11:59:00Z"))?.toISOString()).toBe("2026-11-02T12:00:00.000Z");
+	expect(nextWeekdayReconciliationAt(new Date("2026-08-24T22:50:00Z"))?.toISOString()).toBe("2026-08-25T11:00:00.000Z");
+	expect(nextWeekdayReconciliationAt(new Date("2026-08-22T16:00:00Z"))?.toISOString()).toBe("2026-08-24T11:00:00.000Z");
 });
 
 test("runs immediately at 07:00, enqueues known open PRs, and cleans up", async () => {
@@ -60,11 +41,7 @@ test("runs immediately at 07:00, enqueues known open PRs, and cleans up", async 
 });
 
 test("does not run before hours, after hours, or on weekends", async () => {
-	for (const value of [
-		"2026-08-24T10:59:00Z",
-		"2026-08-24T23:00:00Z",
-		"2026-08-22T15:00:00Z",
-	]) {
+	for (const value of ["2026-08-24T10:59:00Z", "2026-08-24T23:00:00Z", "2026-08-22T15:00:00Z"]) {
 		let runs = 0;
 		const scheduler = createWeekdayReconciliationScheduler({
 			now: () => new Date(value),
@@ -105,8 +82,6 @@ test("logs a sanitized scheduler diagnostic", async () => {
 	} finally {
 		console.error = originalError;
 	}
-	expect(logs).toEqual([
-		["weekday reconciliation scheduling failed", "ProviderTimeout"],
-	]);
+	expect(logs).toEqual([["weekday reconciliation scheduling failed", "ProviderTimeout"]]);
 	expect(JSON.stringify(logs)).not.toContain("must-not-escape");
 });

@@ -7,18 +7,12 @@ test("validates runtime ports", () => {
 });
 
 test("local demo is loopback-only and rejected in hosted environments", () => {
-	expect(
-		loadConfig({ DCC_LOCAL_DEMO: "1", NODE_ENV: "development" }),
-	).toMatchObject({
+	expect(loadConfig({ DCC_LOCAL_DEMO: "1", NODE_ENV: "development" })).toMatchObject({
 		localDemo: true,
 		hostname: "127.0.0.1",
 	});
-	expect(() =>
-		loadConfig({ DCC_LOCAL_DEMO: "1", NODE_ENV: "production" }),
-	).toThrow("local demo");
-	expect(() =>
-		loadConfig({ DCC_LOCAL_DEMO: "1", RAILWAY_ENVIRONMENT_ID: "ds9" }),
-	).toThrow("local demo");
+	expect(() => loadConfig({ DCC_LOCAL_DEMO: "1", NODE_ENV: "production" })).toThrow("local demo");
+	expect(() => loadConfig({ DCC_LOCAL_DEMO: "1", RAILWAY_ENVIRONMENT_ID: "ds9" })).toThrow("local demo");
 	expect(() =>
 		loadConfig({
 			DCC_LOCAL_DEMO: "1",
@@ -42,21 +36,13 @@ test("local OAuth uses an explicit loopback HTTP origin and non-secure cookies",
 		oauthCallbackUrl: "http://127.0.0.1:3000/auth/github/callback",
 		secureCookies: false,
 	});
-	for (const publicUrl of [
-		"http://command-center.example",
-		"http://localhost.evil.example",
-		"not a URL",
-	]) {
-		expect(() => loadConfig({ PUBLIC_URL: publicUrl })).toThrow(
-			"PUBLIC_URL must be a loopback HTTP origin",
-		);
+	for (const publicUrl of ["http://command-center.example", "http://localhost.evil.example", "not a URL"]) {
+		expect(() => loadConfig({ PUBLIC_URL: publicUrl })).toThrow("PUBLIC_URL must be a loopback HTTP origin");
 	}
 });
 
 test("automated review signals are configured together", () => {
-	expect(() => loadConfig({ GITHUB_REVIEW_BOT_LOGIN: "claude[bot]" })).toThrow(
-		"review bot",
-	);
+	expect(() => loadConfig({ GITHUB_REVIEW_BOT_LOGIN: "claude[bot]" })).toThrow("review bot");
 	expect(
 		loadConfig({
 			GITHUB_REVIEW_BOT_LOGIN: "claude[bot]",
@@ -89,8 +75,7 @@ test("production requires real secrets, one HTTPS Railway origin, and secure coo
 	expect(loadConfig(production())).toMatchObject({
 		production: true,
 		publicUrl: "https://command-center.up.railway.app",
-		oauthCallbackUrl:
-			"https://command-center.up.railway.app/auth/github/callback",
+		oauthCallbackUrl: "https://command-center.up.railway.app/auth/github/callback",
 		secureCookies: true,
 	});
 	for (const env of [
@@ -118,9 +103,7 @@ test("production requires MongoDB configuration", () => {
 });
 
 test("local MongoDB configuration uses the canonical isolated family", () => {
-	expect(loadConfig({ USER: "Benjamin Sisko" }).mongoDatabase).toBe(
-		"command-center-ai-local-benjamin-sisko",
-	);
+	expect(loadConfig({ USER: "Benjamin Sisko" }).mongoDatabase).toBe("command-center-ai-local-benjamin-sisko");
 });
 
 test("Railway MongoDB configuration uses the shared hosted database", () => {

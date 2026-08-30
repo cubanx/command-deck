@@ -1,11 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-const manifest = JSON.parse(
-	await readFile(
-		new URL("../validation-commands.json", import.meta.url),
-		"utf8",
-	),
-) as { commands: string[] };
+const manifest = JSON.parse(await readFile(new URL("../validation-commands.json", import.meta.url), "utf8")) as {
+	commands: string[];
+};
 
 for (const command of manifest.commands) {
 	const result = Bun.spawn(command.split(" "), {

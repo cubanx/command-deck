@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Db, MergeIntent } from "#/db";
+import { githubFetch } from "#/github";
 import { openSpecGate } from "#/openspec-gate";
 
 const failed = new Set([
@@ -14,8 +15,7 @@ const failed = new Set([
 ]);
 const normalized = (value: unknown) => String(value ?? "").toLowerCase();
 
-export const mergeIntentHash = (value: string) =>
-	createHash("sha256").update(value).digest("hex");
+export const mergeIntentHash = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export const createMergeIntent = async (
 	db: Db,
@@ -54,11 +54,7 @@ export const mergeIntentFor = async (db: Db, token: string, now = new Date()) =>
 
 export const mergeEligibility = (pr: Record<string, unknown>) => {
 	const spec = pr.open_spec as Record<string, unknown> | null;
-	const specs = Array.isArray(pr.open_specs)
-		? (pr.open_specs as Record<string, unknown>[])
-		: spec
-			? [spec]
-			: [];
+	const specs = Array.isArray(pr.open_specs) ? (pr.open_specs as Record<string, unknown>[]) : spec ? [spec] : [];
 	const labels = Array.isArray(pr.labels)
 		? pr.labels.filter((label): label is string => typeof label === "string")
 		: [];
@@ -89,9 +85,7 @@ export const mergeEligibility = (pr: Record<string, unknown>) => {
 		{
 			blocked: !openSpec.ready,
 			reason:
-				openSpec.blocker === "confirm"
-					? "Confirm OpenSpec association."
-					: "OpenSpec completion is not confirmed.",
+				openSpec.blocker === "confirm" ? "Confirm OpenSpec association." : "OpenSpec completion is not confirmed.",
 		},
 		{
 			blocked: pr.merge_method !== "MERGE",
@@ -109,12 +103,9 @@ export const mergeEligibility = (pr: Record<string, unknown>) => {
 
 export const mergeResult = (result: Record<string, unknown>) => {
 	if (result.merged === true) return "success";
-	const type = normalized(
-		(result.errors as Array<{ type?: string }> | undefined)?.[0]?.type,
-	);
+	const type = normalized((result.errors as Array<{ type?: string }> | undefined)?.[0]?.type);
 	if (type.includes("head") || type.includes("stale")) return "stale";
-	if (type.includes("forbidden") || type.includes("permission"))
-		return "permission";
+	if (type.includes("forbidden") || type.includes("permission")) return "permission";
 	if (type.includes("conflict")) return "conflict";
 	return "blocked";
 };
@@ -132,13 +123,12 @@ export const authorizeBeforeInstallation = async ({
 	fullName: string;
 	installationToken: () => Promise<string>;
 }) => {
-	const response = await fetcher(
+	const response = await githubFetch(
+		fetcher,
 		`https://api.github.com/repos/${fullName.split("/").map(encodeURIComponent).join("/")}/collaborators/${encodeURIComponent(login)}/permission`,
 		{ headers: { authorization: `Bearer ${userToken}` } },
 	);
-	const permission = response.ok
-		? String(((await response.json()) as { permission?: string }).permission)
-		: "";
+	const permission = response.ok ? String(((await response.json()) as { permission?: string }).permission) : "";
 	if (!new Set(["write", "maintain", "admin"]).has(permission)) return null;
 	return installationToken();
 };
@@ -150,16 +140,13 @@ export const confirmExactMerge = async ({
 }: {
 	intent: { pullRequestId: string; headSha: string };
 	inspect: () => Promise<Record<string, unknown>>;
-	merge: (
-		variables: Record<string, string>,
-	) => Promise<Record<string, unknown>>;
+	merge: (variables: Record<string, string>) => Promise<Record<string, unknown>>;
 }) => {
 	const first = await inspect();
 	if (first.head_sha !== intent.headSha) return "stale";
 	if (!mergeEligibility(first).ok) return "blocked";
 	const second = await inspect();
-	if (second.head_sha !== intent.headSha || !mergeEligibility(second).ok)
-		return "stale";
+	if (second.head_sha !== intent.headSha || !mergeEligibility(second).ok) return "stale";
 	return mergeResult(
 		await merge({
 			pullRequestId: intent.pullRequestId,

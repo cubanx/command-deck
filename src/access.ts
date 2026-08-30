@@ -3,21 +3,14 @@ import type { UpdateFilter } from "mongodb";
 import type { Db, PullRequest, UserAggregate } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
+import { openSpecGate } from "#/openspec-gate";
 
-const hash = (value: string) =>
-	createHash("sha256").update(value).digest("hex");
+const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export const LOCAL_DEMO_USER = {
 	id: "local-demo-user",
 	login: "sisko",
 } as const;
-const badPrStates = new Set([
-	"action_required",
-	"cancelled",
-	"canceled",
-	"failure",
-	"failed",
-	"timed_out",
-]);
+const badPrStates = new Set(["action_required", "cancelled", "canceled", "failure", "failed", "timed_out"]);
 const normalize = (value: unknown) =>
 	String(value ?? "unknown")
 		.toLowerCase()
@@ -27,14 +20,7 @@ const needsAttention = (pr: Record<string, unknown>) =>
 	normalize(pr.review_state) === "changes_requested" ||
 	badPrStates.has(normalize(pr.checks_state)) ||
 	badPrStates.has(normalize(pr.workflow_state)) ||
-	[
-		"blocked",
-		"conflict",
-		"conflicting",
-		"dirty",
-		"false",
-		"unmergeable",
-	].includes(normalize(pr.mergeable));
+	["blocked", "conflict", "conflicting", "dirty", "false", "unmergeable"].includes(normalize(pr.mergeable));
 const emptyUser = (id: string): UserAggregate => ({
 	_id: id,
 	schemaVersion: 1,
@@ -79,6 +65,7 @@ const localDemoPullRequests = [
 	workflow_state: index % 3 === 0 ? "failure" : "success",
 	bot_review_actor: "odo[bot]",
 	bot_review_state: index % 3 === 0 ? "in_progress" : "approved",
+	...([117, 118].includes(119 - index) ? { labels: ["openspec-not-required"] } : {}),
 }));
 const pullRequestUrl = (fullName: unknown, number: unknown) => {
 	if (fullName == null || number == null) return null;
@@ -87,12 +74,7 @@ const pullRequestUrl = (fullName: unknown, number: unknown) => {
 const orderedOpenSpecs = (specs: Record<string, unknown>[]) => {
 	const unique = new Map<string, Record<string, unknown>>();
 	for (const spec of specs)
-		unique.set(
-			[spec.change_name, spec.source_commit, spec.source_ref]
-				.map(String)
-				.join("\u0000"),
-			spec,
-		);
+		unique.set([spec.change_name, spec.source_commit, spec.source_ref].map(String).join("\u0000"), spec);
 	return [...unique.values()].sort(
 		(a, b) =>
 			["change_name", "source_commit", "source_ref"]
@@ -105,20 +87,14 @@ export const safeAvatarUrl = (value: unknown) => {
 	if (typeof value !== "string") return undefined;
 	try {
 		const url = new URL(value);
-		if (url.protocol !== "https:" || url.username || url.password)
-			return undefined;
+		if (url.protocol !== "https:" || url.username || url.password) return undefined;
 		return url.href;
 	} catch {
 		return undefined;
 	}
 };
 
-export async function upsertIdentity(
-	db: Db,
-	id: string,
-	login: string,
-	avatarUrl?: string,
-) {
+export async function upsertIdentity(db: Db, id: string, login: string, avatarUrl?: string) {
 	const safeAvatar = safeAvatarUrl(avatarUrl);
 	const now = new Date(),
 		update: UpdateFilter<UserAggregate> = {
@@ -126,8 +102,7 @@ export async function upsertIdentity(
 			$setOnInsert: { schemaVersion: 1, installations: [], createdAt: now },
 			$inc: { revision: 1 },
 		};
-	if (safeAvatar)
-		update.$set = { ...update.$set, "github.avatarUrl": safeAvatar };
+	if (safeAvatar) update.$set = { ...update.$set, "github.avatarUrl": safeAvatar };
 	else update.$unset = { "github.avatarUrl": "" };
 	await db.users.updateOne({ _id: id }, update, { upsert: true });
 }
@@ -141,13 +116,8 @@ export async function seedBindings(
 	if (
 		!/^\d+$/.test(input.userId) ||
 		!input.bindings.length ||
-		new Set(input.bindings.map((item) => item.installationId)).size !==
-			input.bindings.length ||
-		input.bindings.some(
-			(item) =>
-				!/^\d+$/.test(item.installationId) ||
-				!approvedInstallationAccount(item.accountLogin),
-		)
+		new Set(input.bindings.map((item) => item.installationId)).size !== input.bindings.length ||
+		input.bindings.some((item) => !/^\d+$/.test(item.installationId) || !approvedInstallationAccount(item.accountLogin))
 	)
 		throw new Error("invalid binding seed");
 	const existing = await db.users.findOne({ _id: input.userId });
@@ -163,9 +133,7 @@ export async function seedBindings(
 	}
 	await mutateUser(db, input.userId, (user) => {
 		for (const binding of input.bindings) {
-			const prior = user.installations.find(
-				(item) => item.installationId === binding.installationId,
-			);
+			const prior = user.installations.find((item) => item.installationId === binding.installationId);
 			if (prior?.accountLogin && prior.accountLogin !== binding.accountLogin)
 				throw new Error("conflicting binding seed");
 			if (!prior)
@@ -180,18 +148,10 @@ export async function seedBindings(
 }
 export async function seedLocalDemo(db: Db) {
 	await upsertIdentity(db, LOCAL_DEMO_USER.id, LOCAL_DEMO_USER.login);
-	await bindInstallation(
-		db,
-		LOCAL_DEMO_USER.id,
-		"local-demo-installation",
-		"cubanx",
-	);
+	await bindInstallation(db, LOCAL_DEMO_USER.id, "local-demo-installation", "cubanx");
 	await mutateUser(db, LOCAL_DEMO_USER.id, (user) => {
-		const installation = user.installations.find(
-			(item) => item.installationId === "local-demo-installation",
-		);
-		if (!installation)
-			throw new Error("local demo installation missing after binding");
+		const installation = user.installations.find((item) => item.installationId === "local-demo-installation");
+		if (!installation) throw new Error("local demo installation missing after binding");
 		installation.accountLogin = "cubanx";
 		installation.repositories = [
 			{
@@ -251,19 +211,12 @@ export async function seedLocalDemo(db: Db) {
 		{ upsert: true },
 	);
 }
-export async function createOAuthState(
-	db: Db,
-	expiresAt = new Date(Date.now() + 600_000),
-) {
+export async function createOAuthState(db: Db, expiresAt = new Date(Date.now() + 600_000)) {
 	const state = randomUUID();
 	await db.oauthStates.insertOne({ _id: hash(state), expiresAt });
 	return state;
 }
-export async function consumeOAuthState(
-	db: Db,
-	state: string,
-	now = new Date(),
-) {
+export async function consumeOAuthState(db: Db, state: string, now = new Date()) {
 	return Boolean(
 		await db.oauthStates.findOneAndDelete({
 			_id: hash(state),
@@ -271,11 +224,7 @@ export async function consumeOAuthState(
 		}),
 	);
 }
-export async function createSession(
-	db: Db,
-	userId: string,
-	expiresAt = new Date(Date.now() + 30 * 86_400_000),
-) {
+export async function createSession(db: Db, userId: string, expiresAt = new Date(Date.now() + 30 * 86_400_000)) {
 	const token = randomUUID() + randomUUID();
 	await db.sessions.insertOne({ _id: hash(token), userId, expiresAt });
 	return { token, expiresAt };
@@ -289,17 +238,10 @@ export async function sessionUser(db: Db, token: string, now = new Date()) {
 	const user = await db.users.findOne({ _id: session.userId });
 	return user?.github.login ? { id: user._id, login: user.github.login } : null;
 }
-export async function bindInstallation(
-	db: Db,
-	userId: string,
-	installationId: string,
-	accountLogin?: string,
-) {
+export async function bindInstallation(db: Db, userId: string, installationId: string, accountLogin?: string) {
 	if (!approvedInstallationAccount(accountLogin)) return false;
 	await mutateUser(db, userId, (user) => {
-		const installation = user.installations.find(
-			(item) => item.installationId === installationId,
-		);
+		const installation = user.installations.find((item) => item.installationId === installationId);
 		if (!installation)
 			user.installations.push({
 				installationId,
@@ -311,11 +253,7 @@ export async function bindInstallation(
 	});
 	return true;
 }
-export async function dashboardForUser(
-	db: Db,
-	userId: string,
-	now = new Date(),
-) {
+export async function dashboardForUser(db: Db, userId: string, now = new Date()) {
 	const user = await db.users.findOne({ _id: userId });
 	if (!user?.github.login) throw new Error("unauthenticated");
 	const installations = user.installations.filter((installation) =>
@@ -329,27 +267,22 @@ export async function dashboardForUser(
 			pullRequestsPermission: installation.permissions?.pull_requests,
 		})),
 	);
-	const projectedPullRequests: PullRequest[] = repositories.flatMap(
-		(repository) =>
-			repository.pullRequests
-				.filter((pr) => sameLogin(pr.author_login, user.github.login))
-				.map((pr) => ({
-					...pr,
-					installation_id: repository.installationId,
-					installation_pull_requests: repository.pullRequestsPermission,
-					repository_id: repository.repositoryId,
-					full_name: repository.full_name,
-				})),
+	const projectedPullRequests: PullRequest[] = repositories.flatMap((repository) =>
+		repository.pullRequests
+			.filter((pr) => sameLogin(pr.author_login, user.github.login))
+			.map((pr) => ({
+				...pr,
+				installation_id: repository.installationId,
+				installation_pull_requests: repository.pullRequestsPermission,
+				repository_id: repository.repositoryId,
+				full_name: repository.full_name,
+			})),
 	);
 	const byIdentity = new Map<string, PullRequest>();
 	for (const pr of projectedPullRequests.filter((pr) => pr.state === "open")) {
 		const key = `${pr.repository_id}:${pr.number}`;
 		const previous = byIdentity.get(key);
-		if (
-			!previous ||
-			String(pr.updated_at ?? "") > String(previous.updated_at ?? "")
-		)
-			byIdentity.set(key, pr);
+		if (!previous || String(pr.updated_at ?? "") > String(previous.updated_at ?? "")) byIdentity.set(key, pr);
 	}
 	const openPullRequests = [...byIdentity.values()];
 	const pullRequests: PullRequest[] = openPullRequests
@@ -361,21 +294,17 @@ export async function dashboardForUser(
 						? [pr.open_spec as Record<string, unknown>]
 						: [],
 			);
+			const labels = Array.isArray(pr.labels)
+				? pr.labels.filter((label): label is string => typeof label === "string")
+				: [];
+			const openSpecGateResult = openSpecGate(correlatedOpenSpecs, labels, pr);
 			const openSpec = correlatedOpenSpecs[0] ?? null;
 			return {
 				...pr,
 				url: pullRequestUrl(pr.full_name, pr.number),
 				open_specs: correlatedOpenSpecs,
 				open_spec: openSpec,
-				needs_attention:
-					needsAttention(pr) ||
-					Boolean(
-						correlatedOpenSpecs.some(
-							(item) =>
-								item.pre_merge_ready !== true &&
-								Number(item.completed) < Number(item.total),
-						),
-					),
+				needs_attention: needsAttention(pr) || !openSpecGateResult.ready,
 			};
 		})
 		.sort(
@@ -396,11 +325,7 @@ export async function dashboardForUser(
 				),
 		)
 		.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
-	const notifications = await db.notifications
-		.find({ userId })
-		.sort({ createdAt: -1 })
-		.limit(20)
-		.toArray();
+	const notifications = await db.notifications.find({ userId }).sort({ createdAt: -1 }).limit(20).toArray();
 	const avatarUrl = safeAvatarUrl(user.github.avatarUrl);
 	return {
 		user: {
@@ -423,16 +348,10 @@ export async function dashboardForUser(
 			id: notification._id,
 		})),
 		installationCount: installations.length,
-		stale: installations.some((installation) =>
-			Boolean(installation.lastSyncError),
-		),
+		stale: installations.some((installation) => Boolean(installation.lastSyncError)),
 	};
 }
-export async function dashboardForSession(
-	db: Db,
-	token: string,
-	now = new Date(),
-) {
+export async function dashboardForSession(db: Db, token: string, now = new Date()) {
 	const user = await sessionUser(db, token, now);
 	if (!user) throw new Error("unauthenticated");
 	return dashboardForUser(db, user.id, now);
