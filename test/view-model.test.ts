@@ -1,7 +1,10 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import {
+	activeOpenSpecGroupsFor,
 	derivePullRequests,
+	detectedOpenSpecCandidatesFor,
 	fuzzyScore,
+	incompleteOpenSpecGroupsFor,
 	lifecycleFor,
 	mergeControlFor,
 	orderedOpenSpecs,
@@ -141,6 +144,47 @@ test("orders and deduplicates authoritative OpenSpecs and enables merge only whe
 			open_specs: [{ completed: 1, total: 2 }],
 		}),
 	).toMatchObject({ state: "blocked" });
+});
+
+test("normalizes bounded OpenSpec groups while retaining legacy records", () => {
+	const current = { title: "Current", tasks: [{ completed: false, text: "Reconfigure the deflector" }] };
+	const next = { title: "Next", tasks: [{ completed: false, text: "Test the warp core" }] };
+	expect(activeOpenSpecGroupsFor({ active_groups: [current, next, { title: "Later", tasks: [] }] })).toEqual([
+		current,
+		next,
+	]);
+	expect(activeOpenSpecGroupsFor({ active_groups: JSON.stringify([current, next]) })).toEqual([current, next]);
+	expect(activeOpenSpecGroupsFor({ activeGroups: JSON.stringify([current, next]) })).toEqual([current, next]);
+	expect(activeOpenSpecGroupsFor({ active_group: JSON.stringify(current) })).toEqual([current]);
+	expect(activeOpenSpecGroupsFor({ activeGroup: JSON.stringify(current) })).toEqual([current]);
+	expect(activeOpenSpecGroupsFor({ active_groups: [] })).toEqual([]);
+	const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+	expect(activeOpenSpecGroupsFor({ active_groups: "{", activeGroup: JSON.stringify(current) })).toEqual([current]);
+	expect(
+		activeOpenSpecGroupsFor({
+			active_groups: [{ title: "Broken", tasks: [{ completed: "no", text: "Invalid" }] }] as unknown as [],
+			active_group: current,
+		}),
+	).toEqual([current]);
+	expect(warn).toHaveBeenCalledWith("Invalid OpenSpec task evidence field", "active_groups");
+	warn.mockRestore();
+});
+
+test("prefers display-only incomplete OpenSpec groups with active-group fallbacks", () => {
+	const postMerge = { title: "2.2 Observe [post-merge]", tasks: [{ completed: false, text: "Confirm the relay" }] };
+	const current = { title: "Current", tasks: [{ completed: false, text: "Reconfigure the deflector" }] };
+	expect(incompleteOpenSpecGroupsFor({ incomplete_groups: [postMerge], active_groups: [] })).toEqual([postMerge]);
+	expect(incompleteOpenSpecGroupsFor({ active_groups: [current] })).toEqual([current]);
+});
+
+test("keeps only detected OpenSpec candidates absent from authoritative evidence", () => {
+	expect(
+		detectedOpenSpecCandidatesFor({
+			open_specs: [{ change_name: "Defiant repair" }],
+			open_spec: { change_name: "legacy-wormhole" },
+			detected_open_specs: ["defiant repair", "LEGACY-WORMHOLE", "local-runabout"],
+		}),
+	).toEqual(["local-runabout"]);
 });
 
 test("browser-local OpenSpecs are informational and cannot affect authoritative lifecycle or merge controls", () => {

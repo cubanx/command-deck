@@ -50,12 +50,6 @@ const snapshot = {
 
 const announcement = () =>
 	screen.getAllByRole("status").find((element) => element.textContent?.startsWith("Reconciliation"))?.textContent;
-const dismissByOverlay = async () => {
-	await waitFor(() => expect(document.querySelector(".m_9814e45f")).not.toBeNull());
-	const overlay = document.querySelector(".m_9814e45f");
-	if (!overlay) throw new Error("Expected Mantine modal overlay");
-	fireEvent.click(overlay);
-};
 
 const evidenceSnapshot = {
 	...snapshot,
@@ -66,7 +60,7 @@ const evidenceSnapshot = {
 				{ change_name: "hold-the-line", completed: 1, total: 2 },
 				{ change_name: "save-the-prophets", completed: 3, total: 3 },
 			],
-			detected_open_specs: ["local-runabout"],
+			detected_open_specs: ["hold-the-line", "SAVE-THE-PROPHETS", "local-runabout"],
 			workflow_state: "failure",
 			checks_state: "success",
 			review_state: "approved",
@@ -224,12 +218,12 @@ const articleTitles = () => screen.getAllByRole("article").map((article) => arti
 
 test("renders accessible lifecycle cards, filters, and fail-closed merge controls", () => {
 	renderFrontend(<OperationalDashboard snapshot={snapshot} />);
+	expect(screen.getAllByRole("list").some((list) => list.classList.contains("command-center-blockers"))).toBe(true);
 	expect(screen.getByRole("article", { name: /Defiant readiness/i })).toBeTruthy();
 	expect(screen.getByRole("article", { name: /Defiant readiness/i }).getAttribute("data-with-border")).toBe("true");
-	expect(screen.getByRole("link", { name: /Defiant readiness/i })).toBeTruthy();
+	expect(screen.queryByRole("link", { name: /Defiant readiness/i })).toBeNull();
+	expect(screen.getByRole("button", { name: "Actions for Defiant readiness" })).toBeTruthy();
 	expect(screen.getAllByText(/mergeable/i).length).toBeGreaterThan(1);
-	expect(screen.getByRole("button", { name: "Merge" })).toBeTruthy();
-	expect(screen.queryAllByRole("button", { name: "Merge" })).toHaveLength(1);
 	fireEvent.change(screen.getByRole("textbox", { name: /search pull requests/i }), { target: { value: "wormhole" } });
 	expect(screen.queryByText("Defiant readiness")).toBeNull();
 	expect(screen.getByText("Wormhole chart")).toBeTruthy();
@@ -244,10 +238,12 @@ test("reconciles exact targets with busy, sanitized results, invalidation, and f
 	renderFrontend(<OperationalDashboard snapshot={snapshot} />, client);
 	const cardElement = screen.getByRole("article", { name: /Defiant readiness/i });
 	const card = within(cardElement);
-	const pr = card.getByRole("button", { name: "Reconcile Defiant readiness" });
-	pr.focus();
+	const actions = card.getByRole("button", { name: "Actions for Defiant readiness" });
+	actions.focus();
+	fireEvent.click(actions);
+	const pr = await screen.findByRole("menuitem", { name: "Reconcile PR" });
 	fireEvent.click(pr);
-	expect(pr.hasAttribute("disabled")).toBe(true);
+	expect(actions.hasAttribute("disabled")).toBe(true);
 	expect(cardElement.getAttribute("aria-busy")).toBe("true");
 	expect(announcement()).toBe("Reconciliation running.");
 	await waitFor(() =>
@@ -261,22 +257,51 @@ test("reconciles exact targets with busy, sanitized results, invalidation, and f
 	);
 	resolve(new Response(JSON.stringify({ status: "success" }), { status: 200 }));
 	await waitFor(() => expect(announcement()).toBe("Reconciliation completed."));
-	expect(document.activeElement).toBe(pr);
+	await waitFor(() => expect(document.activeElement).toBe(actions));
 	expect(invalidate).toHaveBeenCalled();
 });
 
-test("reconciles an installation with the exact JSON target", async () => {
-	const fetch = vi.fn(async () => new Response(JSON.stringify({ status: "success" }), { status: 200 }));
-	vi.stubGlobal("fetch", fetch);
+test("keeps reconciliation in the card header without status details or an empty footer", async () => {
 	renderFrontend(<OperationalDashboard snapshot={snapshot} />, new QueryClient());
-	const card = within(screen.getByRole("article", { name: /Defiant readiness/i }));
-	fireEvent.click(card.getByRole("button", { name: "Reconcile installation ds9" }));
-	await waitFor(() =>
-		expect(fetch).toHaveBeenCalledWith(
-			"/api/reconcile",
-			expect.objectContaining({ body: JSON.stringify({ installationId: "ds9" }) }),
-		),
-	);
+	const cardElement = screen.getByRole("article", { name: /Defiant readiness/i });
+	const card = within(cardElement);
+	expect(card.queryByText("Status details")).toBeNull();
+	const actions = card.getByRole("button", { name: "Actions for Defiant readiness" });
+	const header = card.getByRole("heading", { name: "Defiant readiness" });
+	const headerGroup = header.closest(".mantine-Group-root") as HTMLElement | null;
+	expect(headerGroup?.style.getPropertyValue("--group-wrap")).toBe("wrap");
+	expect(header.contains(actions)).toBe(true);
+	expect(card.queryByRole("link", { name: "Defiant readiness" })).toBeNull();
+	expect(actions.textContent).not.toContain("Actions");
+	expect(actions.textContent).toContain("⌄");
+	expect(actions.querySelector(".command-center-pr-title-text")?.textContent).toBe("Defiant readiness");
+	expect(actions.querySelector(".command-center-pr-title-cue")?.getAttribute("aria-hidden")).toBe("true");
+	expect(actions.querySelectorAll("button")).toHaveLength(0);
+	expect(cardElement.querySelector(".mantine-Badge-root")).toBeNull();
+	expect(actions.classList.contains("command-center-pr-title-trigger")).toBe(true);
+	expect(actions.hasAttribute("data-expanded")).toBe(false);
+	expect(card.queryByRole("form", { name: "Merge Defiant readiness" })).toBeNull();
+	expect(card.queryByRole("button", { name: /Reconcile installation/i })).toBeNull();
+	fireEvent.click(actions);
+	expect(actions.getAttribute("data-expanded")).toBe("true");
+	const menuItems = await screen.findAllByRole("menuitem");
+	expect(menuItems.map((item) => item.textContent)).toEqual(["Reconcile PR", "Merge", "Open PR ↗"]);
+	const openPr = menuItems[2];
+	expect(openPr.getAttribute("target")).toBe("_blank");
+	expect(openPr.getAttribute("rel")).toBe("noreferrer");
+	expect(openPr.textContent).toContain("↗");
+	fireEvent.keyDown(document.body, { key: "Escape" });
+	await waitFor(() => expect(actions.hasAttribute("data-expanded")).toBe(false));
+});
+
+test("portals the title menu while preferring its bottom-right anchor", async () => {
+	renderFrontend(<OperationalDashboard snapshot={snapshot} />, new QueryClient());
+	const card = screen.getByRole("article", { name: "Defiant readiness" });
+	const actions = screen.getByRole("button", { name: "Actions for Defiant readiness" });
+	fireEvent.click(actions);
+	const menu = await screen.findByRole("menu", { hidden: true });
+	expect(menu.getAttribute("data-position")).toBe("bottom-end");
+	expect(card.contains(menu)).toBe(false);
 });
 
 test("never reveals failed response bodies and restores focus", async () => {
@@ -284,16 +309,17 @@ test("never reveals failed response bodies and restores focus", async () => {
 	vi.stubGlobal("fetch", fetch);
 	renderFrontend(<OperationalDashboard snapshot={snapshot} />, new QueryClient());
 	const card = within(screen.getByRole("article", { name: /Defiant readiness/i }));
-	const pr = card.getByRole("button", { name: "Reconcile Defiant readiness" });
-	await waitFor(() => expect(pr.hasAttribute("disabled")).toBe(false));
-	pr.focus();
+	const actions = card.getByRole("button", { name: "Actions for Defiant readiness" });
+	actions.focus();
+	fireEvent.click(actions);
+	const pr = await screen.findByRole("menuitem", { name: "Reconcile PR", hidden: true });
 	fireEvent.click(pr);
 	await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Reconciliation failed. Try again."));
 	expect(screen.queryByText("secret-DS9-token")).toBeNull();
-	expect(document.activeElement).toBe(pr);
+	await waitFor(() => expect(document.activeElement).toBe(actions));
 });
 
-test("renders lifecycle and evidence separately and provides dismissible status detail", async () => {
+test("renders lifecycle and evidence separately", () => {
 	renderFrontend(<OperationalDashboard snapshot={evidenceSnapshot} />);
 	const card = within(screen.getByRole("article", { name: /Defiant readiness/i }));
 	const lifecycle = card.getByRole("group", { name: "PR Lifecycle" });
@@ -311,36 +337,15 @@ test("renders lifecycle and evidence separately and provides dismissible status 
 	expect(pills?.querySelector(".lifecycle-pill.complete")?.textContent).toBe("✓ Draft · Complete");
 	expect(pills?.querySelector(".lifecycle-pill.current")?.textContent).toBe("◐ OpenSpec ready · Current");
 	expect(pills?.querySelectorAll(".lifecycle-pill.upcoming")).toHaveLength(3);
-	expect(card.getByText("OpenSpec · hold-the-line · 1/2")).toBeTruthy();
-	expect(card.getByText("OpenSpec · save-the-prophets · 3/3")).toBeTruthy();
-	expect(card.getByText(/Detected OpenSpec candidates \(informational\): local-runabout/)).toBeTruthy();
+	expect(card.getByText("OpenSpec · hold-the-line · Incomplete · 1/2")).toBeTruthy();
+	expect(card.getByText("OpenSpec · save-the-prophets · Complete · 3/3")).toBeTruthy();
+	expect(card.getByText("Detected OpenSpec candidates (informational): local-runabout")).toBeTruthy();
+	expect(card.queryByText(/Detected OpenSpec candidates .*hold-the-line/)).toBeNull();
 	expect(card.getByRole("link", { name: "Runabout check" }).getAttribute("href")).toBe(
 		"https://example.test/actions/9",
 	);
 	expect(card.queryByRole("link", { name: "Unsafe action" })).toBeNull();
 	expect(card.getByText("Unsafe action")).toBeTruthy();
-	const trigger = card.getByRole("button", { name: "Inspect Defiant readiness status" });
-	trigger.focus();
-	fireEvent.click(trigger);
-	expect(trigger.getAttribute("aria-expanded")).toBe("true");
-	const dialog = await screen.findByRole("dialog", { name: "Pull request status detail" });
-	expect(dialog.textContent).toContain("Actions: failure");
-	expect(dialog.textContent).toContain("Checks: success");
-	expect(dialog.textContent).toContain("Review: approved");
-	expect(dialog.textContent).toContain("Mergeability: clean");
-	expect(dialog.textContent).toContain("OpenSpec · hold-the-line · 1/2");
-	expect(dialog.textContent).toContain("Detected OpenSpec candidates (informational): local-runabout");
-	fireEvent.keyDown(dialog, { key: "Escape" });
-	await waitFor(() => expect(screen.queryByRole("dialog", { name: "Pull request status detail" })).toBeNull());
-	expect(document.activeElement).toBe(trigger);
-	fireEvent.click(trigger);
-	fireEvent.click(await screen.findByRole("button", { name: "Close status detail" }));
-	await waitFor(() => expect(screen.queryByRole("dialog", { name: "Pull request status detail" })).toBeNull());
-	expect(document.activeElement).toBe(trigger);
-	fireEvent.click(trigger);
-	await dismissByOverlay();
-	await waitFor(() => expect(screen.queryByRole("dialog", { name: "Pull request status detail" })).toBeNull());
-	expect(document.activeElement).toBe(trigger);
 });
 
 test("keeps filter controls in a shared wrapping row", () => {
@@ -348,7 +353,9 @@ test("keeps filter controls in a shared wrapping row", () => {
 	const row = screen.getByRole("textbox", { name: "Search pull requests" }).closest(".command-center-filter-row");
 	expect(row).toBeTruthy();
 	expect(screen.getByRole("textbox", { name: "Search pull requests" }).closest(".filter-grow")).toBeTruthy();
-	expect(row?.contains(screen.getByRole("button", { name: "Status: All (8)" }))).toBe(true);
+	const status = screen.getByRole("combobox", { name: "Status" });
+	expect(row?.contains(status)).toBe(true);
+	expect(status.getAttribute("placeholder")).toBe("All statuses");
 	const sort = screen.getByRole("combobox", { name: "Sort pull requests" });
 	expect(sort.closest(".filter-sort")).toBeTruthy();
 	expect(screen.queryByRole("combobox", { name: "Sort direction" })).toBeNull();
@@ -374,7 +381,8 @@ test("keeps filter controls in a shared wrapping row", () => {
 	const results = within(filters as HTMLElement).getByRole("status") as HTMLElement;
 	expect(results.textContent).toBe("2 results");
 	expect(results.style.color).toBe("var(--mantine-color-dimmed)");
-	expect(results.style.alignSelf).toBe("center");
+	expect(results.style.marginBottom).toBe("var(--mantine-spacing-xs)");
+	expect(results.style.marginLeft).toBe("auto");
 	const clear = screen.getByRole("button", { name: "Clear filters" });
 	expect(row?.contains(results)).toBe(true);
 	expect(results.previousElementSibling).toBe(clear);
@@ -385,6 +393,145 @@ test("keeps deployment and broad reconciliation controls out of the dashboard", 
 	expect(screen.queryByRole("button", { name: /Latest deployment/i })).toBeNull();
 	expect(screen.queryByRole("button", { name: "Sync GitHub installations" })).toBeNull();
 	expect(screen.queryByRole("button", { name: "Reconcile all PRs" })).toBeNull();
+});
+
+test("presents only authoritative OpenSpec tasks on cards and status details", async () => {
+	renderFrontend(
+		<OperationalDashboard
+			snapshot={{
+				...snapshot,
+				pullRequests: [
+					{
+						...snapshot.pullRequests[0],
+						open_specs: [
+							{
+								change_name: "defiant-repair",
+								completed: 1,
+								total: 3,
+								active_groups: [
+									{
+										title: "Current repairs",
+										tasks: [
+											{ completed: true, text: "Align the deflector" },
+											{ completed: false, text: "Reconfigure the deflector" },
+										],
+									},
+									{
+										title: "Next repairs",
+										tasks: [{ completed: false, text: "Test the warp core" }],
+									},
+								],
+								source_url: "https://github.com/ds9/ops/blob/main/openspec/changes/defiant-repair/tasks.md",
+							},
+							{
+								change_name: "wormhole-log",
+								completed: 3,
+								total: 3,
+								active_groups: [],
+								source_url: "javascript:alert('not-safe')",
+							},
+							{
+								change_name: "duplicate-source",
+								completed: 0,
+								total: 3,
+								active_groups: [
+									{
+										title: "Repeated source title",
+										tasks: [
+											{ completed: false, text: "Repeat the task" },
+											{ completed: false, text: "Repeat the task" },
+										],
+									},
+									{
+										title: "Repeated source title",
+										tasks: [{ completed: false, text: "Next repeated task" }],
+									},
+								],
+							},
+							{
+								change_name: "incomplete-evidence",
+								completed: 5,
+								total: 8,
+								active_groups: [],
+								source_url: "https://github.com/ds9/ops/blob/main/openspec/changes/incomplete-evidence/tasks.md",
+							},
+							{
+								change_name: "modernize-railway-better-auth",
+								completed: 5,
+								total: 8,
+								pre_merge_ready: true,
+								active_groups: [],
+								incomplete_groups: [
+									{
+										title: "2.2-2.4 Observe [post-merge]",
+										tasks: [
+											{ completed: false, text: "2.2 Confirm the relay" },
+											{ completed: false, text: "2.3 Observe the rollout" },
+											{ completed: false, text: "2.4 Record the outcome" },
+										],
+									},
+								],
+							},
+						],
+						detected_open_specs: ["local-candidate"],
+					},
+				],
+			}}
+		/>,
+	);
+	const article = screen.getByRole("article", { name: /Defiant readiness/i });
+	const viewers = article.querySelectorAll("details");
+	expect(viewers).toHaveLength(5);
+	expect([...viewers].slice(0, 4).map((viewer) => viewer.querySelector("summary")?.textContent)).toEqual([
+		"OpenSpec · defiant-repair · Current repairs · 1/3",
+		"OpenSpec · wormhole-log · Complete · 3/3",
+		"OpenSpec · duplicate-source · Repeated source title · 0/3",
+		"OpenSpec · incomplete-evidence · Incomplete · 5/8",
+	]);
+	const postMergeSummary = viewers[4]?.querySelector("summary");
+	expect(postMergeSummary?.textContent).toContain("OpenSpec · modernize-railway-better-auth · 5/8");
+	expect(postMergeSummary?.textContent).not.toContain("Post-merge remaining");
+	expect(
+		within(postMergeSummary as HTMLElement)
+			.getByText("Post-merge")
+			.closest(".post-merge-badge"),
+	).not.toBeNull();
+	expect(viewers[0]?.classList.contains("openspec")).toBe(true);
+	expect(viewers[0]?.querySelector("summary > strong")?.textContent).toBe(
+		"OpenSpec · defiant-repair · Current repairs · 1/3",
+	);
+	expect(viewers[0]?.querySelector("ul.tasks")).toBeTruthy();
+	expect(viewers[0]?.textContent).toContain("Current repairs");
+	expect(viewers[0]?.textContent).toContain("Next repairs");
+	expect(
+		[...viewers[0]!.querySelectorAll<HTMLInputElement>("input[type=checkbox]")].map((input) => [
+			input.checked,
+			input.disabled,
+		]),
+	).toEqual([
+		[true, true],
+		[false, true],
+		[false, true],
+	]);
+	expect(
+		within(article).getAllByRole("checkbox", {
+			name: "Reconfigure the deflector",
+		}),
+	).toHaveLength(1);
+	expect(within(article).getAllByRole("checkbox", { name: "Repeat the task" })).toHaveLength(2);
+	expect(
+		(
+			within(article).getByRole("checkbox", {
+				name: "Next repeated task",
+			}) as HTMLInputElement
+		).disabled,
+	).toBe(true);
+	expect(viewers[3]?.textContent).toContain("Task details are unavailable until reconciliation.");
+	expect(viewers[3]?.textContent).not.toContain("All tasks complete.");
+	expect(viewers[4]?.textContent).toContain("2.2 Confirm the relay");
+	expect(within(article).getAllByRole("link", { name: "Open tasks" })).toHaveLength(2);
+	expect([...viewers].some((viewer) => viewer.textContent?.includes("local-candidate"))).toBe(false);
+	expect([...viewers].some((viewer) => viewer.textContent?.includes("All tasks complete."))).toBe(true);
 });
 
 test("filters, orders, clears, and persists the operational card view", async () => {
@@ -407,23 +554,34 @@ test("filters, orders, clears, and persists the operational card view", async ()
 	fireEvent.change(search, { target: { value: "202" } });
 	expect(articleTitles()).toEqual(["Kira ready"]);
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-	fireEvent.click(screen.getByRole("button", { name: "Status: All (8)" }));
-	const all = () => screen.getByRole("checkbox", { hidden: true, name: "All" }) as HTMLInputElement;
-	await screen.findByRole("checkbox", { hidden: true, name: "All" });
-	expect(all().checked).toBe(true);
-	expect(screen.getByText("Lifecycle")).toBeTruthy();
-	expect(screen.getByText("Attention")).toBeTruthy();
-	fireEvent.click(screen.getByRole("checkbox", { hidden: true, name: "Draft" }));
-	expect(screen.getByRole("button", { name: "Status (7)" })).toBeTruthy();
-	expect(all().indeterminate).toBe(true);
-	fireEvent.click(all());
-	expect(screen.getByRole("button", { name: "Status: All (8)" })).toBeTruthy();
-	fireEvent.click(all());
-	expect(screen.getByRole("button", { name: "Status: None (0)" })).toBeTruthy();
-	expect(all().checked).toBe(false);
-	expect(screen.queryAllByRole("article")).toEqual([]);
-	fireEvent.click(all());
+	const status = () => screen.getByRole("combobox", { name: "Status" });
+	const selectStatus = async (name: string) => {
+		fireEvent.click(status());
+		fireEvent.click(await screen.findByRole("option", { name, hidden: true }));
+	};
+	const clearStatuses = () => {
+		const clear = status().closest(".filter-status")?.querySelector("[class*='InputClearButton']");
+		if (!clear) throw new Error("Expected built-in status clear control");
+		fireEvent.click(clear);
+	};
+	fireEvent.click(status());
+	expect(within(await screen.findByRole("listbox")).getAllByRole("option", { hidden: true })).toHaveLength(8);
+	expect(screen.queryByRole("checkbox", { name: "All" })).toBeNull();
+	expect(screen.queryByText("Lifecycle")).toBeNull();
+	expect(screen.queryByText("Attention")).toBeNull();
+	fireEvent.click(await screen.findByRole("option", { name: "Draft", hidden: true }));
+	expect(articleTitles()).toEqual(["Dukat draft"]);
+	await selectStatus("Needs attention");
+	expect(articleTitles()).toEqual(["Quark reviewing", "Odo OpenSpec", "Dukat draft"]);
+	const removeDraft = status().closest(".filter-status")?.querySelector("span[data-with-remove] button");
+	if (!removeDraft) throw new Error("Expected built-in Draft removal control");
+	fireEvent.click(removeDraft);
+	expect(status().closest(".filter-status")?.textContent).not.toContain("Draft");
+	expect(articleTitles()).toEqual(["Quark reviewing", "Odo OpenSpec", "Dukat draft"]);
+	clearStatuses();
 	expect(articleTitles()).toHaveLength(5);
+	expect(status().getAttribute("placeholder")).toBe("All statuses");
+	expect(screen.queryByText(/Status: (All|None)/)).toBeNull();
 	for (const [stage, title] of [
 		["Draft", "Dukat draft"],
 		["OpenSpec", "Odo OpenSpec"],
@@ -431,20 +589,18 @@ test("filters, orders, clears, and persists the operational card view", async ()
 		["Reviewing", "Quark reviewing"],
 		["Mergeable", "Sisko mergeable"],
 	] as const) {
-		fireEvent.click(all());
-		fireEvent.click(screen.getByRole("checkbox", { hidden: true, name: stage }));
+		await selectStatus(stage);
 		expect(articleTitles()).toEqual([title]);
-		fireEvent.click(all());
+		clearStatuses();
 	}
 	for (const [name, expected] of [
 		["Needs attention", ["Quark reviewing", "Odo OpenSpec", "Dukat draft"]],
 		["Failed Actions", ["Quark reviewing"]],
 		["Failed Checks", ["Quark reviewing"]],
 	] as const) {
-		fireEvent.click(all());
-		fireEvent.click(screen.getByRole("checkbox", { hidden: true, name }));
+		await selectStatus(name);
 		expect(articleTitles()).toEqual(expected);
-		fireEvent.click(all());
+		clearStatuses();
 	}
 	for (const name of ["ds9/dukat", "ds9/kira", "ds9/odo", "ds9/quark", "ds9/sisko"])
 		fireEvent.click(within(repositoryPills).getByRole("button", { name }));
@@ -470,6 +626,7 @@ test("filters, orders, clears, and persists the operational card view", async ()
 	}
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 	expect((sort as HTMLSelectElement).value).toBe("progress:desc");
+	expect(status().getAttribute("placeholder")).toBe("All statuses");
 	expect(store.get("dcc-pr-sort")).toBe('{"mode":"progress","direction":"desc"}');
 	expect(screen.getByRole("status").textContent).toBe("5 results");
 });
@@ -519,9 +676,10 @@ test("renders one responsive semantic dashboard surface without duplicate contro
 	}
 });
 
-test("renders only complete, lifecycle-ready native merge forms", () => {
+test("renders only complete, lifecycle-ready native merge forms", async () => {
 	renderFrontend(<OperationalDashboard snapshot={mergeSnapshot} />);
-	const form = screen.getByRole("form", { name: "Merge Valid merge" });
+	fireEvent.click(screen.getByRole("button", { name: "Actions for Valid merge" }));
+	const form = await screen.findByRole("form", { name: "Merge Valid merge" });
 	expect(form.getAttribute("method")).toBe("post");
 	expect(form.getAttribute("action")).toBe("/api/merge/start");
 	expect([...form.querySelectorAll("input")].map((input) => [input.name, input.value])).toEqual([
@@ -530,7 +688,6 @@ test("renders only complete, lifecycle-ready native merge forms", () => {
 		["number", "9"],
 		["headSha", "a".repeat(40)],
 	]);
-	expect(screen.getAllByRole("form")).toHaveLength(1);
 	for (const title of [
 		"Read only",
 		"Draft merge",
@@ -538,14 +695,6 @@ test("renders only complete, lifecycle-ready native merge forms", () => {
 		"Review pending",
 		"Missing repository",
 		"Missing installation",
-		"Invalid number",
-		"Zero number",
-		"Fractional number",
-		"Short SHA",
-		"Nonhex SHA",
-		"Missing head",
-		"Mergeability blocked",
-		"Local only",
 	])
 		expect(within(screen.getByRole("article", { name: title })).queryByRole("form")).toBeNull();
 	expect(screen.queryByRole("article", { name: "Closed merge" })).toBeNull();

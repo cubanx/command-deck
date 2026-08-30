@@ -137,12 +137,26 @@ test("shares compact deployment detail in navigation without placing it in route
 	expect(within(dashboard).queryByRole("button", { name: /Latest deployment/i })).toBeNull();
 	const deployment = screen.getByRole("button", { name: /Latest deployment.*ds9\/ops/i });
 	expect(deployment.classList.contains("deployment-summary")).toBe(true);
+	const deploymentContent = deployment.querySelector(".deployment-summary-content");
+	expect([...(deploymentContent?.children ?? [])].map((child) => child.className)).toEqual([
+		"deployment-summary-label",
+		"status",
+		"deployment-summary-detail",
+	]);
+	expect(deploymentContent?.querySelector(".deployment-summary-label")?.textContent).toBe("Latest deployment");
+	expect(deploymentContent?.querySelector(".status")?.textContent).toBe("success");
+	expect(deploymentContent?.querySelector(".deployment-summary-detail")?.textContent).toContain("ds9/ops");
 	const userMenu = screen.getByRole("button", { name: "User menu" });
 	const avatarTarget = userMenu.querySelector(".avatar-menu-target");
 	expect(avatarTarget?.querySelector(".avatar-menu-caret")).toBeTruthy();
 	expect(avatarTarget?.querySelector(".mantine-Avatar-root")).toBeTruthy();
+	deployment.focus();
 	fireEvent.click(deployment);
-	expect((await screen.findByRole("dialog", { name: "Deployment detail" })).textContent).toContain("production");
+	const dialog = await screen.findByRole("dialog", { name: "Deployment detail" });
+	expect(dialog.textContent).toContain("production");
+	fireEvent.keyDown(dialog, { key: "Escape" });
+	await waitFor(() => expect(screen.queryByRole("dialog", { name: "Deployment detail" })).toBeNull());
+	expect(document.activeElement).toBe(deployment);
 	cleanup();
 	renderFrontend(
 		<>

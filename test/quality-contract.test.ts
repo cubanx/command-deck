@@ -73,20 +73,30 @@ test("development startup builds the ignored frontend assets before starting the
 	expect(text("scripts/dev.ts")).toContain('"src/web/frontend-build.ts", "--watch"');
 });
 
-test("Search width is bounded on wide filter rows without changing mobile wrapping", () => {
+test("filter row stays compact on tablets and uses a mobile grid", () => {
 	const css = text("src/web/app.css");
 	expect(css).toMatch(/\.command-center-filter-row \.filter-grow\s*\{\s*flex: 0 1 20rem;\s*min-width: 14rem;\s*\}/);
 	expect(css).toMatch(
-		/@media \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-filter-row \.filter-grow,[\s\S]*?\{\s*flex-basis: 100%;/,
+		/@media \(min-width: 601px\) and \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-filter-row\s*\{\s*flex-wrap: nowrap;\s*\}[\s\S]*?\.command-center-filter-row \.filter-grow,[\s\S]*?\.command-center-filter-row \.filter-sort\s*\{\s*flex: 1 1 0;\s*min-width: 0;\s*\}/,
+	);
+	expect(css).toMatch(/\.command-center-filter-row \.filter-status\s*\{\s*flex: 0 0 auto;\s*\}/);
+	expect(css).toMatch(
+		/@media \(min-width: 601px\) and \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-filter-row button\s*\{\s*flex: none;\s*\}/,
+	);
+	expect(css).toMatch(
+		/@media \(max-width: 600px\)\s*\{[\s\S]*?\.command-center-filter-row\s*\{\s*display: grid;\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);\s*\}[\s\S]*?\.command-center-filter-row \.filter-grow\s*\{\s*grid-column: 1 \/ -1;\s*\}/,
+	);
+	expect(css).toMatch(
+		/@media \(max-width: 600px\)\s*\{[\s\S]*?\.command-center-filter-row \.filter-status,[\s\S]*?\.command-center-filter-row \.filter-sort\s*\{\s*min-width: 0;\s*\}/,
+	);
+	expect(css).toMatch(
+		/@media \(max-width: 420px\)\s*\{[\s\S]*?\.command-center-filter-row \.filter-status,[\s\S]*?\.command-center-filter-row \.filter-sort\s*\{\s*grid-column: 1 \/ -1;\s*\}/,
 	);
 });
 
-test("Sort width accommodates semantic ordering labels without changing mobile wrapping", () => {
+test("Sort width accommodates semantic ordering labels", () => {
 	const css = text("src/web/app.css");
 	expect(css).toMatch(/\.command-center-filter-row \.filter-sort\s*\{\s*flex: 0 0 14rem;\s*min-width: 14rem;\s*\}/);
-	expect(css).toMatch(
-		/@media \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-filter-row \.filter-sort\s*\{\s*flex-basis: 100%;/,
-	);
 });
 
 test("Navigation brand keeps its icon size while centering the larger label", () => {
@@ -95,6 +105,62 @@ test("Navigation brand keeps its icon size while centering the larger label", ()
 	expect(css).toMatch(/\.command-center-navigation \.brand\s*\{\s*align-items: center;\s*\}/);
 	expect(css).toMatch(
 		/\.command-center-navigation \.brand strong\s*\{\s*font-size: 1\.25rem;\s*line-height: 1\.1;\s*\}/,
+	);
+});
+
+test("navigation deployment summary keeps status beside its label above the detail", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(
+		/\.command-center-navigation \.deployment-summary-content\s*\{\s*display: grid;\s*grid-template-columns: auto auto;\s*gap: 2px 6px;\s*\}/,
+	);
+	expect(css).toMatch(
+		/\.command-center-navigation \.deployment-summary-label\s*\{\s*grid-column: 1;\s*grid-row: 1;[\s\S]*?\}/,
+	);
+	expect(css).toMatch(
+		/\.command-center-navigation \.deployment-summary \.status\s*\{\s*grid-column: 2;\s*grid-row: 1;/,
+	);
+	expect(css).toMatch(
+		/\.command-center-navigation \.deployment-summary-detail\s*\{\s*grid-column: 1 \/ -1;\s*grid-row: 2;[\s\S]*?\}/,
+	);
+});
+
+test("narrow navigation keeps a centered deployment rail without forcing the brand onto its own row", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(
+		/@media \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-navigation\s*\{\s*display: flex;\s*flex-wrap: wrap;\s*\}/,
+	);
+	expect(css).toMatch(
+		/@media \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-header-brand,[\s\S]*?\.command-center-header-avatar\s*\{\s*flex: 1 1 0;\s*\}/,
+	);
+	expect(css).toMatch(
+		/@media \(max-width: 760px\)\s*\{[\s\S]*?\.command-center-header-deployment\s*\{\s*flex: 0 0 auto;\s*\}/,
+	);
+	expect(css).not.toMatch(/\.command-center-navigation \.brand\s*\{\s*flex-basis: 100%;\s*\}/);
+});
+
+test("OpenSpec disclosures retain their native summary affordances", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(/\.openspec > summary\s*\{\s*cursor: pointer;\s*\}/);
+	expect(css).toMatch(/summary:focus-visible\s*\{/);
+});
+
+test("dashboard blockers and post-merge pills stay contained", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(/\.command-center-blockers\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?overflow-wrap:\s*anywhere;/);
+	expect(css).toMatch(/\.post-merge-badge\s*\{[\s\S]*?margin-inline-start:\s*[^;]+;[\s\S]*?vertical-align:\s*middle;/);
+});
+
+test("PR title menu trigger keeps its prominent heading presentation", () => {
+	const css = text("src/web/app.css");
+	expect(css).toMatch(
+		/\.command-center-pr-title-trigger\s*\{[\s\S]*?display:\s*inline-flex;[\s\S]*?align-items:\s*center;[\s\S]*?gap:\s*[^;]+;[\s\S]*?max-width:\s*100%;[\s\S]*?font:\s*inherit;/,
+	);
+	expect(css).toMatch(/\.command-center-pr-title-text\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?overflow-wrap:\s*anywhere;/);
+	expect(css).toMatch(
+		/\.command-center-pr-title-cue\s*\{[\s\S]*?flex:\s*none;[\s\S]*?line-height:\s*1;[\s\S]*?transform:\s*translateY\(-1px\);/,
+	);
+	expect(css).toMatch(
+		/\.command-center-pr-title-trigger\[data-expanded\]\s+\.command-center-pr-title-cue\s*\{[\s\S]*?transform:\s*translateY\(-1px\)\s+rotate\(180deg\);/,
 	);
 });
 

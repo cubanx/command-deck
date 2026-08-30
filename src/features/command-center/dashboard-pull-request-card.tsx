@@ -1,7 +1,14 @@
-import { Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
+import { Card, Group, Menu, Stack, Text, Title, UnstyledButton } from "@mantine/core";
+import { useRef } from "react";
 import { LifecycleRail } from "#/features/command-center/dashboard-lifecycle";
+import { OpenSpecTaskViewer } from "#/features/command-center/dashboard-openspec";
 import { safeHref } from "#/features/command-center/dashboard-utils";
-import { type DerivedPullRequest, mergeControlFor, type PullRequest } from "#/features/command-center/view-model";
+import {
+	type DerivedPullRequest,
+	detectedOpenSpecCandidatesFor,
+	mergeControlFor,
+	type PullRequest,
+} from "#/features/command-center/view-model";
 
 const hasMergeTarget = (pr: PullRequest) =>
 	typeof pr.installation_id === "string" &&
@@ -14,15 +21,14 @@ const hasMergeTarget = (pr: PullRequest) =>
 	/^[a-f\d]{40}$/i.test(pr.head_sha);
 
 function OpenSpecEvidence({ pr }: { pr: PullRequest }) {
+	const detectedOpenSpecs = detectedOpenSpecCandidatesFor(pr);
 	return (
 		<>
 			{pr.open_specs?.map((spec) => (
-				<Text key={spec.change_name}>
-					OpenSpec · {spec.change_name} · {spec.completed}/{spec.total}
-				</Text>
+				<OpenSpecTaskViewer key={spec.change_name} spec={spec} />
 			))}
-			{pr.detected_open_specs?.length ? (
-				<Text>Detected OpenSpec candidates (informational): {pr.detected_open_specs.join(", ")}</Text>
+			{detectedOpenSpecs.length ? (
+				<Text>Detected OpenSpec candidates (informational): {detectedOpenSpecs.join(", ")}</Text>
 			) : null}
 		</>
 	);
@@ -49,35 +55,35 @@ function WorkflowFailures({ pr }: { pr: PullRequest }) {
 	) : null;
 }
 
-function MergeForm({ pr }: { pr: PullRequest }) {
+function MergeMenuItem({ pr }: { pr: PullRequest }) {
+	const id = `merge-${pr.full_name}-${pr.number}`;
 	return mergeControlFor(pr).state === "enabled" && hasMergeTarget(pr) ? (
-		<form aria-label={`Merge ${pr.title ?? `PR #${pr.number}`}`} method="post" action="/api/merge/start">
-			<input type="hidden" name="installationId" value={pr.installation_id} />
-			<input type="hidden" name="repositoryId" value={pr.repository_id} />
-			<input type="hidden" name="number" value={pr.number} />
-			<input type="hidden" name="headSha" value={pr.head_sha} />
-			<Button type="submit">Merge</Button>
-		</form>
+		<>
+			<form aria-label={`Merge ${pr.title ?? `PR #${pr.number}`}`} id={id} method="post" action="/api/merge/start">
+				<input type="hidden" name="installationId" value={pr.installation_id} />
+				<input type="hidden" name="repositoryId" value={pr.repository_id} />
+				<input type="hidden" name="number" value={pr.number} />
+				<input type="hidden" name="headSha" value={pr.head_sha} />
+			</form>
+			<Menu.Item form={id} type="submit">
+				Merge
+			</Menu.Item>
+		</>
 	) : null;
 }
 
 export function PullRequestCard({
 	item,
 	busy,
-	detailOpen,
-	onDetail,
 	onReconcile,
-	onInstallation,
 }: {
 	item: DerivedPullRequest;
 	busy: string | null;
-	detailOpen: boolean;
-	onDetail: (item: DerivedPullRequest, button: HTMLButtonElement) => void;
 	onReconcile: (pr: PullRequest, button: HTMLButtonElement) => void;
-	onInstallation: (pr: PullRequest, button: HTMLButtonElement) => void;
 }) {
 	const { pr } = item;
 	const prHref = safeHref(pr.url);
+	const trigger = useRef<HTMLButtonElement>(null);
 	return (
 		<Card
 			className="command-center-card"
@@ -88,11 +94,42 @@ export function PullRequestCard({
 			aria-label={pr.title}
 		>
 			<Stack gap="xs">
-				<Group justify="space-between">
-					<Title order={3}>{prHref ? <a href={prHref}>{pr.title}</a> : pr.title}</Title>
-					<Badge>{item.bucket}</Badge>
+				<Group gap="xs" wrap="wrap">
+					<Title order={3}>
+						<Menu position="bottom-end">
+							<Menu.Target>
+								<UnstyledButton
+									aria-label={`Actions for ${pr.title ?? `PR #${pr.number}`}`}
+									className="command-center-pr-title-trigger"
+									disabled={busy === `pr:${pr.number}`}
+									ref={trigger}
+								>
+									<span className="command-center-pr-title-text">{pr.title}</span>
+									<span aria-hidden="true" className="command-center-pr-title-cue">
+										⌄
+									</span>
+								</UnstyledButton>
+							</Menu.Target>
+							<Menu.Dropdown>
+								<Menu.Item
+									disabled={
+										busy !== null || !pr.installation_id || !pr.repository_id || !Number.isFinite(Number(pr.number))
+									}
+									onClick={(event) => onReconcile(pr, trigger.current ?? event.currentTarget)}
+								>
+									Reconcile PR
+								</Menu.Item>
+								<MergeMenuItem pr={pr} />
+								{prHref ? (
+									<Menu.Item component="a" href={prHref} rel="noreferrer" target="_blank">
+										Open PR <span aria-hidden="true">↗</span>
+									</Menu.Item>
+								) : null}
+							</Menu.Dropdown>
+						</Menu>
+					</Title>
 				</Group>
-				<Text component="ul">
+				<Text className="command-center-blockers" component="ul">
 					{item.blockers.map((blocker) => (
 						<li key={blocker}>{blocker}</li>
 					))}
@@ -100,33 +137,6 @@ export function PullRequestCard({
 				<LifecycleRail bucket={item.bucket} />
 				<OpenSpecEvidence pr={pr} />
 				<WorkflowFailures pr={pr} />
-				<Group>
-					<Button
-						aria-controls="status-detail"
-						aria-expanded={detailOpen}
-						aria-label={`Inspect ${pr.title ?? `PR #${pr.number}`} status`}
-						onClick={(event) => onDetail(item, event.currentTarget)}
-					>
-						Status details
-					</Button>
-					<Button
-						aria-label={`Reconcile ${pr.title ?? `PR #${pr.number}`}`}
-						disabled={busy !== null || !pr.installation_id || !pr.repository_id || !Number.isFinite(Number(pr.number))}
-						loading={busy === `pr:${pr.number}`}
-						onClick={(event) => onReconcile(pr, event.currentTarget)}
-					>
-						Reconcile PR
-					</Button>
-					<Button
-						aria-label={`Reconcile installation ${pr.installation_id}`}
-						disabled={busy !== null || !pr.installation_id}
-						loading={busy === `installation:${pr.installation_id}`}
-						onClick={(event) => onInstallation(pr, event.currentTarget)}
-					>
-						Reconcile installation
-					</Button>
-					<MergeForm pr={pr} />
-				</Group>
 			</Stack>
 		</Card>
 	);

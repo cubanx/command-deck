@@ -5,7 +5,7 @@ import {
 	type SortPreference,
 } from "#/features/command-center/sort-preference";
 import { openSpecGate } from "#/openspec-gate";
-import { activeOpenSpecGroup } from "#/openspec-tasks";
+import { activeOpenSpecGroups } from "#/openspec-tasks";
 
 export type OpenSpecTask = { completed: boolean; text: string };
 export type OpenSpecGroup = { title: string; tasks: OpenSpecTask[] };
@@ -15,6 +15,11 @@ export type OpenSpecEvidence = {
 	total?: number | string;
 	pre_merge_ready?: boolean;
 	active_group?: OpenSpecGroup | string | null;
+	active_groups?: OpenSpecGroup[] | string | null;
+	incomplete_groups?: OpenSpecGroup[] | string | null;
+	activeGroup?: OpenSpecGroup | string | null;
+	activeGroups?: OpenSpecGroup[] | string | null;
+	incompleteGroups?: OpenSpecGroup[] | string | null;
 	source_type?: string;
 	source_url?: string | null;
 	source_ref?: string | null;
@@ -58,6 +63,89 @@ export type PullRequest = {
 	workflow_failures?: Array<{ name?: string; url?: string }>;
 	open_spec?: OpenSpecEvidence | null;
 };
+
+const asOpenSpecGroup = (value: unknown): OpenSpecGroup | null => {
+	if (!value || typeof value !== "object") return null;
+	const group = value as { title?: unknown; tasks?: unknown };
+	if (typeof group.title !== "string" || !Array.isArray(group.tasks)) return null;
+	const tasks = group.tasks.map((task) => {
+		if (!task || typeof task !== "object") return null;
+		const candidate = task as { completed?: unknown; text?: unknown };
+		return typeof candidate.completed === "boolean" && typeof candidate.text === "string"
+			? { completed: candidate.completed, text: candidate.text }
+			: null;
+	});
+	return tasks.every((task): task is OpenSpecTask => task !== null) ? { title: group.title, tasks } : null;
+};
+
+type ParsedEvidence<Value> = { state: "missing" | "invalid" } | { state: "valid"; value: Value };
+
+const invalidOpenSpecEvidence = (field: string) => console.warn("Invalid OpenSpec task evidence field", field);
+
+const parseOpenSpecValue = (value: unknown, field: string): ParsedEvidence<unknown> => {
+	if (value === undefined || value === null) return { state: "missing" };
+	if (typeof value !== "string") return { state: "valid", value };
+	try {
+		return { state: "valid", value: JSON.parse(value) };
+	} catch {
+		invalidOpenSpecEvidence(field);
+		return { state: "invalid" };
+	}
+};
+
+const parseOpenSpecGroups = (value: unknown, field: string): ParsedEvidence<OpenSpecGroup[]> => {
+	const parsed = parseOpenSpecValue(value, field);
+	if (parsed.state !== "valid") return parsed;
+	if (!Array.isArray(parsed.value)) {
+		invalidOpenSpecEvidence(field);
+		return { state: "invalid" };
+	}
+	const groups = parsed.value.map(asOpenSpecGroup);
+	if (!groups.every((group): group is OpenSpecGroup => group !== null)) {
+		invalidOpenSpecEvidence(field);
+		return { state: "invalid" };
+	}
+	return { state: "valid", value: groups.slice(0, 2) };
+};
+
+const parseOpenSpecGroup = (value: unknown, field: string): ParsedEvidence<OpenSpecGroup> => {
+	const parsed = parseOpenSpecValue(value, field);
+	if (parsed.state !== "valid") return parsed;
+	const group = asOpenSpecGroup(parsed.value);
+	if (!group) {
+		invalidOpenSpecEvidence(field);
+		return { state: "invalid" };
+	}
+	return { state: "valid", value: group };
+};
+
+export const activeOpenSpecGroupsFor = (spec: OpenSpecEvidence): OpenSpecGroup[] => {
+	for (const [field, value] of [
+		["active_groups", spec.active_groups],
+		["activeGroups", spec.activeGroups],
+	] as const) {
+		const groups = parseOpenSpecGroups(value, field);
+		if (groups.state === "valid") return groups.value;
+	}
+	for (const [field, value] of [
+		["active_group", spec.active_group],
+		["activeGroup", spec.activeGroup],
+	] as const) {
+		const group = parseOpenSpecGroup(value, field);
+		if (group.state === "valid") return [group.value];
+	}
+	return [];
+};
+export const incompleteOpenSpecGroupsFor = (spec: OpenSpecEvidence): OpenSpecGroup[] => {
+	for (const [field, value] of [
+		["incomplete_groups", spec.incomplete_groups],
+		["incompleteGroups", spec.incompleteGroups],
+	] as const) {
+		const groups = parseOpenSpecGroups(value, field);
+		if (groups.state === "valid") return groups.value;
+	}
+	return activeOpenSpecGroupsFor(spec);
+};
 export type PullRequestItem = { pr: PullRequest; spec?: OpenSpecEvidence | null; localSpecs?: OpenSpecEvidence[] };
 export type DerivedPullRequest = PullRequestItem & {
 	bucket: Lifecycle["stage"];
@@ -86,6 +174,14 @@ export const normalized = (value: unknown) =>
 	String(value ?? "")
 		.trim()
 		.toLowerCase();
+export const detectedOpenSpecCandidatesFor = (pr: PullRequest) => {
+	const authoritativeNames = new Set(
+		[...(pr.open_specs ?? []), ...(pr.open_spec ? [pr.open_spec] : [])]
+			.map((spec) => normalized(spec.change_name))
+			.filter(Boolean),
+	);
+	return (pr.detected_open_specs ?? []).filter((candidate) => !authoritativeNames.has(normalized(candidate)));
+};
 const distance = (left: string, right: string) => {
 	let prior = Array.from({ length: right.length + 1 }, (_, index) => index);
 	for (let row = 1; row <= left.length; row++) {
@@ -317,12 +413,15 @@ export const parseTasks = (content: string) => {
 		group.tasks.push({ completed: task[1].toLowerCase() === "x", text: task[2] });
 	}
 	const tasks = groups.flatMap((group) => group.tasks);
-	const activeGroup = activeOpenSpecGroup(groups);
+	const activeGroups = activeOpenSpecGroups(groups);
+	const incompleteGroups = groups.filter((group) => group.tasks.some((task) => !task.completed)).slice(0, 2);
 	return {
 		completed: tasks.filter((task) => task.completed).length,
 		total: tasks.length,
-		pre_merge_ready: !activeGroup,
-		active_group: activeGroup,
+		pre_merge_ready: !activeGroups.length,
+		active_group: activeGroups[0] ?? null,
+		active_groups: activeGroups,
+		incomplete_groups: incompleteGroups,
 	};
 };
 const mergeUnavailableReason = "GitHub App Pull requests write permission approval is required.";

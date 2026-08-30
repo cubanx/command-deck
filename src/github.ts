@@ -469,19 +469,26 @@ const openSpecProjection = (
 	sourceRepository?: unknown,
 ) => {
 	const repository = optionalString(sourceRepository);
-	const open_specs = evidence?.tasks.map((task) => ({
-		change_name: task.changeName,
-		...parseTasks(task.content),
-		source_commit: task.sha,
-		source_ref: optionalString(sourceRef),
-		...(repository
-			? {
-					source_url: safeUrl(
-						`https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${encodeURIComponent(task.sha)}/${task.path.split("/").map(encodeURIComponent).join("/")}`,
-					),
-				}
-			: {}),
-	}));
+	const open_specs = evidence?.tasks.map((task) => {
+		const progress = parseTasks(task.content);
+		return {
+			change_name: task.changeName,
+			...progress,
+			pre_merge_ready: progress.preMergeReady,
+			active_group: progress.activeGroup,
+			active_groups: progress.activeGroups,
+			incomplete_groups: progress.incompleteGroups,
+			source_commit: task.sha,
+			source_ref: optionalString(sourceRef),
+			...(repository
+				? {
+						source_url: safeUrl(
+							`https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${encodeURIComponent(task.sha)}/${task.path.split("/").map(encodeURIComponent).join("/")}`,
+						),
+					}
+				: {}),
+		};
+	});
 	return {
 		open_specs,
 		open_spec: open_specs?.[0] ?? null,

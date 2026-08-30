@@ -124,3 +124,115 @@
 
 - [x] 21.1 Add a focused failing assertion that the existing results status self-centers vertically without changing the filter row's bottom alignment.
 - [x] 21.2 Apply only the existing Mantine text style prop, then run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 22. Remove installation reconciliation from pull-request cards
+
+- [x] 22.1 Add focused failing assertions that pull-request cards retain Status details and Reconcile PR but omit Reconcile installation, while Configuration retains installation synchronization.
+- [x] 22.2 Delete the card-level installation callback and unused client mutation wiring without changing server reconciliation routes or Configuration behavior.
+- [x] 22.3 Run focused dashboard, configuration, and snapshot-mutation tests, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 23. Align the result total with the filter controls
+
+- [x] 23.1 Replace the failed self-centering assertion with a focused failing contract that keeps the results status after Clear filters and offsets it within the existing bottom-aligned row.
+- [x] 23.2 Replace only the existing text alignment style with Mantine's native small spacing prop, then run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 24. Push the result total right
+
+- [x] 24.1 Add a focused failing assertion that the existing results status consumes the remaining filter-row space while retaining its placement after Clear filters and vertical alignment.
+- [x] 24.2 Add only Mantine's native auto left-margin prop to the existing status text, then run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 25. Restore the authoritative OpenSpec task viewer
+
+- [x] 25.1 Add focused failing parser, projection, and persistence tests for an ordered maximum of two incomplete non-post-merge groups, the existing single-group compatibility field, all-complete behavior, and old records that lack the new field.
+- [x] 25.2 Extend the existing task parser and authoritative OpenSpec projection with the bounded group list while preserving lifecycle/readiness calculations and the existing `active_group` contract.
+- [x] 25.3 Add focused failing component tests for one accessible expandable viewer per authoritative OpenSpec, current-plus-next group titles and disabled task completion state, multiple OpenSpecs, safe tasks-source links, all-complete fallback, and separation from detected browser-local candidates.
+- [x] 25.4 Implement one reused native-details OpenSpec presentation component for pull-request cards and status detail, then run the focused OpenSpec/dashboard/view-model tests, `bun run typecheck`, `bun run test:e2e`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 26. Close OpenSpec viewer compatibility and accessibility gaps
+
+- [x] 26.1 Add focused failing tests for legacy camelCase group fields, malformed new-group fallback to valid legacy evidence, accessible task-checkbox names, and repeated source-authored group/task text.
+- [x] 26.2 Normalize both naming conventions without silently swallowing malformed JSON, associate every disabled checkbox with its task text, use source-order-safe React keys, then rerun the focused OpenSpec/dashboard/view-model tests, `bun run typecheck`, `bun run test:e2e`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 27. Clarify authoritative OpenSpec disclosures
+
+- [x] 27.1 Add focused failing component and view-model tests that suppress detected names already shown authoritatively while retaining unrelated detected candidates, and assert the OpenSpec disclosure exposes the existing bordered/task classes plus an emphasized active-group summary.
+- [x] 27.2 Reuse the existing legacy OpenSpec/task styles, add only the missing pointer/hover summary affordance, and filter duplicate detected labels at presentation time without changing authoritative association or lifecycle state.
+- [x] 27.3 Run the focused dashboard/view-model/quality-contract tests, `bun run typecheck`, `bun run test:e2e`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 28. Preserve incomplete legacy OpenSpec evidence
+
+- [x] 28.1 Add a focused failing component test for authoritative `5/8` evidence without task groups, while retaining the existing genuine all-complete case.
+- [x] 28.2 Use the existing authoritative counts in the shared OpenSpec viewer to distinguish missing incomplete task details from true completion without inventing task content or changing projection authority.
+- [x] 28.3 Run the focused dashboard test, `bun run typecheck`, `bun run test:e2e`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 29. Display post-merge OpenSpec tasks without changing readiness
+
+- [x] 29.1 Add focused failing parser, projection, persistence, and component tests for an OpenSpec whose remaining unchecked tasks are all in a `[post-merge]` group; assert the summary says `Post-merge remaining`, those tasks are displayed, and pre-merge readiness remains true.
+- [x] 29.2 Project a bounded display-only incomplete-group field from both task parsers, retain the existing filtered active-group readiness contract, and prefer the display field in the shared OpenSpec viewer with legacy fallbacks and the explicit post-merge summary state.
+- [x] 29.3 Run the focused OpenSpec, GitHub-client, view-model, and dashboard tests, `bun run typecheck`, `bun run test:e2e`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 30. Compact post-merge presentation
+
+- [x] 30.1 Add a focused failing component assertion that post-merge-only work uses a compact `Post-merge` pill beside the ordinary OpenSpec name and progress instead of sentence-length summary text.
+- [x] 30.2 Reuse Mantine's existing badge primitive for that marker without changing task projection, disclosure behavior, or readiness state.
+- [x] 30.3 Run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 31. Contain narrow-card blockers and align the post-merge pill
+
+- [x] 31.1 Add focused failing component and stylesheet-contract assertions for a contained blocker list plus visible inline spacing and vertical alignment on the existing `Post-merge` pill.
+- [x] 31.2 Apply the minimum blocker-list class and existing Mantine/CSS presentation hooks without changing blocker content, disclosure behavior, or card state.
+- [x] 31.3 Run focused dashboard and stylesheet-contract tests, `bun run typecheck`, `bun run test:e2e`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 32. Compact pull-request actions
+
+- [x] 32.1 Add focused failing component assertions that cards omit `Status details`, render `Reconcile PR` in the header controls beside the stage badge, preserve reconciliation behavior, and omit an empty footer action row.
+- [x] 32.2 Remove the card-only status-detail state/dialog path and move the existing reconciliation button without changing its mutation, busy, announcement, failure, or focus contracts.
+- [x] 32.3 Run focused dashboard tests, `bun run typecheck`, `bun run test:e2e`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 33. Distribute compact card-header controls
+
+- [x] 33.1 Add a focused failing component assertion that `Reconcile PR` uses native auto inline margin after the existing title and stage pill while the header retains wrapping.
+- [x] 33.2 Flatten the existing header controls and apply only Mantine's native auto-margin prop without new CSS, state, or wrappers.
+- [x] 33.3 Run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 34. Consolidate pull-request actions into a title menu
+
+- [x] 34.1 Add focused failing component and E2E assertions for an accessible dropdown-style action trigger beside the PR title, no stage pill, menu-based reconciliation, and conditional exact-head native Merge submission.
+- [x] 34.2 Reuse Mantine Menu and the existing reconcile/native-form contracts, returning focus to the menu trigger after reconciliation without adding parallel mutation state or changing merge eligibility.
+- [x] 34.3 Run focused dashboard tests, `bun run typecheck`, `bun run test:e2e` with 100% passing, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 35. Make the PR title the action menu
+
+- [x] 35.1 Add focused failing component and E2E assertions that the PR title itself is the large dropdown trigger, no direct title link or visible `Actions` button remains, and the ordered menu contains `Reconcile PR`, conditional `Merge`, then safe `Open PR` with a new-window icon.
+- [x] 35.2 Replace only the menu-target presentation and add the safe final PR-link item while preserving reconciliation, native exact-head merge, focus, and responsive behavior.
+- [x] 35.3 Run focused dashboard and stylesheet-contract tests, `bun run typecheck`, `bun run test:e2e` with 100% passing, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 36. Align the title-menu chevron
+
+- [x] 36.1 Add focused failing component and stylesheet-contract assertions that the entire title remains one menu button while title text may wrap and its chevron stays a vertically centered, non-shrinking cue.
+- [x] 36.2 Add only the minimum text/cue spans and flex alignment to the existing title trigger without changing its accessible name or menu behavior.
+- [x] 36.3 Run focused dashboard and stylesheet-contract tests, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 37. Anchor the title menu to its chevron
+
+- [x] 37.1 Add a focused failing component assertion that the title menu uses Mantine's lower-right placement beneath its chevron.
+- [x] 37.2 Set only the existing Menu placement prop without changing trigger size, menu contents, portal ownership, or action behavior.
+- [x] 37.3 Run the focused dashboard test, `bun run typecheck`, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 38. Use the stock Status multi-select
+
+- [x] 38.1 Replace the custom Status menu assertions with focused MultiSelect tests for its label, placeholder, eight flat options, pills, removal, native clear behavior, filter composition, and Clear filters restoration.
+- [x] 38.2 Replace the custom Menu/Checkbox Status control with the stock controlled Mantine MultiSelect, adapting its empty display value to the existing all-status filter state without changing the pure view model or persisted preferences.
+- [x] 38.3 Run focused dashboard and view-model tests, quality-contract coverage, typecheck, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 39. Stack latest deployment detail below its status
+
+- [x] 39.1 Add focused component and stylesheet-contract tests proving the trigger's label and optional status share its first row, detail spans the second row, and existing modal/focus behavior remains intact.
+- [x] 39.2 Apply the minimum existing-trigger markup order and navigation-scoped grid rules without changing state, dependencies, header centering, or responsive behavior.
+- [x] 39.3 Run focused navigation/configuration and quality-contract tests, typecheck, strict OpenSpec validation, and `git diff --check`; stop without committing.
+
+## 40. Let the narrow header wrap naturally
+
+- [x] 40.1 Add focused responsive-header contracts proving flex wrapping, symmetric brand/avatar rails, auto-width centered deployment, and removal of the forced brand row.
+- [x] 40.2 Replace only the premature narrow header grid/brand rule with the wrapping flex layout while retaining the deployment summary, modal, avatar menu, and desktop header behavior.
+- [x] 40.3 Run focused navigation/configuration and quality-contract tests, typecheck, strict OpenSpec validation, and `git diff --check`; stop without committing.

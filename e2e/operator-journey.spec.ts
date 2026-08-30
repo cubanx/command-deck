@@ -28,18 +28,18 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 
 	const blocked = page
 		.getByRole("article", { name: "Restore the Bajoran relay" });
-	await expect(blocked.getByRole("button", { name: "Merge" })).toHaveCount(0);
-	await blocked.getByRole("button", { name: "Inspect Restore the Bajoran relay status" }).click();
-	const statusDetail = page.getByRole("dialog", {
-		name: "Pull request status detail",
-	});
-	await expect(statusDetail.getByText("OpenSpec incomplete")).toBeVisible();
-	await expect(
-		statusDetail.getByText(/OpenSpec · stabilize-bajoran-relay/),
-	).toBeVisible();
-	await expect(statusDetail.getByText("Actions: success")).toBeVisible();
-	await expect(statusDetail.getByText("Checks: success")).toBeVisible();
-	await statusDetail.getByRole("button", { name: "Close status detail" }).click();
+	const blockedActions = blocked.getByRole("button", { name: "Actions for Restore the Bajoran relay" });
+	await expect(blocked.getByRole("link", { name: "Restore the Bajoran relay" })).toHaveCount(0);
+	await expect(blockedActions).toContainText("⌄");
+	await blockedActions.click();
+	await expect(blocked.getByRole("menuitem", { name: "Merge" })).toHaveCount(0);
+	await expect(blocked.getByRole("menuitem").allTextContents()).resolves.toEqual(["Reconcile PR", "Open PR ↗"]);
+	const openPr = blocked.getByRole("menuitem").filter({ hasText: "Open PR" });
+	await expect(openPr).toHaveAttribute("href", "https://github.com/starfleet/defiant/pull/201");
+	await expect(openPr).toHaveAttribute("target", "_blank");
+	await expect(openPr).toHaveAttribute("rel", "noreferrer");
+	await blocked.getByRole("menuitem", { name: "Reconcile PR" }).click();
+	await expect(page.getByText("Reconciliation completed.")).toBeVisible();
 
 	await page.getByRole("button", { name: /Latest deployment/ }).click();
 	await expect(
@@ -70,10 +70,12 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 
 	const eligible = page
 		.getByRole("article", { name: "Refresh the Defiant sensor array" });
-	await expect(
-		eligible.getByRole("form", { name: "Merge Refresh the Defiant sensor array" }),
-	).toHaveAttribute("action", "/api/merge/start");
-	await eligible.getByRole("button", { name: "Merge" }).click();
+	await eligible.getByRole("button", { name: "Actions for Refresh the Defiant sensor array" }).click();
+	await expect(eligible.getByRole("form", { name: "Merge Refresh the Defiant sensor array" })).toHaveAttribute(
+		"action",
+		"/api/merge/start",
+	);
+	await eligible.getByRole("menuitem", { name: "Merge" }).click();
 	await expect(
 		page.getByRole("heading", { name: "Confirm fixture merge" }),
 	).toBeVisible();

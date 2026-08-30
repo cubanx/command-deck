@@ -20,7 +20,7 @@ const blockedPullRequest = () => ({
 	title: refreshed
 		? "Refresh the Defiant Bajoran relay"
 		: "Restore the Bajoran relay",
-	url: "/fixture/pr/201",
+	url: "https://github.com/starfleet/defiant/pull/201",
 	state: "open",
 	draft: false,
 	mergeable: false,
@@ -49,7 +49,7 @@ const eligiblePullRequest = () => ({
 	title: refreshed
 		? "Refresh the Defiant sensor array"
 		: "Calibrate the Defiant sensor array",
-	url: "/fixture/pr/202",
+	url: "https://github.com/starfleet/defiant-sensor-array/pull/202",
 	state: merged ? "merged" : "open",
 	draft: false,
 	mergeable: true,
@@ -145,9 +145,11 @@ const staticResponse = async (path: string) => {
 
 const server = Bun.serve({
 	port: 4174,
-	fetch: async (request) => {
-		const url = new URL(request.url);
-		if (url.pathname === "/api/snapshot") return Response.json(snapshot());
+		fetch: async (request) => {
+			const url = new URL(request.url);
+			if (url.pathname === "/api/snapshot") return Response.json(snapshot());
+			if (request.method === "POST" && url.pathname === "/api/reconcile/pull-request")
+				return Response.json({ status: "success" });
 		if (url.pathname === "/events") {
 			const body = new ReadableStream<Uint8Array>({
 				start(controller) {

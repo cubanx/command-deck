@@ -115,7 +115,9 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 				throw new Error(`unexpected targeted request ${value}`);
 			},
 			fetchTasks: async ({ path }) =>
-				path.includes("alpha") ? "- [x] Align the deflector" : "- [x] Tune the warp core",
+				path.includes("alpha")
+					? "## Current\n- [ ] Align the deflector\n\n## Next\n- [ ] Tune the warp core\n\n## Observe [post-merge]\n- [ ] Observe the anomaly"
+					: "- [x] Tune the warp core",
 		};
 		const result = await reconcilePullRequest(db, input);
 		expect(result.kind).toBe("changed");
@@ -130,6 +132,9 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 			{
 				change_name: "alpha",
 				source_url: `https://github.com/ds9/ops/blob/${"a".repeat(40)}/openspec/changes/alpha/tasks.md`,
+				active_group: { title: "Current" },
+				active_groups: [{ title: "Current" }, { title: "Next" }],
+				incomplete_groups: [{ title: "Current" }, { title: "Next" }],
 			},
 			{ change_name: "zeta" },
 		]);

@@ -42,10 +42,10 @@ export function CommandCenterNavigation() {
 					>
 						<span className="deployment-summary-content">
 							<span className="deployment-summary-label">Latest deployment</span>
+							{latest?.state && <span className="status">{latest.state}</span>}
 							<span className="deployment-summary-detail">
 								{deploymentText(latest) || "No recent deployment evidence."}
 							</span>
-							{latest?.state && <span className="status">{latest.state}</span>}
 						</span>
 					</Button>
 				</div>

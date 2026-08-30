@@ -1,7 +1,7 @@
 import type { Db } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
-import { activeOpenSpecGroup } from "#/openspec-tasks";
+import { activeOpenSpecGroups } from "#/openspec-tasks";
 
 export { type OpenSpecGate, openSpecGate } from "#/openspec-gate";
 
@@ -67,12 +67,15 @@ export function parseTasks(content: string) {
 		});
 	}
 	const tasks = groups.flatMap((group) => group.tasks);
-	const activeGroup = activeOpenSpecGroup(groups);
+	const activeGroups = activeOpenSpecGroups(groups);
+	const incompleteGroups = groups.filter((group) => group.tasks.some((task) => !task.completed)).slice(0, 2);
 	return {
 		completed: tasks.filter((task) => task.completed).length,
 		total: tasks.length,
-		preMergeReady: !activeGroup,
-		activeGroup,
+		preMergeReady: !activeGroups.length,
+		activeGroup: activeGroups[0] ?? null,
+		activeGroups,
+		incompleteGroups,
 	};
 }
 export async function projectOpenSpec(
@@ -149,13 +152,24 @@ export async function projectOpenSpec(
 					source_commit: input.sha,
 					...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
 					active_group: progress.activeGroup ? JSON.stringify(progress.activeGroup) : null,
+					active_groups: JSON.stringify(progress.activeGroups),
+					incomplete_groups: JSON.stringify(progress.incompleteGroups),
 					updated_at: new Date().toISOString(),
 				};
 				changed ||=
 					!previous ||
-					(["completed", "total", "pre_merge_ready", "source_commit", "source_ref", "active_group"] as const).some(
-						(key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]),
-					);
+					(
+						[
+							"completed",
+							"total",
+							"pre_merge_ready",
+							"source_commit",
+							"source_ref",
+							"active_group",
+							"active_groups",
+							"incomplete_groups",
+						] as const
+					).some((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
 				if (index >= 0) repository.openSpecs[index] = next;
 				else repository.openSpecs.push(next);
 			}),

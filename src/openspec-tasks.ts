@@ -3,5 +3,10 @@ export type OpenSpecTaskGroup = {
 	tasks: ReadonlyArray<{ completed: boolean }>;
 };
 
+export const activeOpenSpecGroups = <Group extends OpenSpecTaskGroup>(groups: ReadonlyArray<Group>): Group[] =>
+	groups
+		.filter((group) => !group.title.includes("[post-merge]") && group.tasks.some((task) => !task.completed))
+		.slice(0, 2);
+
 export const activeOpenSpecGroup = <Group extends OpenSpecTaskGroup>(groups: ReadonlyArray<Group>): Group | null =>
-	groups.find((group) => !group.title.includes("[post-merge]") && group.tasks.some((task) => !task.completed)) ?? null;
+	activeOpenSpecGroups(groups)[0] ?? null;

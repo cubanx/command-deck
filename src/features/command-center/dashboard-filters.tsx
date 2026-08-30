@@ -1,4 +1,4 @@
-import { Button, Checkbox, Group, Menu, NativeSelect, Stack, Text, TextInput } from "@mantine/core";
+import { Button, Group, MultiSelect, NativeSelect, Stack, Text, TextInput } from "@mantine/core";
 import { stageLabel, stages } from "#/features/command-center/dashboard-lifecycle";
 import {
 	defaultSortPreference,
@@ -29,19 +29,24 @@ export function DashboardFilters({
 	const repositories = repositoryOptions(pullRequests.map((pr) => ({ pr })));
 	const selectedRepositories = view.repositories ?? new Set(repositories);
 	const selectedStatuses = view.statuses ?? new Set(stages);
-	const selectedCount =
-		stages.filter((stage) => selectedStatuses.has(stage)).length +
-		attentionFilters.filter(([key]) => view[key] ?? true).length;
-	const allSelected = selectedCount === stages.length + attentionFilters.length;
-	const statusLabel = allSelected
-		? `Status: All (${selectedCount})`
-		: selectedCount === 0
-			? "Status: None (0)"
-			: `Status (${selectedCount})`;
+	const selectedStatusValues = [
+		...stages.filter((stage) => selectedStatuses.has(stage)),
+		...attentionFilters.flatMap(([key]) => ((view[key] ?? true) ? [key] : [])),
+	];
+	const allSelected = selectedStatusValues.length === stages.length + attentionFilters.length;
 	const toggleRepository = (repository: string) => {
 		const next = new Set(selectedRepositories);
 		next.has(repository) ? next.delete(repository) : next.add(repository);
 		set("repositories", next.size === repositories.length ? null : next);
+	};
+	const setStatuses = (values: string[]) => {
+		if (!values.length) {
+			set("statuses", new Set(stages));
+			for (const [key] of attentionFilters) set(key, true);
+			return;
+		}
+		set("statuses", new Set(stages.filter((stage) => values.includes(stage))));
+		for (const [key] of attentionFilters) set(key, values.includes(key));
 	};
 	return (
 		<Stack className="command-center-filters" gap="xs">
@@ -67,48 +72,19 @@ export function DashboardFilters({
 					value={view.query ?? ""}
 					onChange={(event) => set("query", event.currentTarget.value)}
 				/>
-				<Menu closeOnItemClick={false}>
-					<Menu.Target>
-						<Button className="filter-status" size="sm">
-							{statusLabel}
-						</Button>
-					</Menu.Target>
-					<Menu.Dropdown>
-						<Checkbox
-							checked={allSelected}
-							indeterminate={selectedCount > 0 && !allSelected}
-							label="All"
-							onChange={() => {
-								set("statuses", new Set(allSelected ? [] : stages));
-								set("attention", !allSelected);
-								set("failedActions", !allSelected);
-								set("failedChecks", !allSelected);
-							}}
-						/>
-						<Menu.Label>Lifecycle</Menu.Label>
-						{stages.map((stage) => (
-							<Checkbox
-								checked={selectedStatuses.has(stage)}
-								key={stage}
-								label={stageLabel(stage)}
-								onChange={() => {
-									const next = new Set(selectedStatuses);
-									next.has(stage) ? next.delete(stage) : next.add(stage);
-									set("statuses", next);
-								}}
-							/>
-						))}
-						<Menu.Label>Attention</Menu.Label>
-						{attentionFilters.map(([key, label]) => (
-							<Checkbox
-								checked={view[key] ?? true}
-								key={key}
-								label={label}
-								onChange={(event) => set(key, event.currentTarget.checked)}
-							/>
-						))}
-					</Menu.Dropdown>
-				</Menu>
+				<MultiSelect
+					className="filter-status"
+					clearable
+					data={[
+						...stages.map((stage) => ({ value: stage, label: stageLabel(stage) })),
+						...attentionFilters.map(([value, label]) => ({ value, label })),
+					]}
+					label="Status"
+					placeholder="All statuses"
+					size="sm"
+					value={allSelected ? [] : selectedStatusValues}
+					onChange={setStatuses}
+				/>
 				<NativeSelect
 					className="filter-sort"
 					label="Sort pull requests"
@@ -133,7 +109,7 @@ export function DashboardFilters({
 				<Button className="filter-clear" size="sm" onClick={clear}>
 					Clear filters
 				</Button>
-				<Text c="dimmed" role="status" style={{ alignSelf: "center" }}>
+				<Text c="dimmed" mb="xs" ml="auto" role="status">
 					{resultCount} results
 				</Text>
 			</Group>

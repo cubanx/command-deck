@@ -1,25 +1,16 @@
 import { Alert, SimpleGrid, Stack, Text } from "@mantine/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { DashboardFilters } from "#/features/command-center/dashboard-filters";
 import { stages } from "#/features/command-center/dashboard-lifecycle";
-import { StatusDetail } from "#/features/command-center/dashboard-overlays";
 import { PullRequestCard } from "#/features/command-center/dashboard-pull-request-card";
-import {
-	reconcileInstallationMutationOptions,
-	reconcilePullRequestMutationOptions,
-} from "#/features/command-center/snapshot-mutations";
+import { reconcilePullRequestMutationOptions } from "#/features/command-center/snapshot-mutations";
 import {
 	defaultSortPreference,
 	loadSortPreference,
 	saveSortPreference,
 } from "#/features/command-center/sort-preference";
-import {
-	type DerivedPullRequest,
-	derivePullRequests,
-	type PullRequest,
-	type ViewState,
-} from "#/features/command-center/view-model";
+import { derivePullRequests, type PullRequest, type ViewState } from "#/features/command-center/view-model";
 
 type Snapshot = {
 	error?: string;
@@ -51,11 +42,8 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 		failedActions: true,
 		failedChecks: true,
 	});
-	const [detail, setDetail] = useState<DerivedPullRequest | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [announcement, setAnnouncement] = useState<{ alert: boolean; text: string } | null>(null);
-	const detailOpener = useRef<HTMLElement | null>(null);
-	const installation = useMutation(reconcileInstallationMutationOptions(queryClient));
 	const reconcile = useMutation(reconcilePullRequestMutationOptions(queryClient));
 	const run = async (key: string, button: HTMLButtonElement, action: () => Promise<{ status: string }>) => {
 		setBusy(key);
@@ -73,7 +61,7 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 			setAnnouncement({ alert: true, text: "Reconciliation failed. Try again." });
 		} finally {
 			setBusy(null);
-			button.focus();
+			setTimeout(() => button.focus());
 		}
 	};
 	useEffect(
@@ -123,11 +111,6 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 								key={`${item.pr.full_name}:${item.pr.number}`}
 								item={item}
 								busy={busy}
-								detailOpen={detail?.pr === item.pr}
-								onDetail={(selected, button) => {
-									detailOpener.current = button;
-									setDetail(selected);
-								}}
 								onReconcile={(pr, button) =>
 									void run(`pr:${pr.number}`, button, () =>
 										reconcile.mutateAsync({
@@ -137,16 +120,10 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 										}),
 									)
 								}
-								onInstallation={(pr, button) =>
-									void run(`installation:${pr.installation_id}`, button, () =>
-										installation.mutateAsync(pr.installation_id ?? ""),
-									)
-								}
 							/>
 						))}
 					</SimpleGrid>
 				)}
-				<StatusDetail detail={detail} close={() => setDetail(null)} returnFocus={() => detailOpener.current?.focus()} />
 				{announcement?.alert ? (
 					<Alert role="alert" color="red">
 						{announcement.text}
