@@ -210,7 +210,14 @@ test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
 		);
 		const reader = stream.body?.getReader();
 		if (!reader) throw new Error("event stream body missing");
-		await reader.read();
+		const assertRefreshFrame = async () => {
+			const chunk = await reader.read();
+			if (chunk.done) throw new Error("event stream closed before refresh frame");
+			const frame = new TextDecoder().decode(chunk.value);
+			expect(frame).toBe("event: refresh\ndata: {}\n\n");
+			expect(frame).not.toContain("\\\\n");
+		};
+		await assertRefreshFrame();
 		const body = JSON.stringify({
 			installation: { id: 9, account: { login: "cubanx" } },
 			repository: { id: 2 },
@@ -234,7 +241,7 @@ test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
 		await app.drain();
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(calls).toEqual([7]);
-		expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: refresh");
+		await assertRefreshFrame();
 		expect(
 			await app.fetch(
 				new Request("http://local/webhooks/github", {
