@@ -389,7 +389,7 @@ const sessionRoute = async (context: AppContext, request: Request, path: string)
 			const set = context.streams.get(user.id) ?? new Set();
 			set.add(controller);
 			context.streams.set(user.id, set);
-			controller.enqueue(context.encoder.encode("event: refresh\\ndata: {}\\n\\n"));
+			controller.enqueue(context.encoder.encode("event: refresh\ndata: {}\n\n"));
 			request.signal.addEventListener("abort", () => {
 				set.delete(controller);
 				if (!set.size) context.streams.delete(user.id);
@@ -1207,7 +1207,7 @@ export function createApp(
 	const encoder = new TextEncoder();
 	const refresh = (userId: string) => {
 		for (const controller of streams.get(userId) ?? [])
-			controller.enqueue(encoder.encode("event: refresh\\ndata: {}\\n\\n"));
+			controller.enqueue(encoder.encode("event: refresh\ndata: {}\n\n"));
 	};
 	const reconcileAll = dependencies.reconcileInstallations ?? reconcileInstallations;
 	const reconcileTarget = dependencies.reconcilePullRequest ?? reconcilePullRequest;
