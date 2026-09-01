@@ -1,4 +1,4 @@
-# Command Center.ai
+# Command Deck.ai
 
 A Bun and TypeScript service that projects signed GitHub activity and committed OpenSpec progress into a developer dashboard.
 

@@ -28,7 +28,7 @@ test("Quality CI runs exactly the shared validation commands without validate:al
 	expect(dockerfile).toContain("COPY --chown=bun:bun tsconfig.json ./");
 	expect(text("src/server.ts")).not.toContain("frontend-build");
 	expect(text("src/web/frontend-assets.ts")).not.toContain('from "vite"');
-	expect(workflow).toContain("docker run --rm command-center-ai:quality bun -e 'await import(\"./src/server.ts\")'");
+	expect(workflow).toContain("docker run --rm command-deck:quality bun -e 'await import(\"./src/server.ts\")'");
 	expect(JSON.parse(text("src/web/manifest.webmanifest"))).toMatchObject({
 		name: "Command Deck.ai",
 		short_name: "Command Deck",

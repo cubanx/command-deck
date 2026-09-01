@@ -98,5 +98,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --tag command-center-ai:quality .
-      - run: docker run --rm command-center-ai:quality bun -e 'await import("./src/server.ts")'
+      - run: docker build --tag command-deck:quality .
+      - run: docker run --rm command-deck:quality bun -e 'await import("./src/server.ts")'

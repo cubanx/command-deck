@@ -130,7 +130,7 @@ test("merge intent is hashed, expires, and advances only once", () =>
 				sessionId: "session",
 				installationId: "9",
 				repositoryId: "42",
-				fullName: "Crisp-Inc/dev-command-center",
+				fullName: "Crisp-Inc/command-deck",
 				pullRequestNumber: 7,
 				pullRequestTitle: "Defend the wormhole",
 				headSha: "a".repeat(40),
@@ -154,7 +154,7 @@ test("role proof happens before installation authority and exact-head merge read
 			},
 			userToken: "not-persisted",
 			login: "sisko",
-			fullName: "Crisp-Inc/dev-command-center",
+			fullName: "Crisp-Inc/command-deck",
 			installationToken: async () => {
 				calls.push("installation");
 				return "installation-token";
@@ -167,13 +167,13 @@ test("role proof happens before installation authority and exact-head merge read
 		await authorizeBeforeInstallation({
 			fetcher: async (input) => {
 				expect(String(input)).toBe(
-					"https://api.github.com/repos/Crisp-Inc/dev-command-center/collaborators/garak/permission",
+					"https://api.github.com/repos/Crisp-Inc/command-deck/collaborators/garak/permission",
 				);
 				return Response.json({ permission: "read" });
 			},
 			userToken: "request-local-only",
 			login: "garak",
-			fullName: "Crisp-Inc/dev-command-center",
+			fullName: "Crisp-Inc/command-deck",
 			installationToken: async () => {
 				deniedInstallationCalls++;
 				return "must-not-mint";
@@ -194,14 +194,14 @@ test("role proof happens before installation authority and exact-head merge read
 				},
 				userToken: "request-local-only",
 				login: "sisko",
-				fullName: "Crisp-Inc/dev-command-center",
+				fullName: "Crisp-Inc/command-deck",
 				installationToken: async () => {
 					timedOutInstallationCalls++;
 					return "must-not-mint";
 				},
 			}),
 		).rejects.toThrow(
-			"GitHub request timed out after 30000ms: GET https://api.github.com/repos/Crisp-Inc/dev-command-center/collaborators/sisko/permission",
+			"GitHub request timed out after 30000ms: GET https://api.github.com/repos/Crisp-Inc/command-deck/collaborators/sisko/permission",
 		);
 	} finally {
 		timeout.mockRestore();
@@ -280,7 +280,7 @@ test("default merge provider reads every gate and fails closed without policy ev
 			sessionId: "session",
 			installationId: "12",
 			repositoryId: "42",
-			fullName: "Crisp-Inc/dev-command-center",
+			fullName: "Crisp-Inc/command-deck",
 			pullRequestNumber: 8,
 			pullRequestTitle: "Hold the line",
 			headSha: "a".repeat(40),
@@ -310,7 +310,7 @@ test("default merge provider reads every gate and fails closed without policy ev
 				sessionId: "session",
 				installationId: "12",
 				repositoryId: "42",
-				fullName: "Crisp-Inc/dev-command-center",
+				fullName: "Crisp-Inc/command-deck",
 				pullRequestNumber: 8,
 				pullRequestTitle: "Hold the line",
 				headSha: "a".repeat(40),
@@ -365,7 +365,7 @@ test("default merge provider permits only explicit clear policy evidence", async
 			sessionId: "session",
 			installationId: "12",
 			repositoryId: "42",
-			fullName: "Crisp-Inc/dev-command-center",
+			fullName: "Crisp-Inc/command-deck",
 			pullRequestNumber: 8,
 			pullRequestTitle: "Hold the line",
 			headSha: "a".repeat(40),
@@ -382,7 +382,7 @@ test("default merge provider permits only explicit clear policy evidence", async
 					sessionId: "session",
 					installationId: "12",
 					repositoryId: "42",
-					fullName: "Crisp-Inc/dev-command-center",
+					fullName: "Crisp-Inc/command-deck",
 					pullRequestNumber: 8,
 					pullRequestTitle: "Hold the line",
 					headSha: "a".repeat(40),
@@ -401,7 +401,7 @@ test("default merge provider permits only explicit clear policy evidence", async
 					sessionId: "session",
 					installationId: "12",
 					repositoryId: "42",
-					fullName: "Crisp-Inc/dev-command-center",
+					fullName: "Crisp-Inc/command-deck",
 					pullRequestNumber: 8,
 					pullRequestTitle: "Hold the line",
 					headSha: "a".repeat(40),
@@ -451,7 +451,7 @@ test("merge callback binds its hashed session before role or installation author
 			sessionId: mergeIntentHash(owner.token),
 			installationId: "12",
 			repositoryId: "42",
-			fullName: "Crisp-Inc/dev-command-center",
+			fullName: "Crisp-Inc/command-deck",
 			pullRequestNumber: 8,
 			pullRequestTitle: "Hold the line",
 			headSha: "a".repeat(40),

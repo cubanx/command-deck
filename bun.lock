@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "command-center-ai",
+      "name": "command-deck",
       "dependencies": {
         "@mantine/core": "9.5.0",
         "@mantine/hooks": "9.5.0",

@@ -4,7 +4,7 @@ description: Project identity, hard boundaries, commands, and routing entrypoint
 last_updated: 2026-08-13
 ---
 
-# Command Center.ai
+# Command Deck.ai
 
 A Bun and TypeScript service that projects signed GitHub activity and committed OpenSpec progress into a developer dashboard.
 
