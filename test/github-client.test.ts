@@ -1774,6 +1774,64 @@ test("installation reconciliation logs each terminal provider failure once and c
 		expect(JSON.stringify(logs)).not.toContain("raw bookkeeping diagnostic");
 	}));
 
+test("installation reconciliation isolates persistence bookkeeping failures", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await bindInstallation(db, "u", "10", "cubanx");
+		const users = db.users as typeof db.users & { replaceOne: typeof db.users.replaceOne };
+		const originalReplace = users.replaceOne.bind(users),
+			originalError = console.error,
+			logs: unknown[][] = [],
+			credentials: string[] = [];
+		users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
+			const installations = (args[1] as { installations?: Array<{ installationId: string; lastSyncError?: string }> })
+				.installations;
+			if (installations?.find((item) => item.installationId === "10")?.lastSyncError)
+				throw new Error("raw persistence diagnostic");
+			return originalReplace(...args);
+		};
+		console.error = (...args: unknown[]) => logs.push(args);
+		try {
+			await expect(
+				reconcileInstallations(
+					db,
+					async (installationId) => {
+						credentials.push(installationId);
+						return { token: `token-${installationId}`, appJwt: `app-jwt-${installationId}` };
+					},
+					async (url) => {
+						if (String(url).includes("/app/installations/")) return Response.json({ account: { login: "cubanx" } });
+						if (String(url).includes("installation/repositories"))
+							return credentials.at(-1) === "10"
+								? new Response("raw provider body", { status: 503 })
+								: Response.json({ repositories: [] });
+						return Response.json([]);
+					},
+				),
+			).rejects.toThrow("reconciliation failed for installations 10");
+		} finally {
+			users.replaceOne = originalReplace;
+			console.error = originalError;
+		}
+		expect(credentials).toEqual(["10", "9"]);
+		expect(logs.filter((log) => log[0] === "installation reconciliation failed")).toEqual([
+			["installation reconciliation failed", "10", "repository_list", 503, "ReadResult", "GitHub request failed (503)"],
+		]);
+		expect(logs.filter((log) => log[0] === "installation reconciliation persistence failed")).toEqual([
+			[
+				"installation reconciliation persistence failed",
+				"10",
+				"reconciliation",
+				"unknown",
+				"Error",
+				"reconciliation failed",
+			],
+		]);
+		expect(JSON.stringify(logs)).not.toContain("raw persistence diagnostic");
+		expect(JSON.stringify(logs)).not.toContain("raw provider body");
+	}));
+
 test("reconciliation evidence retains the newest 20 failures deterministically", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");

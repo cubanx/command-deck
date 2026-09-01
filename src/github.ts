@@ -1508,7 +1508,16 @@ export async function reconcileInstallations(
 		}
 		if (result.kind === "error") {
 			logReconciliationFailure("installation reconciliation failed", installationId, result, classification);
-			await persistReconciliationFailure(db, installationId, result);
+			try {
+				await persistReconciliationFailure(db, installationId, result);
+			} catch (error) {
+				logReconciliationFailure(
+					"installation reconciliation persistence failed",
+					installationId,
+					normalizedReconciliationFailure(),
+					error instanceof Error ? error.name : "unknown",
+				);
+			}
 		}
 	}
 	const failures = results.filter((item) => item.result.kind === "error");
