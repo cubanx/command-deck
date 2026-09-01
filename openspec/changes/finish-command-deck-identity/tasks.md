@@ -13,8 +13,8 @@
 ## 3. Railway continuity
 
 - [x] 3.1 Record 2026-09-01 read-only inventory: project `Command Deck.ai`, service `developer-command-center`, source `cubanx/dev-command-center` on `main`, domain `developer-command-center-production.up.railway.app`, and `PUBLIC_URL`/GitHub App variable-name presence.
-- [ ] 3.2 With authorization, relink Railway source to `cubanx/command-deck` and rename service/domain to `command-deck`; verify rollback to the prior source binding.
-- [ ] 3.3 With authorization, update `PUBLIC_URL` and GitHub App URL configuration, deploy the exact SHA, and verify readiness and webhook continuity.
+- [x] 3.2 With authorization, relink Railway source to `cubanx/command-deck` and rename service/domain to `command-deck`; verify rollback to the prior source binding.
+- [x] 3.3 With authorization, update `PUBLIC_URL` and GitHub App URL configuration, deploy the exact SHA, and verify readiness and webhook continuity.
 
 ## 4. Atlas continuity
 
