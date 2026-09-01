@@ -1,5 +1,5 @@
 {
-	"name": "command-center-ai",
+	"name": "command-deck",
 	"devDependencies": {
 		"@biomejs/biome": "2.5.6",
 		"@playwright/test": "1.62.1",

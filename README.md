@@ -1,4 +1,4 @@
-# Command Center.ai
+# Command Deck.ai
 
 A small, installable command center for a developer's open pull requests, checks, reviews, GitHub deployment status, and committed OpenSpec progress.
 

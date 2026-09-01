@@ -21,7 +21,7 @@ const seedMergePullRequest = async (db: Parameters<typeof mutateUser>[0]) => {
 		installation.repositories = [
 			{
 				repositoryId: "42",
-				full_name: "Crisp-Inc/dev-command-center",
+				full_name: "Crisp-Inc/command-deck",
 				openSpecs: [],
 				deployments: [],
 				pullRequests: [
@@ -871,7 +871,7 @@ test("merge start and confirmation bind the session, origin, exact node ID, and 
 		const token = new URL(start.headers.get("location") ?? "").searchParams.get("state");
 		expect(token).toBeTruthy();
 		expect(await mergeIntentFor(db, token!)).toMatchObject({
-			fullName: "Crisp-Inc/dev-command-center",
+			fullName: "Crisp-Inc/command-deck",
 			pullRequestTitle: "Hold the line",
 		});
 		expect(JSON.stringify(await db.mergeIntents.findOne({}))).not.toContain(session.token);
