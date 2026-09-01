@@ -123,11 +123,12 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		],
 	};
 	const fetchCalls: string[] = [];
+	let snapshotResponse = () => new Response(JSON.stringify(snapshot));
 	const fetch = async (input: string) => {
 		fetchCalls.push(input);
 		return input === "/api/reconcile"
 			? new Response(JSON.stringify({ status: "success" }))
-			: new Response(JSON.stringify(snapshot));
+			: snapshotResponse();
 	};
 	function Notification() {}
 	Object.assign(Notification, { permission: "granted" });
@@ -308,4 +309,19 @@ test("the compiled browser runtime renders and reconciles with native controls",
 		target: element("#pr-search"),
 		preventDefault: () => undefined,
 	} as unknown as Event);
+	const originalError = console.error;
+	const logs: unknown[][] = [];
+	console.error = (...values: unknown[]) => logs.push(values);
+	snapshotResponse = () => new Response(null, { status: 401 });
+	const snapshotCalls = fetchCalls.length;
+	try {
+		await app.load();
+	} finally {
+		console.error = originalError;
+	}
+	expect(fetchCalls).toHaveLength(snapshotCalls + 1);
+	expect(element("#app").innerHTML).toContain(
+		"Sign in to view your command center.",
+	);
+	expect(logs).toEqual([]);
 });

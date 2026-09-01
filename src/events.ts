@@ -218,7 +218,7 @@ type TaskFetcher = (input: {
 	repositoryId: string;
 	path: string;
 	sha: string;
-}) => Promise<string | null>;
+}) => Promise<string | null | { finalTreeAbsent: true }>;
 
 const ensureRepository = (
 	installation: import("./db").Installation,
@@ -500,12 +500,13 @@ const projectPush = async (
 				});
 		if (!deleted && content === null)
 			throw new Error("OpenSpec artifact fetch failed");
+		if (!deleted && typeof content !== "string") continue;
 		const completed = await projectOpenSpec(db, {
 			installationId,
 			accountLogin: account,
 			repositoryId,
 			path,
-			content: content ?? "",
+			content: typeof content === "string" ? content : "",
 			deleted,
 			sha: data.after ?? "unknown",
 			sourceRef,
@@ -701,7 +702,7 @@ export async function drainInbox(
 		repositoryId: string;
 		path: string;
 		sha: string;
-	}) => Promise<string | null>,
+	}) => Promise<string | null | { finalTreeAbsent: true }>,
 	reviewBot?: ReviewBotConfig,
 	sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
 	now = () => new Date(),

@@ -1745,12 +1745,12 @@ export const loadFailureFor = ({
 	online: boolean;
 	log?: (...values: unknown[]) => void;
 }) => {
-	log("Command center load failed", errorName(error));
+	if (error !== 401) log("Command center load failed", errorName(error));
 	return online
 		? "Sign in to view your command center."
 		: "Offline: live command-center data is unavailable.";
 };
-const load = () =>
+export const load = () =>
 	fetch("/api/snapshot")
 		.then((response) => {
 			if (!response.ok) throw response.status;

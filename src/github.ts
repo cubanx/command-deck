@@ -34,7 +34,7 @@ export type TaskFetcher = (input: {
 	repositoryId: string;
 	path: string;
 	sha: string;
-}) => Promise<string | null>;
+}) => Promise<string | null | { finalTreeAbsent: true }>;
 export type GitHubRequestFailure = {
 	operation: string;
 	status: number;
@@ -442,7 +442,7 @@ async function fetchOpenSpecTasksForPullRequests(
 				path,
 				sha,
 			});
-			if (content === null)
+			if (typeof content !== "string")
 				return {
 					kind: "error",
 					stale: true,
@@ -806,14 +806,8 @@ export async function reconcileInstallations(
 				fetchTasks,
 				reportTaskFetchFailure,
 			);
-		} catch (error) {
+		} catch (_error) {
 			result = normalizedReconciliationFailure();
-			logReconciliationFailure(
-				"installation reconciliation failed",
-				installationId,
-				result,
-				error instanceof Error ? "Error" : "unknown",
-			);
 		}
 		results.push({ installationId, result });
 		if (result.kind === "error") {
@@ -855,6 +849,7 @@ export const logReconciliationFailure = (
 		event,
 		installationId,
 		result.operation ?? "reconciliation",
+		result.status ?? "unknown",
 		classification,
 		result.message,
 	);

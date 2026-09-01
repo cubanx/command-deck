@@ -841,7 +841,8 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 			"installation reconciliation failed",
 			"9",
 			"reconciliation",
-			"Error",
+			"unknown",
+			"ReadResult",
 			"reconciliation failed",
 		]);
 		expect(JSON.stringify(logs)).not.toContain("raw provider diagnostic");
@@ -887,6 +888,50 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		expect((await dashboardForUser(db, "u")).stale).toBe(false);
 	}));
 
+test("installation reconciliation logs each terminal provider failure once and continues", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await bindInstallation(db, "u", "10", "cubanx");
+		const originalError = console.error,
+			logs: unknown[][] = [];
+		let activeInstallation = "";
+		console.error = (...args: unknown[]) => logs.push(args);
+		try {
+			await expect(
+				reconcileInstallations(
+					db,
+					async (id) => {
+						activeInstallation = id;
+						return { token: `token-${id}`, appJwt: `app-jwt-${id}` };
+					},
+					async (url) => {
+						if (String(url).includes("/app/installations/"))
+							return Response.json({ account: { login: "cubanx" } });
+						if (String(url).includes("installation/repositories"))
+							return activeInstallation === "9"
+								? new Response("raw provider body", { status: 503 })
+								: Response.json({ repositories: [] });
+						return Response.json([]);
+					},
+				),
+			).rejects.toThrow("reconciliation failed for installations 9");
+		} finally {
+			console.error = originalError;
+		}
+		expect(logs.filter((log) => log[1] === "9")).toHaveLength(1);
+		expect(logs.filter((log) => log[1] === "10")).toHaveLength(0);
+		expect(logs.find((log) => log[1] === "9")).toEqual([
+			"installation reconciliation failed",
+			"9",
+			"repository_list",
+			503,
+			"ReadResult",
+			"GitHub request failed (503)",
+		]);
+		expect(JSON.stringify(logs)).not.toContain("raw provider body");
+	}));
+
 test("reconciliation evidence retains the newest 20 failures deterministically", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
@@ -912,6 +957,7 @@ test("reconciliation evidence retains the newest 20 failures deterministically",
 			"installation reconciliation failed",
 			"9",
 			"installation_identity",
+			500,
 			"ReadResult",
 			"GitHub request failed (500)",
 		]);
