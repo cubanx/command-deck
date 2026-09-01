@@ -1740,13 +1740,28 @@ test("installation reconciliation logs each terminal provider failure once and c
 								: Response.json({ repositories: [] });
 						return Response.json([]);
 					},
+					undefined,
+					undefined,
+					undefined,
+					async ({ installationId }) => {
+						if (installationId === "10") throw new Error("raw bookkeeping diagnostic");
+					},
 				),
 			).rejects.toThrow("reconciliation failed for installations 9");
 		} finally {
 			console.error = originalError;
 		}
 		expect(logs.filter((log) => log[1] === "9")).toHaveLength(1);
-		expect(logs.filter((log) => log[1] === "10")).toHaveLength(0);
+		expect(logs.filter((log) => log[1] === "10")).toEqual([
+			[
+				"installation reconciliation bookkeeping failed",
+				"10",
+				"reconciliation",
+				"unknown",
+				"Error",
+				"reconciliation failed",
+			],
+		]);
 		expect(logs.find((log) => log[1] === "9")).toEqual([
 			"installation reconciliation failed",
 			"9",
@@ -1756,6 +1771,7 @@ test("installation reconciliation logs each terminal provider failure once and c
 			"GitHub request failed (503)",
 		]);
 		expect(JSON.stringify(logs)).not.toContain("raw provider body");
+		expect(JSON.stringify(logs)).not.toContain("raw bookkeeping diagnostic");
 	}));
 
 test("reconciliation evidence retains the newest 20 failures deterministically", () =>

@@ -1496,7 +1496,16 @@ export async function reconcileInstallations(
 			classification = error instanceof Error ? error.name : "unknown";
 		}
 		results.push({ installationId, result });
-		await onResult?.({ installationId, startedAt, result });
+		try {
+			await onResult?.({ installationId, startedAt, result });
+		} catch (error) {
+			logReconciliationFailure(
+				"installation reconciliation bookkeeping failed",
+				installationId,
+				normalizedReconciliationFailure(),
+				error instanceof Error ? error.name : "unknown",
+			);
+		}
 		if (result.kind === "error") {
 			logReconciliationFailure("installation reconciliation failed", installationId, result, classification);
 			await persistReconciliationFailure(db, installationId, result);
