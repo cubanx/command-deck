@@ -23,8 +23,8 @@
 
 ## 5. 1Password metadata
 
-- [ ] 5.1 Inventory applicable 1Password metadata without reading secrets, rotating credentials, or creating projections.
-- [ ] 5.2 With authorization, update approved metadata only and verify unchanged secret references and destinations.
+- [x] 5.1 Inventory applicable 1Password metadata without reading secrets, rotating credentials, or creating projections.
+- [x] 5.2 With authorization, update approved metadata only and verify unchanged secret references and destinations.
 
 ## 6. Codex and local continuity
 
