@@ -172,7 +172,7 @@ type TaskFetcher = (input: {
 	repositoryId: string;
 	path: string;
 	sha: string;
-}) => Promise<string | null>;
+}) => Promise<string | null | { finalTreeAbsent: true }>;
 
 const ensureRepository = (installation: import("./db").Installation, repositoryId: string, fullName: unknown) => {
 	let repository = installation.repositories.find((item) => item.repositoryId === repositoryId);
@@ -468,12 +468,13 @@ const projectPush = async (
 					sha: data.after ?? "unknown",
 				});
 		if (!deleted && content === null) throw new Error("OpenSpec artifact fetch failed");
+		if (!deleted && typeof content !== "string") continue;
 		const result = await projectOpenSpec(db, {
 			installationId,
 			accountLogin: account,
 			repositoryId,
 			path,
-			content: content ?? "",
+			content: typeof content === "string" ? content : "",
 			deleted,
 			sha: data.after ?? "unknown",
 			sourceRef,
@@ -766,7 +767,7 @@ export async function drainInbox(
 		repositoryId: string;
 		path: string;
 		sha: string;
-	}) => Promise<string | null>,
+	}) => Promise<string | null | { finalTreeAbsent: true }>,
 	reviewBot?: ReviewBotConfig,
 	sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
 	now = () => new Date(),

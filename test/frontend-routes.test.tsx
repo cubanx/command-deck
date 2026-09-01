@@ -69,6 +69,37 @@ test("prefetches the dashboard through one snapshot cache", async () => {
 	expect(queryClient.getQueryData(snapshotQueryOptions.queryKey)).toEqual(snapshot);
 });
 
+test("treats only an unauthenticated snapshot as signed out without retry", async () => {
+	const fetch = vi.fn(async () => new Response(null, { status: 401 }));
+	vi.stubGlobal("fetch", fetch);
+	const queryClient = new QueryClient();
+	await dashboardLoader({ context: { queryClient } } as never);
+	const { getByRole, queryByRole } = renderFrontend(<Dashboard />, queryClient);
+	expect(fetch).toHaveBeenCalledTimes(1);
+	expect(getByRole("status").textContent).toContain("Sign in to view your command center.");
+	expect(getByRole("link", { name: "Sign in with GitHub" }).getAttribute("href")).toBe("/auth/github");
+	expect(queryByRole("alert")).toBeNull();
+});
+
+test("keeps non-401 snapshot failures in TanStack Query's default retry and error path", async () => {
+	vi.useFakeTimers();
+	const fetch = vi.fn(async () => new Response(null, { status: 500 }));
+	vi.stubGlobal("fetch", fetch);
+	const queryClient = new QueryClient({
+		defaultOptions: { queries: { gcTime: Number.POSITIVE_INFINITY, retry: 2, retryDelay: 0 } },
+	});
+	try {
+		const loading = queryClient.fetchQuery(snapshotQueryOptions);
+		const failure = loading.catch((error) => error);
+		await vi.runAllTimersAsync();
+		expect(await failure).toMatchObject({ message: "Snapshot request failed: 500" });
+		expect(fetch).toHaveBeenCalledTimes(3);
+		expect(queryClient.getQueryState(snapshotQueryOptions.queryKey)?.status).toBe("error");
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
 test("normalizes the legacy snapshot contract without discarding optional projection fields", () => {
 	expect(
 		snapshotFor({

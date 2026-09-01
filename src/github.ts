@@ -32,7 +32,7 @@ export type TaskFetcher = (input: {
 	repositoryId: string;
 	path: string;
 	sha: string;
-}) => Promise<string | null>;
+}) => Promise<string | null | { finalTreeAbsent: true }>;
 export type GitHubRequestFailure = {
 	operation: string;
 	status: number;
@@ -575,7 +575,7 @@ async function fetchOpenSpecTasksForPullRequests(
 		if (declaration.state === "declared")
 			for (const name of declaration.slugs) {
 				let path = `openspec/changes/${name}/tasks.md`;
-				let content: string | null;
+				let content: string | null | { finalTreeAbsent: true };
 				if (stage) stage.value = "active OpenSpec task";
 				try {
 					content = await taskFetcher({
@@ -587,7 +587,8 @@ async function fetchOpenSpecTasksForPullRequests(
 				} catch (error) {
 					return artifactFailure(errorStatus(error));
 				}
-				if (content === null) {
+				if (typeof content !== "string") {
+					if (content?.finalTreeAbsent) return artifactFailure();
 					const archivePaths = archiveTaskPaths(paths, name);
 					const [archivePath] = archivePaths;
 					if (archivePaths.length !== 1 || !archivePath) return artifactFailure();
@@ -605,6 +606,7 @@ async function fetchOpenSpecTasksForPullRequests(
 					}
 					if (content === null) return artifactFailure();
 				}
+				if (typeof content !== "string") return artifactFailure();
 				tasks.push({ repositoryId, path, changeName: name, sha, content });
 			}
 		results.push({ number, tasks, declaration: declaration.state, detected });
@@ -1476,7 +1478,8 @@ export async function reconcileInstallations(
 	const results: Array<{ installationId: string; result: ReadResult }> = [];
 	for (const installationId of ids) {
 		const startedAt = new Date();
-		let result: ReadResult;
+		let result: ReadResult,
+			classification = "ReadResult";
 		try {
 			const { token, appJwt } = await credentialsFor(installationId);
 			result = await bootstrapInstallation(
@@ -1490,18 +1493,31 @@ export async function reconcileInstallations(
 			);
 		} catch (error) {
 			result = normalizedReconciliationFailure();
-			logReconciliationFailure(
-				"installation reconciliation failed",
-				installationId,
-				result,
-				error instanceof Error ? "Error" : "unknown",
-			);
+			classification = error instanceof Error ? error.name : "unknown";
 		}
 		results.push({ installationId, result });
-		await onResult?.({ installationId, startedAt, result });
+		try {
+			await onResult?.({ installationId, startedAt, result });
+		} catch (error) {
+			logReconciliationFailure(
+				"installation reconciliation bookkeeping failed",
+				installationId,
+				normalizedReconciliationFailure(),
+				error instanceof Error ? error.name : "unknown",
+			);
+		}
 		if (result.kind === "error") {
-			logReconciliationFailure("installation reconciliation failed", installationId, result, "ReadResult");
-			await persistReconciliationFailure(db, installationId, result);
+			logReconciliationFailure("installation reconciliation failed", installationId, result, classification);
+			try {
+				await persistReconciliationFailure(db, installationId, result);
+			} catch (error) {
+				logReconciliationFailure(
+					"installation reconciliation persistence failed",
+					installationId,
+					normalizedReconciliationFailure(),
+					error instanceof Error ? error.name : "unknown",
+				);
+			}
 		}
 	}
 	const failures = results.filter((item) => item.result.kind === "error");
@@ -1523,7 +1539,15 @@ export const logReconciliationFailure = (
 	installationId: string,
 	result: Extract<ReadResult, { kind: "error" }>,
 	classification: string,
-) => console.error(event, installationId, result.operation ?? "reconciliation", classification, result.message);
+) =>
+	console.error(
+		event,
+		installationId,
+		result.operation ?? "reconciliation",
+		result.status ?? "unknown",
+		classification,
+		result.message,
+	);
 
 export async function persistReconciliationFailure(
 	db: Db,

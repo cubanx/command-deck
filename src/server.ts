@@ -1079,7 +1079,7 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			countingFetch,
 			installationIds,
 			undefined,
-			logGitHubRequestFailure,
+			undefined,
 			async ({ installationId, startedAt, result }) => {
 				const counts = directReconciliationCounts(result);
 				if (result.kind === "changed")
@@ -1120,10 +1120,7 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			},
 		)
 			.then(() => "success" as const)
-			.catch((error) => {
-				console.error("reconciliation failed", error);
-				return "failed" as const;
-			});
+			.catch(() => "failed" as const);
 		reconciling = work;
 		try {
 			const status = await work;
@@ -1225,6 +1222,33 @@ export function createApp(
 			},
 		});
 		if (response.ok) return response.text();
+		if (response.status === 404) {
+			const treeTarget = `https://api.github.com/repositories/${input.repositoryId}/git/trees/${input.sha}?recursive=1`;
+			const tree = await githubFetch(fetch, treeTarget, {
+				headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" },
+			});
+			if (tree.ok) {
+				try {
+					const body = (await tree.json()) as { truncated?: unknown; tree?: Array<{ path?: unknown; type?: unknown }> };
+					if (
+						body.truncated === false &&
+						Array.isArray(body.tree) &&
+						!body.tree.some((entry) => entry.path === input.path && entry.type === "blob")
+					)
+						return { finalTreeAbsent: true } as const;
+				} catch (error) {
+					console.error("GitHub final tree payload was invalid", error instanceof Error ? error.name : "unknown");
+				}
+			} else {
+				logGitHubRequestFailure({
+					operation: "webhook OpenSpec task final tree fetch",
+					status: tree.status,
+					target: treeTarget,
+					diagnostic: await githubErrorDiagnostic(tree),
+				});
+				return null;
+			}
+		}
 		logGitHubRequestFailure({
 			operation: "webhook OpenSpec task fetch",
 			status: response.status,

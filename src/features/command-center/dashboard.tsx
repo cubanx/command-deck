@@ -14,6 +14,7 @@ import { derivePullRequests, type PullRequest, type ViewState } from "#/features
 
 type Snapshot = {
 	error?: string;
+	signedOut?: boolean;
 	stale?: boolean;
 	installationCount?: number;
 	user?: { login: string };
@@ -26,6 +27,16 @@ export function DashboardLoadError() {
 		<main aria-label="Command Center" className="command-center">
 			<Alert color="red" role="alert">
 				Unable to load Command Center. <a href="/auth/github">Sign in</a>
+			</Alert>
+		</main>
+	);
+}
+
+export function SignedOutDashboard() {
+	return (
+		<main aria-label="Command Center" className="command-center">
+			<Alert color="blue" role="status">
+				Sign in to view your command center. <a href="/auth/github">Sign in with GitHub</a>
 			</Alert>
 		</main>
 	);
@@ -74,6 +85,7 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 	);
 	const set = <Key extends keyof ViewState>(key: Key, value: ViewState[Key]) =>
 		setView((current) => ({ ...current, [key]: value }));
+	if (snapshot.signedOut) return <SignedOutDashboard />;
 	if (snapshot.error) return <DashboardLoadError />;
 	return (
 		<main aria-label="Command Center" className="command-center">

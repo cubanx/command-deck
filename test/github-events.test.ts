@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { expect, test } from "vitest";
 import { bindInstallation, upsertIdentity } from "#/access";
+import { mutateUser } from "#/db";
 import { acceptGitHubDelivery, drainInbox, githubSignatureValid } from "#/events";
 import { withDatabase } from "./mongo-support";
 
@@ -584,6 +585,74 @@ test("webhook branches reject whitespace, overlong, and dotdot refs", () =>
 				(spec) => spec.source_ref === undefined,
 			),
 		).toBe(true);
+	}));
+
+test("push preserves prior OpenSpec evidence when final-tree absence is proven", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]!.repositories = [
+				{
+					repositoryId: "2",
+					full_name: "ds9/ops",
+					pullRequests: [],
+					deployments: [],
+					openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }],
+				},
+			];
+		});
+		await acceptGitHubDelivery(
+			db,
+			"stale-task",
+			"push",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				after: "a".repeat(40),
+				commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
+			}),
+		);
+		await drainInbox(db, async () => ({ finalTreeAbsent: true }));
+		expect(await db.inboxDeliveries.findOne({ _id: "github:stale-task" })).toMatchObject({ status: "done" });
+		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories?.[0]?.openSpecs).toEqual([
+			{ change_name: "defiant", completed: 1, total: 2 },
+		]);
+	}));
+
+test("explicitly removed tasks delete prior evidence without a content fetch", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]!.repositories = [
+				{
+					repositoryId: "2",
+					full_name: "ds9/ops",
+					pullRequests: [],
+					deployments: [],
+					openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }],
+				},
+			];
+		});
+		await acceptGitHubDelivery(
+			db,
+			"removed-task",
+			"push",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				after: "a".repeat(40),
+				commits: [{ removed: ["openspec/changes/defiant/tasks.md"] }],
+			}),
+		);
+		let fetches = 0;
+		await drainInbox(db, async () => {
+			fetches++;
+			return null;
+		});
+		expect(fetches).toBe(0);
+		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories?.[0]?.openSpecs).toEqual([]);
 	}));
 
 test("review, check, and workflow deliveries mutate the stable pull-request projection", () =>

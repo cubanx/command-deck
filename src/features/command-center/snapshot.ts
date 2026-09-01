@@ -4,6 +4,7 @@ import type { PullRequest } from "#/features/command-center/view-model";
 
 export type DashboardSnapshot = {
 	error?: string;
+	signedOut?: boolean;
 	stale?: boolean;
 	installationCount?: number;
 	user?: { login: string; avatar_url?: string; fixture_avatar?: boolean };
@@ -58,6 +59,14 @@ export const snapshotQueryOptions = queryOptions({
 	queryKey: ["snapshot"],
 	queryFn: async () => {
 		const response = await fetch("/api/snapshot");
+		if (response.status === 401)
+			return {
+				signedOut: true,
+				repositories: [],
+				pullRequests: [],
+				deployments: [],
+				notifications: [],
+			};
 		if (!response.ok) throw new Error(`Snapshot request failed: ${response.status}`);
 		const snapshot = snapshotFor(await response.json());
 		if (!snapshot) throw new TypeError("Invalid dashboard snapshot");

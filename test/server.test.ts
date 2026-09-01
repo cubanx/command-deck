@@ -758,9 +758,11 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 				"installation reconciliation failed",
 				"12",
 				"openspec",
+				"unknown",
 				"ReadResult",
 				"GitHub OpenSpec artifact fetch failed",
 			]);
+			expect(logs.filter((log) => log[0] === "GitHub request failed")).toHaveLength(0);
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
 			const failedInstallation = failedUser.installations[0];
@@ -1530,10 +1532,18 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 					"installation bootstrap persistence failed",
 					"12",
 					"installation_identity",
+					401,
 					"Error",
 					"GitHub request failed (401)",
 				],
-				["installation bootstrap failed", "12", "installation_identity", "ReadResult", "GitHub request failed (401)"],
+				[
+					"installation bootstrap failed",
+					"12",
+					"installation_identity",
+					401,
+					"ReadResult",
+					"GitHub request failed (401)",
+				],
 			]);
 			await new Promise((resolve) => setTimeout(resolve));
 			expect(unhandled).toEqual([]);
@@ -1621,10 +1631,113 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 		}
 	}));
 
+test("server webhook task fetches accept only a complete final-tree absence", async () => {
+	for (const [name, tree, expectedStatus] of [
+		["absent", { truncated: false, tree: [] }, "done"],
+		["malformed", { tree: [] }, "pending_verification"],
+		["truncated", { truncated: true, tree: [] }, "pending_verification"],
+		[
+			"present",
+			{ truncated: false, tree: [{ path: "openspec/changes/defiant/tasks.md", type: "blob" }] },
+			"pending_verification",
+		],
+	] as const)
+		await withDatabase(async (db) => {
+			await upsertIdentity(db, "u", "sisko");
+			await bindInstallation(db, "u", "9", "cubanx");
+			await mutateUser(db, "u", (user) => {
+				user.installations[0]!.repositories = [
+					{
+						repositoryId: "2",
+						full_name: "ds9/ops",
+						pullRequests: [],
+						openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }],
+						deployments: [],
+					},
+				];
+			});
+			const payload = JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				ref: "refs/heads/main",
+				after: "a".repeat(40),
+				commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
+			});
+			await db.inboxDeliveries.insertOne({
+				_id: `github:final-tree-${name}`,
+				provider: "github",
+				deliveryId: `final-tree-${name}`,
+				eventName: "push",
+				payload,
+				status: "pending",
+				attempts: 0,
+				receivedAt: new Date(),
+			});
+			const { privateKey } = await crypto.subtle.generateKey(
+				{
+					name: "RSASSA-PKCS1-v1_5",
+					modulusLength: 2048,
+					publicExponent: new Uint8Array([1, 0, 1]),
+					hash: "SHA-256",
+				},
+				true,
+				["sign", "verify"],
+			);
+			const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
+				.toString("base64")
+				.match(/.{1,64}/g)
+				?.join("\n")}\n-----END PRIVATE KEY-----`;
+			const originalFetch = globalThis.fetch,
+				contentUrls: string[] = [],
+				treeUrls: string[] = [];
+			fetchTarget.fetch = async (input) => {
+				const url = String(input);
+				if (url.includes("access_tokens")) return Response.json({ token: "installation" });
+				if (url.includes("/contents/openspec/changes/defiant/tasks.md")) {
+					contentUrls.push(url);
+					return new Response(null, { status: 404 });
+				}
+				if (url.includes("/git/trees/")) {
+					treeUrls.push(url);
+					return Response.json(tree);
+				}
+				throw new Error(`unexpected GitHub request ${url}`);
+			};
+			const app = createApp(db, { ...testConfig, githubAppId: "1", githubAppPrivateKey: pem });
+			try {
+				await app.drain();
+				const delivery = await db.inboxDeliveries.findOne({ _id: `github:final-tree-${name}` });
+				expect(delivery).toMatchObject({ status: expectedStatus });
+				expect(delivery?.attempts).toBe(expectedStatus === "done" ? 0 : 3);
+				expect(delivery?.payload).toBe(expectedStatus === "done" ? undefined : payload);
+				const contentUrl =
+					"https://api.github.com/repositories/2/contents/openspec/changes/defiant/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+				const treeUrl =
+					"https://api.github.com/repositories/2/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1";
+				expect(contentUrls).toEqual(Array(expectedStatus === "done" ? 1 : 3).fill(contentUrl));
+				expect(treeUrls).toEqual(Array(expectedStatus === "done" ? 1 : 3).fill(treeUrl));
+				if (expectedStatus === "done") expect(treeUrls).toHaveLength(1);
+				expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toEqual([
+					{ change_name: "defiant", completed: 1, total: 2 },
+				]);
+			} finally {
+				app.stop();
+				globalThis.fetch = originalFetch;
+			}
+		});
+}, 30_000);
+
 test("webhook task fetch logs safe GitHub diagnostics", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
+		const payload = JSON.stringify({
+			installation: { id: 9, account: { login: "cubanx" } },
+			repository: { id: 2 },
+			ref: "refs/heads/main",
+			after: "a".repeat(40),
+			commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
+		});
 		const user = await db.users.findOne({ _id: "u" });
 		user?.installations[0]?.repositories.push({
 			repositoryId: "2",
@@ -1639,13 +1752,7 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 			provider: "github",
 			deliveryId: "failed-push",
 			eventName: "push",
-			payload: JSON.stringify({
-				installation: { id: 9, account: { login: "cubanx" } },
-				repository: { id: 2 },
-				ref: "refs/heads/main",
-				after: "a".repeat(40),
-				commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
-			}),
+			payload,
 			status: "pending",
 			attempts: 0,
 			receivedAt: new Date(),
@@ -1713,4 +1820,6 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 			}),
 		]);
 		expect(JSON.stringify(logs)).not.toContain("must-not-log");
+		const delivery = await db.inboxDeliveries.findOne({ _id: "github:failed-push" });
+		expect(delivery).toMatchObject({ status: "pending_verification", attempts: 3, payload });
 	}));
