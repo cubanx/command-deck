@@ -18,8 +18,8 @@
 
 ## 4. Atlas continuity
 
-- [ ] 4.1 Inventory the target Atlas organization and classify project/cluster rename candidates while preserving `command-center-ai-production`, `command-center-ai-test-*`, Mongo users, and credentials.
-- [ ] 4.2 With authorization, rename the approved Atlas project and cluster to `command-deck`; verify protected namespaces and rollback evidence.
+- [x] 4.1 Inventory the target Atlas organization and classify project/cluster rename candidates while preserving `command-center-ai-production`, `command-center-ai-test-*`, Mongo users, and credentials.
+- [x] 4.2 With authorization, rename the approved Atlas project to `command-deck`, retain the protected non-renamable cluster, and verify protected namespaces and rollback evidence.
 
 ## 5. 1Password metadata
 
