@@ -1674,13 +1674,8 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		} finally {
 			console.error = originalError;
 		}
-		expect(logs).toContainEqual([
-			"installation reconciliation failed",
-			"9",
-			"reconciliation",
-			"unknown",
-			"ReadResult",
-			"reconciliation failed",
+		expect(logs).toEqual([
+			["installation reconciliation failed", "9", "reconciliation", "unknown", "Error", "reconciliation failed"],
 		]);
 		expect(JSON.stringify(logs)).not.toContain("raw provider diagnostic");
 		expect((await db.users.findOne({ _id: "u" }))?.installations[0]).toMatchObject({

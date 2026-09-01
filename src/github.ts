@@ -1478,7 +1478,8 @@ export async function reconcileInstallations(
 	const results: Array<{ installationId: string; result: ReadResult }> = [];
 	for (const installationId of ids) {
 		const startedAt = new Date();
-		let result: ReadResult;
+		let result: ReadResult,
+			classification = "ReadResult";
 		try {
 			const { token, appJwt } = await credentialsFor(installationId);
 			result = await bootstrapInstallation(
@@ -1490,13 +1491,14 @@ export async function reconcileInstallations(
 				fetchTasks,
 				reportTaskFetchFailure,
 			);
-		} catch (_error) {
+		} catch (error) {
 			result = normalizedReconciliationFailure();
+			classification = error instanceof Error ? error.name : "unknown";
 		}
 		results.push({ installationId, result });
 		await onResult?.({ installationId, startedAt, result });
 		if (result.kind === "error") {
-			logReconciliationFailure("installation reconciliation failed", installationId, result, "ReadResult");
+			logReconciliationFailure("installation reconciliation failed", installationId, result, classification);
 			await persistReconciliationFailure(db, installationId, result);
 		}
 	}
