@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createSession, upsertIdentity } from "#/access";
 import {
 	advanceMergeIntent,
@@ -40,9 +40,7 @@ const privateKey = async () => {
 		true,
 		["sign", "verify"],
 	);
-	return `-----BEGIN PRIVATE KEY-----\n${Buffer.from(
-		await crypto.subtle.exportKey("pkcs8", privateKey),
-	)
+	return `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
 		.toString("base64")
 		.match(/.{1,64}/g)
 		?.join("\n")}\n-----END PRIVATE KEY-----`;
@@ -65,18 +63,61 @@ test("merge eligibility fails closed for every mutable gate", () => {
 		expect(mergeEligibility({ ...eligible, [key]: value })).toMatchObject({
 			ok: false,
 		});
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [
+				{ completed: 2, total: 2 },
+				{ completed: 1, total: 2 },
+			],
+		}),
+	).toMatchObject({ ok: false });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_spec: null,
+			open_specs: [],
+			labels: [],
+		}),
+	).toMatchObject({ ok: false });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_spec: null,
+			open_specs: [],
+			labels: ["openspec-not-required"],
+		}),
+	).toEqual({ ok: true });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [],
+			open_spec_declaration: "absent",
+			detected_open_specs: ["capture-wolf-359"],
+		}),
+	).toEqual({ ok: false, reason: "Confirm OpenSpec association." });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [],
+			open_spec_declaration: "empty",
+			labels: ["openspec-not-required"],
+		}),
+	).toEqual({ ok: true });
+	expect(
+		mergeEligibility({
+			...eligible,
+			open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
+		}),
+	).toEqual({ ok: true });
 });
 
 test("merge intents are opaque and outcomes remain sanitized", () => {
 	expect(mergeIntentHash("quark-intent")).not.toContain("quark-intent");
 	expect(mergeResult({ merged: true })).toBe("success");
-	expect(mergeResult({ errors: [{ type: "HEAD_OID_OUTDATED" }] })).toBe(
-		"stale",
-	);
+	expect(mergeResult({ errors: [{ type: "HEAD_OID_OUTDATED" }] })).toBe("stale");
 	expect(mergeResult({ errors: [{ type: "FORBIDDEN" }] })).toBe("permission");
-	expect(mergeResult({ errors: [{ type: "MERGE_CONFLICT" }] })).toBe(
-		"conflict",
-	);
+	expect(mergeResult({ errors: [{ type: "MERGE_CONFLICT" }] })).toBe("conflict");
 	expect(mergeResult({ errors: [{ type: "anything" }] })).toBe("blocked");
 });
 
@@ -96,27 +137,11 @@ test("merge intent is hashed, expires, and advances only once", () =>
 			},
 			new Date("2030-01-01"),
 		);
-		expect((await db.mergeIntents.findOne({}))?._id).toBe(
-			mergeIntentHash(token),
-		);
+		expect((await db.mergeIntents.findOne({}))?._id).toBe(mergeIntentHash(token));
 		expect(
-			await advanceMergeIntent(
-				db,
-				token,
-				"started",
-				"authorized",
-				new Date("2030-01-01T00:01:00Z"),
-			),
+			await advanceMergeIntent(db, token, "started", "authorized", new Date("2030-01-01T00:01:00Z")),
 		).toMatchObject({ userId: "sisko", stage: "started" });
-		expect(
-			await advanceMergeIntent(
-				db,
-				token,
-				"started",
-				"authorized",
-				new Date("2030-01-01T00:01:00Z"),
-			),
-		).toBeNull();
+		expect(await advanceMergeIntent(db, token, "started", "authorized", new Date("2030-01-01T00:01:00Z"))).toBeNull();
 	}));
 
 test("role proof happens before installation authority and exact-head merge reads twice", async () => {
@@ -156,6 +181,32 @@ test("role proof happens before installation authority and exact-head merge read
 		}),
 	).toBeNull();
 	expect(deniedInstallationCalls).toBe(0);
+	const signal = AbortSignal.abort(new DOMException("timed out", "TimeoutError"));
+	const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
+	let timedOutInstallationCalls = 0;
+	try {
+		await expect(
+			authorizeBeforeInstallation({
+				fetcher: async (_, init) => {
+					expect(init?.signal).toBe(signal);
+					init?.signal?.throwIfAborted();
+					return Response.json({ permission: "write" });
+				},
+				userToken: "request-local-only",
+				login: "sisko",
+				fullName: "Crisp-Inc/dev-command-center",
+				installationToken: async () => {
+					timedOutInstallationCalls++;
+					return "must-not-mint";
+				},
+			}),
+		).rejects.toThrow(
+			"GitHub request timed out after 30000ms: GET https://api.github.com/repos/Crisp-Inc/dev-command-center/collaborators/sisko/permission",
+		);
+	} finally {
+		timeout.mockRestore();
+	}
+	expect(timedOutInstallationCalls).toBe(0);
 	let reads = 0;
 	let variables: Record<string, string> | undefined;
 	expect(
@@ -209,8 +260,7 @@ test("default merge provider reads every gate and fails closed without policy ev
 				base: { ref: "main" },
 				mergeable: true,
 			});
-		if (url.includes("actions/runs"))
-			return Response.json({ workflow_runs: [] });
+		if (url.includes("actions/runs")) return Response.json({ workflow_runs: [] });
 		if (url.endsWith("/check-runs")) return Response.json({ check_runs: [] });
 		if (url.endsWith("/reviews")) return Response.json(reviews);
 		if (url.includes("/rules/branches/")) return Response.json([]);
@@ -289,8 +339,7 @@ test("default merge provider permits only explicit clear policy evidence", async
 				base: { ref: "main" },
 				mergeable: true,
 			});
-		if (url.includes("actions/runs"))
-			return Response.json({ workflow_runs: [] });
+		if (url.includes("actions/runs")) return Response.json({ workflow_runs: [] });
 		if (url.endsWith("/check-runs")) return Response.json({ check_runs: [] });
 		if (url.endsWith("/reviews")) return Response.json([]);
 		if (url.includes("/rules/branches/")) return Response.json([]);
@@ -323,11 +372,11 @@ test("default merge provider permits only explicit clear policy evidence", async
 			stage: "authorized",
 			expiresAt: new Date(),
 		});
-		expect(mergeEligibility(inspected)).toEqual({ ok: true });
+		expect(mergeEligibility({ ...inspected, labels: ["openspec-not-required"] })).toEqual({ ok: true });
 		protectionStatus = 200;
 		expect(
-			mergeEligibility(
-				await provider.inspect({
+			mergeEligibility({
+				...(await provider.inspect({
 					_id: "intent",
 					userId: "sisko",
 					sessionId: "session",
@@ -339,8 +388,9 @@ test("default merge provider permits only explicit clear policy evidence", async
 					headSha: "a".repeat(40),
 					stage: "authorized",
 					expiresAt: new Date(),
-				}),
-			),
+				})),
+				labels: ["openspec-not-required"],
+			}),
 		).toEqual({ ok: true });
 		protectionStatus = 403;
 		expect(
@@ -424,21 +474,16 @@ test("merge callback binds its hashed session before role or installation author
 		try {
 			const callback = (cookie?: string) =>
 				app.fetch(
-					new Request(
-						`http://local/auth/github/callback?code=x&state=${state}`,
-						{
-							headers: cookie ? { cookie } : {},
-						},
-					),
+					new Request(`http://local/auth/github/callback?code=x&state=${state}`, {
+						headers: cookie ? { cookie } : {},
+					}),
 				);
 			expect((await callback()).status).toBe(403);
 			expect((await callback(`dcc_session=${other.token}`)).status).toBe(403);
 			expect(calls).toBe(0);
 			expect((await callback(`dcc_session=${owner.token}`)).status).toBe(403);
 			expect(calls).toBe(2);
-			expect(JSON.stringify(await db.mergeIntents.findOne({}))).not.toContain(
-				"oauth-token",
-			);
+			expect(JSON.stringify(await db.mergeIntents.findOne({}))).not.toContain("oauth-token");
 			expect(await mergeIntentFor(db, state)).toMatchObject({
 				stage: "started",
 			});

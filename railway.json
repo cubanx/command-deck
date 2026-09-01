@@ -3,13 +3,7 @@
 	"build": {
 		"builder": "DOCKERFILE",
 		"dockerfilePath": "Dockerfile",
-		"watchPatterns": [
-			"**",
-			"!/README.md",
-			"!/docs/**",
-			"!/openspec/**",
-			"!/.mex/**"
-		]
+		"watchPatterns": ["**", "!/README.md", "!/docs/**", "!/openspec/**", "!/.mex/**"]
 	},
 	"deploy": {
 		"startCommand": "bun run src/server.ts",

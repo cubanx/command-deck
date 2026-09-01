@@ -6,12 +6,8 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 
 const root = new URL("..", import.meta.url);
-const mongoUri = (
-	scheme: string,
-	user: string,
-	password: string,
-	host: string,
-) => [scheme, "//", user, ":", password, "@", host].join("");
+const mongoUri = (scheme: string, user: string, password: string, host: string) =>
+	[scheme, "//", user, ":", password, "@", host].join("");
 
 const scan = async (content?: string, paths?: string[]) => {
 	const directory = mkdtempSync(join(tmpdir(), "dcc-uri-scan-"));
@@ -20,10 +16,7 @@ const scan = async (content?: string, paths?: string[]) => {
 	try {
 		const child = spawn(
 			process.execPath,
-			[
-				"scripts/scan-credential-uris.ts",
-				...(paths ?? (content === undefined ? [] : [path])),
-			],
+			["scripts/scan-credential-uris.ts", ...(paths ?? (content === undefined ? [] : [path]))],
 			{
 				cwd: root.pathname,
 			},
@@ -45,18 +38,13 @@ const scan = async (content?: string, paths?: string[]) => {
 test.each([
 	["mongodb:", "sisko", "orb-experience", "localhost/command-deck"],
 	["mongodb+srv:", "kira", "resistance-cell", "cluster.example/command-deck"],
-])(
-	"credential-bearing MongoDB URIs fail without being echoed",
-	async (...parts) => {
-		const uri = mongoUri(...parts);
-		const result = await scan(uri);
-		expect(result.exitCode).toBe(1);
-		expect(result.stderr).toContain(
-			"credential-bearing MongoDB URI is not allowed",
-		);
-		expect(result.stderr).not.toContain(uri);
-	},
-);
+])("credential-bearing MongoDB URIs fail without being echoed", async (...parts) => {
+	const uri = mongoUri(...parts);
+	const result = await scan(uri);
+	expect(result.exitCode).toBe(1);
+	expect(result.stderr).toContain("credential-bearing MongoDB URI is not allowed");
+	expect(result.stderr).not.toContain(uri);
+});
 
 test("credential-free localhost MongoDB URIs pass", async () => {
 	const result = await scan("mongodb://127.0.0.1:27018/command-deck");
@@ -78,16 +66,11 @@ test("missing paths emit a sanitized warning", async () => {
 
 test("untracked credential-bearing MongoDB URIs fail", async () => {
 	const path = join(root.pathname, ".scan-credential-uri-test");
-	writeFileSync(
-		path,
-		mongoUri("mongodb:", "odo", "constable-bucket", "localhost/command-deck"),
-	);
+	writeFileSync(path, mongoUri("mongodb:", "odo", "constable-bucket", "localhost/command-deck"));
 	try {
 		const result = await scan();
 		expect(result.exitCode).toBe(1);
-		expect(result.stderr).toContain(
-			".scan-credential-uri-test:1: credential-bearing MongoDB URI is not allowed",
-		);
+		expect(result.stderr).toContain(".scan-credential-uri-test:1: credential-bearing MongoDB URI is not allowed");
 	} finally {
 		rmSync(path, { force: true });
 	}

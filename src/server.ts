@@ -12,12 +12,14 @@ import {
 } from "#/access";
 import type { Config } from "#/config";
 import { loadConfig } from "#/config";
-import type { Db, MergeIntent } from "#/db";
+import type { Db, MergeIntent, ReconciliationRun } from "#/db";
 import { databaseReady, initializeDatabase, openDatabase } from "#/db";
 import {
 	acceptGitHubDelivery,
 	drainInbox,
+	githubPayloadInstallationId,
 	githubSignatureValid,
+	markDeliveriesRepairedByReconciliation,
 } from "#/events";
 import {
 	approvedInstallationIdsForUser,
@@ -33,6 +35,7 @@ import {
 	persistReconciliationFailure,
 	type ReadResult,
 	reconcileInstallations,
+	reconcilePullRequest,
 } from "#/github";
 import { approvedInstallationAccount } from "#/installations";
 import {
@@ -44,23 +47,64 @@ import {
 	mergeIntentFor,
 	mergeIntentHash,
 } from "#/merge";
-import { buildBrowserScript } from "#/web/build";
+import { countedFetch, createReconciliationCoordinator } from "#/reconciliation-coordinator";
+import { createWeekdayReconciliationScheduler } from "#/reconciliation-scheduler";
+import { frontendAssetLoader } from "#/web/frontend-assets";
 
-const cookie = (request: Request) =>
-	request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];
-const webAsset = (name: string) =>
-	readFileSync(new URL(`./web/${name}`, import.meta.url), "utf8");
+type AppDependencies = {
+	bootstrapInstallation?: typeof bootstrapInstallation;
+	reconcileInstallations?: typeof reconcileInstallations;
+	reconcilePullRequest?: typeof reconcilePullRequest;
+};
+
+const lifecycleChangedFields = (before: Record<string, unknown> | undefined, after: unknown) => {
+	if (!after || typeof after !== "object") return [];
+	return [
+		["state", "state"],
+		["draft", "draft"],
+		["head_sha", "head"],
+		["mergeable", "mergeability"],
+		["unresolved_review_threads", "review_threads"],
+		["changes_requested", "reviews"],
+		["required_checks", "required_checks"],
+		["workflow_state", "actions"],
+		["checks_state", "checks"],
+		["labels", "labels"],
+	].flatMap(([field, category]) =>
+		JSON.stringify(before?.[field]) === JSON.stringify((after as Record<string, unknown>)[field]) ? [] : [category],
+	);
+};
+
+export const serverError = (error: unknown) => {
+	console.error("server request failed", error instanceof Error ? error.name : "unknown");
+	return new Response("Internal server error", { status: 500 });
+};
+
+const directReconciliationCounts = (result: ReadResult) => {
+	if (result.kind !== "changed") return { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	const { prCount, changedPrCount, unchangedPrCount } = result;
+	if (typeof prCount !== "number" || typeof changedPrCount !== "number" || typeof unchangedPrCount !== "number")
+		return { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	return Number.isSafeInteger(prCount) &&
+		Number.isSafeInteger(changedPrCount) &&
+		Number.isSafeInteger(unchangedPrCount) &&
+		prCount >= 0 &&
+		changedPrCount >= 0 &&
+		unchangedPrCount >= 0 &&
+		changedPrCount + unchangedPrCount === prCount
+		? { prCount, changedPrCount, unchangedPrCount }
+		: { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+};
+
+const cookie = (request: Request) => request.headers.get("cookie")?.match(/(?:^|; )dcc_session=([^;]+)/)?.[1];
+const webAsset = (name: string) => readFileSync(new URL(`./web/${name}`, import.meta.url), "utf8");
 const html = webAsset("index.html");
-const css = webAsset("app.css");
 const retirementWorker = webAsset("sw.js");
 
 type SessionIdentity = { id: string; login?: string };
 type MergeProvider = {
 	inspect(intent: MergeIntent): Promise<Record<string, unknown>>;
-	merge(
-		intent: MergeIntent,
-		variables: Record<string, string>,
-	): Promise<Record<string, unknown>>;
+	merge(intent: MergeIntent, variables: Record<string, string>): Promise<Record<string, unknown>>;
 };
 type AppContext = {
 	db: Db;
@@ -71,21 +115,23 @@ type AppContext = {
 	authenticated(request: Request): Promise<SessionIdentity | null>;
 	reconcile(
 		userId?: string,
+		trigger?: "scheduled" | "webhook" | "startup" | "manual",
+		installationIds?: string[],
 	): Promise<"success" | "running" | "failed" | "missing">;
+	reconcilePullRequest(target: {
+		installationId: string;
+		repositoryId: string;
+		number: number;
+	}): Promise<"success" | "failed">;
 	scheduleDrain(): Promise<void>;
 	refresh(userId: string): void;
 	mergeProvider?: MergeProvider;
+	bootstrapInstallation?: typeof bootstrapInstallation;
 };
 
 const freshShellHeaders = { "cache-control": "no-cache" };
 const textAssets = new Map<string, [string, string, HeadersInit?]>([
-	["/", [html, "text/html; charset=utf-8", freshShellHeaders]],
-	["/configuration", [html, "text/html; charset=utf-8", freshShellHeaders]],
-	["/app.css", [css, "text/css", freshShellHeaders]],
-	[
-		"/manifest.webmanifest",
-		[webAsset("manifest.webmanifest"), "application/manifest+json"],
-	],
+	["/manifest.webmanifest", [webAsset("manifest.webmanifest"), "application/manifest+json"]],
 ]);
 const iconAssets = new Map<string, [string, string]>([
 	["/avatar-fixture.svg", ["avatar-fixture.svg", "image/svg+xml"]],
@@ -98,7 +144,26 @@ const iconAssets = new Map<string, [string, string]>([
 	["/icon-maskable-512.png", ["icon-maskable-512.png", "image/png"]],
 ]);
 
+const builtFrontend = frontendAssetLoader({ development: process.env.NODE_ENV !== "production" });
+const mimeFor = (path: string) =>
+	path.endsWith(".css") ? "text/css" : path.endsWith(".js") ? "text/javascript" : "application/octet-stream";
+const frontendShell = async () => {
+	const { manifest } = await builtFrontend();
+	const entry = manifest["src/web/client.tsx"];
+	if (!entry) throw new TypeError("Frontend manifest has no client entry");
+	return html
+		.replace(
+			"<!-- frontend-css -->",
+			(entry.css ?? []).map((file) => `<link rel="stylesheet" href="/${file}">`).join(""),
+		)
+		.replace("<!-- frontend-js -->", `<script type="module" src="/${entry.file}"></script>`);
+};
+
 const publicResponse = async (path: string) => {
+	if (path === "/" || path === "/configuration")
+		return new Response(await frontendShell(), {
+			headers: { "content-type": "text/html; charset=utf-8", ...freshShellHeaders },
+		});
 	if (path === "/sw.js")
 		return new Response(retirementWorker, {
 			headers: {
@@ -106,23 +171,21 @@ const publicResponse = async (path: string) => {
 				"cache-control": "no-cache",
 			},
 		});
-	if (path === "/app.js")
-		return new Response(await buildBrowserScript(), {
-			headers: { "content-type": "text/javascript", ...freshShellHeaders },
-		});
 	const text = textAssets.get(path);
 	if (text)
 		return new Response(text[0], {
 			headers: { "content-type": text[1], ...text[2] },
 		});
 	const icon = iconAssets.get(path);
-	return icon
-		? new Response(
-				readFileSync(new URL(`../assets/${icon[0]}`, import.meta.url)),
-				{
-					headers: { "content-type": icon[1] },
-				},
-			)
+	if (icon)
+		return new Response(readFileSync(new URL(`../assets/${icon[0]}`, import.meta.url)), {
+			headers: { "content-type": icon[1] },
+		});
+	const asset = builtFrontend().asset(path.slice(1));
+	return asset
+		? new Response(asset, {
+				headers: { "content-type": mimeFor(path), "cache-control": "public, max-age=31536000, immutable" },
+			})
 		: undefined;
 };
 
@@ -146,19 +209,11 @@ const trustedOrigin = (request: Request, config: Config) => {
 	if (!config.production) return true;
 	if (!config.publicUrl) return false;
 	const origin = new URL(config.publicUrl);
-	const header = (name: string) =>
-		request.headers.get(name)?.split(",", 1)[0]?.trim();
-	return (
-		header("x-forwarded-proto") === "https" &&
-		header("x-forwarded-host") === origin.host
-	);
+	const header = (name: string) => request.headers.get(name)?.split(",", 1)[0]?.trim();
+	return header("x-forwarded-proto") === "https" && header("x-forwarded-host") === origin.host;
 };
 const escapeHtml = (value: unknown) =>
-	String(value)
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;");
+	String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
 const githubJson = async (url: string, token: string) => {
 	const response = await githubFetch(fetch, url, {
@@ -167,9 +222,7 @@ const githubJson = async (url: string, token: string) => {
 			accept: "application/vnd.github+json",
 		},
 	});
-	return response.ok
-		? ((await response.json()) as Record<string, unknown>)
-		: null;
+	return response.ok ? ((await response.json()) as Record<string, unknown>) : null;
 };
 
 const githubRead = async (url: string, token: string) => {
@@ -188,33 +241,20 @@ const githubRead = async (url: string, token: string) => {
 const logGitHubRequestFailure = (failure: GitHubRequestFailure) =>
 	console.error("GitHub request failed", JSON.stringify(failure));
 
-const successfulEvidence = (
-	items: Array<Record<string, unknown>> | undefined,
-	noRequirements: boolean,
-) =>
-	Array.isArray(items) &&
-	(items.length === 0
-		? noRequirements
-		: items.every((item) => item.conclusion === "success"));
+const successfulEvidence = (items: Array<Record<string, unknown>> | undefined, noRequirements: boolean) =>
+	Array.isArray(items) && (items.length === 0 ? noRequirements : items.every((item) => item.conclusion === "success"));
 
 const latestReviewState = (reviews: Array<Record<string, unknown>>) => {
-	const currentByReviewer = new Map<
-		string,
-		{ state: string; submittedAt: number }
-	>();
+	const currentByReviewer = new Map<string, { state: string; submittedAt: number }>();
 	for (const review of reviews) {
 		const state = String(review.state ?? "").toUpperCase();
-		if (!["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state))
-			continue;
+		if (!["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state)) continue;
 		const user = review.user as Record<string, unknown> | undefined;
 		const reviewer = String(user?.id ?? user?.login ?? "");
-		const submittedAt = Date.parse(
-			String(review.submitted_at ?? review.updated_at ?? ""),
-		);
+		const submittedAt = Date.parse(String(review.submitted_at ?? review.updated_at ?? ""));
 		if (!reviewer || !Number.isFinite(submittedAt)) return "unknown";
 		const current = currentByReviewer.get(reviewer);
-		if (!current || submittedAt >= current.submittedAt)
-			currentByReviewer.set(reviewer, { state, submittedAt });
+		if (!current || submittedAt >= current.submittedAt) currentByReviewer.set(reviewer, { state, submittedAt });
 	}
 	const states = [...currentByReviewer.values()].map((review) => review.state);
 	if (states.includes("CHANGES_REQUESTED")) return "changes_requested";
@@ -222,10 +262,7 @@ const latestReviewState = (reviews: Array<Record<string, unknown>>) => {
 	return "unknown";
 };
 
-const inspectMerge = async (
-	intent: MergeIntent,
-	tokenFor: (intent: MergeIntent) => Promise<string>,
-) => {
+const inspectMerge = async (intent: MergeIntent, tokenFor: (intent: MergeIntent) => Promise<string>) => {
 	const token = await tokenFor(intent);
 	const pullRequest = await githubJson(
 		`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/pulls/${intent.pullRequestNumber}`,
@@ -236,53 +273,35 @@ const inspectMerge = async (
 	const base = pullRequest.base as Record<string, unknown> | undefined;
 	const sha = String(head?.sha ?? "");
 	const branch = encodeURIComponent(String(base?.ref ?? ""));
-	const [workflows, repository, checks, reviews, protectionRead, rulesRead] =
-		await Promise.all([
-			githubJson(
-				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/actions/runs?head_sha=${encodeURIComponent(sha)}`,
-				token,
-			),
-			githubJson(
-				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}`,
-				token,
-			),
-			githubJson(
-				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/commits/${encodeURIComponent(sha)}/check-runs`,
-				token,
-			),
-			githubJson(
-				`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/pulls/${intent.pullRequestNumber}/reviews`,
-				token,
-			),
-			githubRead(
-				`https://api.github.com/repos/${intent.fullName}/branches/${branch}/protection`,
-				token,
-			),
-			githubRead(
-				`https://api.github.com/repos/${intent.fullName}/rules/branches/${branch}`,
-				token,
-			),
-		]);
-	const checkRuns = checks?.check_runs as
-		| Array<Record<string, unknown>>
-		| undefined;
-	const workflowRuns = workflows?.workflow_runs as
-		| Array<Record<string, unknown>>
-		| undefined;
+	const [workflows, repository, checks, reviews, protectionRead, rulesRead] = await Promise.all([
+		githubJson(
+			`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/actions/runs?head_sha=${encodeURIComponent(sha)}`,
+			token,
+		),
+		githubJson(`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}`, token),
+		githubJson(
+			`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/commits/${encodeURIComponent(sha)}/check-runs`,
+			token,
+		),
+		githubJson(
+			`https://api.github.com/repositories/${encodeURIComponent(intent.repositoryId)}/pulls/${intent.pullRequestNumber}/reviews`,
+			token,
+		),
+		githubRead(`https://api.github.com/repos/${intent.fullName}/branches/${branch}/protection`, token),
+		githubRead(`https://api.github.com/repos/${intent.fullName}/rules/branches/${branch}`, token),
+	]);
+	const checkRuns = checks?.check_runs as Array<Record<string, unknown>> | undefined;
+	const workflowRuns = workflows?.workflow_runs as Array<Record<string, unknown>> | undefined;
 	const reviewList = Array.isArray(reviews) ? reviews : [];
 	const protection = protectionRead.body as Record<string, unknown> | null;
-	const requiredChecks = protection?.required_status_checks as
-		| Record<string, unknown>
-		| undefined;
+	const requiredChecks = protection?.required_status_checks as Record<string, unknown> | undefined;
 	const requiredReviewPolicy = protection?.required_pull_request_reviews;
 	const requiredCheckContexts = requiredChecks?.contexts;
 	const noClassicRequirements =
 		protectionRead.status === 404 ||
 		(protectionRead.status === 200 &&
 			Boolean(protection) &&
-			(!requiredChecks ||
-				(Array.isArray(requiredCheckContexts) &&
-					requiredCheckContexts.length === 0)) &&
+			(!requiredChecks || (Array.isArray(requiredCheckContexts) && requiredCheckContexts.length === 0)) &&
 			!requiredReviewPolicy &&
 			!protection?.restrictions &&
 			!protection?.required_signatures &&
@@ -291,24 +310,16 @@ const inspectMerge = async (
 			!protection?.required_commit_signatures &&
 			!protection?.required_deployments);
 	const noBranchRequirements =
-		rulesRead.status === 200 &&
-		Array.isArray(rulesRead.body) &&
-		rulesRead.body.length === 0 &&
-		noClassicRequirements;
+		rulesRead.status === 200 && Array.isArray(rulesRead.body) && rulesRead.body.length === 0 && noClassicRequirements;
 	const reviewState = latestReviewState(reviewList);
 	return {
 		pullRequestId: pullRequest.node_id,
 		state: pullRequest.state,
 		draft: pullRequest.draft,
 		head_sha: sha,
-		mergeable:
-			pullRequest.mergeable === true ? "clean" : pullRequest.mergeable_state,
-		workflow_state: successfulEvidence(workflowRuns, noBranchRequirements)
-			? "success"
-			: "unknown",
-		checks_state: successfulEvidence(checkRuns, noBranchRequirements)
-			? "success"
-			: "unknown",
+		mergeable: pullRequest.mergeable === true ? "clean" : pullRequest.mergeable_state,
+		workflow_state: successfulEvidence(workflowRuns, noBranchRequirements) ? "success" : "unknown",
+		checks_state: successfulEvidence(checkRuns, noBranchRequirements) ? "success" : "unknown",
 		review_state:
 			reviewState === "changes_requested"
 				? reviewState
@@ -320,35 +331,25 @@ const inspectMerge = async (
 	};
 };
 
-export const defaultMergeProvider = (
-	config: Config,
-): MergeProvider | undefined => {
+export const defaultMergeProvider = (config: Config): MergeProvider | undefined => {
 	if (!config.githubAppId || !config.githubAppPrivateKey) return undefined;
-	const jwt = githubAppJwt(
-		config.githubAppId,
-		config.githubAppPrivateKey.replace(/\\n/g, "\n"),
-	);
-	const tokenFor = (intent: MergeIntent) =>
-		installationToken(jwt, intent.installationId);
+	const jwt = githubAppJwt(config.githubAppId, config.githubAppPrivateKey.replace(/\\n/g, "\n"));
+	const tokenFor = (intent: MergeIntent) => installationToken(jwt, intent.installationId);
 	return {
 		inspect: (intent) => inspectMerge(intent, tokenFor),
 		async merge(intent, variables) {
-			const response = await githubFetch(
-				fetch,
-				"https://api.github.com/graphql",
-				{
-					method: "POST",
-					headers: {
-						authorization: `Bearer ${await tokenFor(intent)}`,
-						"content-type": "application/json",
-					},
-					body: JSON.stringify({
-						query:
-							"mutation MergePullRequest($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) { mergePullRequest(input: { pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid, mergeMethod: $mergeMethod }) { pullRequest { merged } } }",
-						variables,
-					}),
+			const response = await githubFetch(fetch, "https://api.github.com/graphql", {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${await tokenFor(intent)}`,
+					"content-type": "application/json",
 				},
-			);
+				body: JSON.stringify({
+					query:
+						"mutation MergePullRequest($pullRequestId: ID!, $expectedHeadOid: GitObjectID!, $mergeMethod: PullRequestMergeMethod!) { mergePullRequest(input: { pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid, mergeMethod: $mergeMethod }) { pullRequest { merged } } }",
+					variables,
+				}),
+			});
 			if (!response.ok) return { errors: [{ type: "FORBIDDEN" }] };
 			const body = (await response.json()) as {
 				data?: { mergePullRequest?: { pullRequest?: { merged?: boolean } } };
@@ -368,19 +369,12 @@ const readyResponse = async (context: AppContext) => {
 		await databaseReady(context.db);
 		return Response.json({ ok: true });
 	} catch (error) {
-		console.error(
-			"MongoDB readiness failed",
-			error instanceof Error ? error.message : "unknown error",
-		);
+		console.error("MongoDB readiness failed", error instanceof Error ? error.message : "unknown error");
 		return new Response("not ready", { status: 503 });
 	}
 };
 
-const sessionRoute = async (
-	context: AppContext,
-	request: Request,
-	path: string,
-) => {
+const sessionRoute = async (context: AppContext, request: Request, path: string) => {
 	if (path === "/api/snapshot") {
 		const user = await context.authenticated(request);
 		return user
@@ -395,9 +389,7 @@ const sessionRoute = async (
 			const set = context.streams.get(user.id) ?? new Set();
 			set.add(controller);
 			context.streams.set(user.id, set);
-			controller.enqueue(
-				context.encoder.encode("event: refresh\\ndata: {}\\n\\n"),
-			);
+			controller.enqueue(context.encoder.encode("event: refresh\ndata: {}\n\n"));
 			request.signal.addEventListener("abort", () => {
 				set.delete(controller);
 				if (!set.size) context.streams.delete(user.id);
@@ -414,10 +406,8 @@ const sessionRoute = async (
 };
 
 const beginOAuth = async (context: AppContext, request: Request) => {
-	if (!trustedOrigin(request, context.config))
-		return new Response("invalid public origin", { status: 400 });
-	if (!context.config.githubClientId)
-		return new Response("GitHub OAuth is not configured", { status: 503 });
+	if (!trustedOrigin(request, context.config)) return new Response("invalid public origin", { status: 400 });
+	if (!context.config.githubClientId) return new Response("GitHub OAuth is not configured", { status: 503 });
 	const state = await createOAuthState(context.db);
 	const redirect = context.config.oauthCallbackUrl
 		? `&redirect_uri=${encodeURIComponent(context.config.oauthCallbackUrl)}`
@@ -442,16 +432,12 @@ const beginInstall = async (context: AppContext, request: Request) => {
 };
 
 type VerifiedInstallation = { id: number; account?: { login?: string } };
-const verifyInstallation = async (
-	accessToken: string,
-	installationId: string,
-) => {
+const verifyInstallation = async (accessToken: string, installationId: string) => {
 	const headers = {
 		authorization: `Bearer ${accessToken}`,
 		accept: "application/vnd.github+json",
 	};
-	let next: string | undefined =
-		"https://api.github.com/user/installations?per_page=100";
+	let next: string | undefined = "https://api.github.com/user/installations?per_page=100";
 	let verified: VerifiedInstallation | undefined;
 	const seen = new Set([next]);
 	for (let pages = 0; next && pages < 100; pages++) {
@@ -460,9 +446,7 @@ const verifyInstallation = async (
 		const body = (await response.json()) as {
 			installations?: VerifiedInstallation[];
 		};
-		verified =
-			body.installations?.find((item) => String(item.id) === installationId) ??
-			verified;
+		verified = body.installations?.find((item) => String(item.id) === installationId) ?? verified;
 		try {
 			next = githubNextLink(response.headers.get("link"), seen);
 		} catch {
@@ -475,37 +459,34 @@ const verifyInstallation = async (
 
 const queueBootstrap = (context: AppContext, installationId: string) => {
 	const { githubAppId, githubAppPrivateKey } = context.config;
-	if (!githubAppId || !githubAppPrivateKey) return;
+	if (!context.bootstrapInstallation && (!githubAppId || !githubAppPrivateKey)) return;
 	queueMicrotask(() => {
 		void (async () => {
 			let result: ReadResult,
 				classification = "ReadResult";
 			try {
-				const appJwt = githubAppJwt(
-					githubAppId,
-					githubAppPrivateKey.replace(/\\n/g, "\n"),
-				);
-				const token = await installationToken(appJwt, installationId);
-				result = await bootstrapInstallation(
-					context.db,
-					installationId,
-					token,
-					fetch,
-					appJwt,
-					undefined,
-					logGitHubRequestFailure,
-				);
+				if (context.bootstrapInstallation)
+					result = await context.bootstrapInstallation(context.db, installationId, "", fetch, "");
+				else {
+					const appJwt = githubAppJwt(githubAppId!, githubAppPrivateKey!.replace(/\\n/g, "\n"));
+					const token = await installationToken(appJwt, installationId);
+					result = await bootstrapInstallation(
+						context.db,
+						installationId,
+						token,
+						fetch,
+						appJwt,
+						undefined,
+						logGitHubRequestFailure,
+					);
+				}
 			} catch (error) {
 				result = normalizedReconciliationFailure();
 				classification = error instanceof Error ? "Error" : "unknown";
 			}
 			if (result.kind === "error") {
 				try {
-					await persistReconciliationFailure(
-						context.db,
-						installationId,
-						result,
-					);
+					await persistReconciliationFailure(context.db, installationId, result);
 				} catch (error) {
 					logReconciliationFailure(
 						"installation bootstrap persistence failed",
@@ -514,22 +495,20 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 						error instanceof Error ? "Error" : "unknown",
 					);
 				}
-				logReconciliationFailure(
-					"installation bootstrap failed",
-					installationId,
-					result,
-					classification,
-				);
+				logReconciliationFailure("installation bootstrap failed", installationId, result, classification);
+			} else {
+				if (result.kind === "changed")
+					for (const user of await context.db.users
+						.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
+						.toArray())
+						context.refresh(user._id);
+				await context.scheduleDrain();
 			}
 		})();
 	});
 };
 
-const oauthCallback = async (
-	context: AppContext,
-	request: Request,
-	url: URL,
-) => {
+const oauthCallback = async (context: AppContext, request: Request, url: URL) => {
 	const code = url.searchParams.get("code");
 	const state = url.searchParams.get("state");
 	const installationId = url.searchParams.get("installation_id");
@@ -543,34 +522,29 @@ const oauthCallback = async (
 		!githubClientSecret
 	)
 		return new Response("invalid OAuth callback", { status: 400 });
-	const tokenResponse = await githubFetch(
-		fetch,
-		"https://github.com/login/oauth/access_token",
-		{
-			method: "POST",
-			headers: {
-				accept: "application/json",
-				"content-type": "application/json",
-			},
-			body: JSON.stringify({
-				client_id: githubClientId,
-				client_secret: githubClientSecret,
-				code,
-			}),
+	const tokenResponse = await githubFetch(fetch, "https://github.com/login/oauth/access_token", {
+		method: "POST",
+		headers: {
+			accept: "application/json",
+			"content-type": "application/json",
 		},
-	);
-	const accessToken = (
-		(await tokenResponse.json()) as { access_token?: string }
-	).access_token;
-	if (!accessToken)
-		return new Response("GitHub sign-in failed", { status: 502 });
+		body: JSON.stringify({
+			client_id: githubClientId,
+			client_secret: githubClientSecret,
+			code,
+		}),
+	});
+	const accessToken = ((await tokenResponse.json()) as { access_token?: string }).access_token;
+	if (!accessToken) return new Response("GitHub sign-in failed", { status: 502 });
 	const headers = {
 		authorization: `Bearer ${accessToken}`,
 		accept: "application/vnd.github+json",
 	};
-	const identity = (await (
-		await githubFetch(fetch, "https://api.github.com/user", { headers })
-	).json()) as { id: number; login: string; avatar_url?: string };
+	const identity = (await (await githubFetch(fetch, "https://api.github.com/user", { headers })).json()) as {
+		id: number;
+		login: string;
+		avatar_url?: string;
+	};
 	const userId = String(identity.id);
 	await upsertIdentity(context.db, userId, identity.login, identity.avatar_url);
 	if (installationId && /^\d+$/.test(installationId)) {
@@ -579,18 +553,13 @@ const oauthCallback = async (
 			return new Response("GitHub installation verification failed", {
 				status: 502,
 			});
-		if (!verification.verified)
-			return new Response("unverified installation", { status: 403 });
+		if (!verification.verified) return new Response("unverified installation", { status: 403 });
 		if (
 			!approvedInstallationAccount(verification.verified.account?.login) ||
-			!(await bindInstallation(
-				context.db,
-				userId,
-				installationId,
-				verification.verified.account?.login,
-			))
+			!(await bindInstallation(context.db, userId, installationId, verification.verified.account?.login))
 		)
 			return new Response("unapproved installation", { status: 403 });
+		context.refresh(userId);
 		queueBootstrap(context, installationId);
 	}
 	const session = await createSession(context.db, userId);
@@ -603,11 +572,7 @@ const oauthCallback = async (
 	});
 };
 
-const currentMergeTarget = async (
-	context: AppContext,
-	userId: string,
-	intent: MergeIntent,
-) => {
+const currentMergeTarget = async (context: AppContext, userId: string, intent: MergeIntent) => {
 	const dashboard = await dashboardForUser(context.db, userId);
 	return dashboard.pullRequests.find(
 		(item) =>
@@ -620,56 +585,32 @@ const currentMergeTarget = async (
 	);
 };
 
-const mergeCallback = async (
-	context: AppContext,
-	request: Request,
-	url: URL,
-) => {
+const mergeCallback = async (context: AppContext, request: Request, url: URL) => {
 	const code = url.searchParams.get("code"),
 		state = url.searchParams.get("state");
 	if (!code || !state) return oauthCallback(context, request, url);
 	const intent = await mergeIntentFor(context.db, state);
 	if (!intent) return oauthCallback(context, request, url);
 	const user = await context.authenticated(request);
-	if (
-		!user ||
-		intent.userId !== user.id ||
-		intent.sessionId !== mergeIntentHash(cookie(request) ?? "")
-	)
+	if (!user || intent.userId !== user.id || intent.sessionId !== mergeIntentHash(cookie(request) ?? ""))
 		return new Response("invalid merge authorization", { status: 403 });
-	const {
-		githubClientId,
-		githubClientSecret,
-		githubAppId,
-		githubAppPrivateKey,
-	} = context.config;
-	if (
-		!githubClientId ||
-		!githubClientSecret ||
-		!githubAppId ||
-		!githubAppPrivateKey
-	)
+	const { githubClientId, githubClientSecret, githubAppId, githubAppPrivateKey } = context.config;
+	if (!githubClientId || !githubClientSecret || !githubAppId || !githubAppPrivateKey)
 		return new Response("merge is unavailable", { status: 503 });
-	const tokenResponse = await githubFetch(
-		fetch,
-		"https://github.com/login/oauth/access_token",
-		{
-			method: "POST",
-			headers: {
-				accept: "application/json",
-				"content-type": "application/json",
-			},
-			body: JSON.stringify({
-				client_id: githubClientId,
-				client_secret: githubClientSecret,
-				code,
-			}),
+	const tokenResponse = await githubFetch(fetch, "https://github.com/login/oauth/access_token", {
+		method: "POST",
+		headers: {
+			accept: "application/json",
+			"content-type": "application/json",
 		},
-	);
-	const userToken = ((await tokenResponse.json()) as { access_token?: string })
-		.access_token;
-	if (!userToken)
-		return new Response("merge authorization failed", { status: 502 });
+		body: JSON.stringify({
+			client_id: githubClientId,
+			client_secret: githubClientSecret,
+			code,
+		}),
+	});
+	const userToken = ((await tokenResponse.json()) as { access_token?: string }).access_token;
+	if (!userToken) return new Response("merge authorization failed", { status: 502 });
 	const identity = (await (
 		await githubFetch(fetch, "https://api.github.com/user", {
 			headers: { authorization: `Bearer ${userToken}` },
@@ -689,45 +630,32 @@ const mergeCallback = async (
 		login: identity.login,
 		fullName: intent.fullName,
 		installationToken: () =>
-			installationToken(
-				githubAppJwt(githubAppId, githubAppPrivateKey.replace(/\\n/g, "\n")),
-				intent.installationId,
-			),
+			installationToken(githubAppJwt(githubAppId, githubAppPrivateKey.replace(/\\n/g, "\n")), intent.installationId),
 	});
-	if (!installed)
-		return new Response("merge authorization failed", { status: 403 });
+	if (!installed) return new Response("merge authorization failed", { status: 403 });
 	const projected = await currentMergeTarget(context, user.id, intent);
-	if (!projected)
-		return new Response("merge authorization failed", { status: 403 });
+	if (!projected) return new Response("merge authorization failed", { status: 403 });
 	const provider = context.mergeProvider;
 	if (!provider) return new Response("merge is unavailable", { status: 503 });
 	let authoritative: Record<string, unknown>;
 	try {
 		authoritative = {
 			...(await provider.inspect(intent)),
+			labels: projected.labels,
+			open_specs: projected.open_specs,
 			open_spec: projected.open_spec,
 		};
 	} catch (error) {
-		console.error(
-			"merge eligibility read failed",
-			error instanceof Error ? error.message : "unknown error",
-		);
+		console.error("merge eligibility read failed", error instanceof Error ? error.message : "unknown error");
 		return new Response("merge eligibility is unavailable", { status: 502 });
 	}
 	const pullRequestId = authoritative.pullRequestId;
 	if (typeof pullRequestId !== "string" || !mergeEligibility(authoritative).ok)
 		return new Response("merge eligibility is unavailable", { status: 409 });
 	if (
-		!(await advanceMergeIntent(
-			context.db,
-			state,
-			"started",
-			"authorized",
-			undefined,
-			{
-				pullRequestId,
-			},
-		))
+		!(await advanceMergeIntent(context.db, state, "started", "authorized", undefined, {
+			pullRequestId,
+		}))
 	)
 		return new Response("merge authorization failed", { status: 409 });
 	return new Response(
@@ -736,11 +664,7 @@ const mergeCallback = async (
 	);
 };
 
-const authRoute = (
-	context: AppContext,
-	request: Request,
-	url: URL,
-): Promise<Response> | Response | undefined => {
+const authRoute = (context: AppContext, request: Request, url: URL): Promise<Response> | Response | undefined => {
 	switch (url.pathname) {
 		case "/auth/github":
 			return beginOAuth(context, request);
@@ -755,13 +679,8 @@ const authRoute = (
 	}
 };
 
-const webhookRoute = async (
-	context: AppContext,
-	request: Request,
-	path: string,
-) => {
-	if (path !== "/webhooks/github" || request.method !== "POST")
-		return undefined;
+const webhookRoute = async (context: AppContext, request: Request, path: string) => {
+	if (path !== "/webhooks/github" || request.method !== "POST") return undefined;
 	const body = await boundedBody(request);
 	const delivery = request.headers.get("x-github-delivery");
 	const event = request.headers.get("x-github-event");
@@ -770,65 +689,58 @@ const webhookRoute = async (
 		!delivery ||
 		!event ||
 		!context.config.githubWebhookSecret ||
-		!githubSignatureValid(
-			body,
-			request.headers.get("x-hub-signature-256"),
-			context.config.githubWebhookSecret,
-		)
+		!githubSignatureValid(body, request.headers.get("x-hub-signature-256"), context.config.githubWebhookSecret)
 	)
 		return new Response("invalid GitHub webhook", { status: 401 });
-	const inserted = await acceptGitHubDelivery(
-		context.db,
-		delivery,
-		event,
-		body,
-	);
-	if (inserted) queueMicrotask(() => void context.scheduleDrain());
+	const intake = await acceptGitHubDelivery(context.db, delivery, event, body);
+	if (intake.kind === "malformed") return new Response("invalid GitHub webhook body", { status: 400 });
+	if (intake.kind === "accepted") queueMicrotask(() => void context.scheduleDrain());
 	return new Response(null, { status: 202 });
 };
 
-const repairRoute = async (
-	context: AppContext,
-	request: Request,
-	path: string,
-) => {
-	const repair = path.match(
-		/^\/api\/installations\/(\d+)\/(bootstrap|repair)$/,
-	);
+const repairRoute = async (context: AppContext, request: Request, path: string) => {
+	const repair = path.match(/^\/api\/installations\/(\d+)\/(bootstrap|repair)$/);
 	if (!repair || request.method !== "POST") return undefined;
 	const user = await context.authenticated(request);
 	const installationId = repair[1];
 	const binding =
 		user &&
-		(
-			await context.db.users.findOne(
-				{ _id: user.id },
-				{ projection: { installations: 1 } },
-			)
-		)?.installations.find((item) => item.installationId === installationId);
-	if (
-		!binding ||
-		(binding.accountLogin && !approvedInstallationAccount(binding.accountLogin))
-	)
+		(await context.db.users.findOne({ _id: user.id }, { projection: { installations: 1 } }))?.installations.find(
+			(item) => item.installationId === installationId,
+		);
+	if (!binding || (binding.accountLogin && !approvedInstallationAccount(binding.accountLogin)))
 		return new Response("not found", { status: 404 });
 	const { githubAppId, githubAppPrivateKey } = context.config;
-	if (!githubAppId || !githubAppPrivateKey)
+	if (!context.bootstrapInstallation && (!githubAppId || !githubAppPrivateKey))
 		return new Response("GitHub App is not configured", { status: 503 });
 	try {
-		const appJwt = githubAppJwt(
-			githubAppId,
-			githubAppPrivateKey.replace(/\\n/g, "\n"),
-		);
-		const token = await installationToken(appJwt, installationId);
-		const result = await bootstrapInstallation(
+		const appJwt = context.bootstrapInstallation
+			? ""
+			: githubAppJwt(githubAppId!, githubAppPrivateKey!.replace(/\\n/g, "\n"));
+		const token = context.bootstrapInstallation ? "" : await installationToken(appJwt, installationId);
+		const result = await (context.bootstrapInstallation ?? bootstrapInstallation)(
 			context.db,
 			installationId,
 			token,
 			fetch,
 			appJwt,
 		);
-		if (result.kind === "error")
-			await persistReconciliationFailure(context.db, installationId, result);
+		if (result.kind === "error") await persistReconciliationFailure(context.db, installationId, result);
+		else {
+			await markDeliveriesRepairedByReconciliation(
+				context.db,
+				installationId,
+				result.kind === "changed" && Array.isArray(result.body)
+					? result.body.map((repository: { id?: unknown }) => String(repository.id ?? ""))
+					: [],
+			);
+			if (result.kind === "changed")
+				for (const affected of await context.db.users
+					.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
+					.toArray())
+					context.refresh(affected._id);
+			void context.scheduleDrain();
+		}
 		return Response.json(result);
 	} catch (error) {
 		const result = normalizedReconciliationFailure();
@@ -843,31 +755,93 @@ const repairRoute = async (
 	}
 };
 
-const reconcileRoute = async (
-	context: AppContext,
-	request: Request,
-	path: string,
-) => {
-	if (path !== "/api/reconcile" || request.method !== "POST") return undefined;
+const reconcileRoute = async (context: AppContext, request: Request, path: string) => {
+	if (request.method !== "POST") return undefined;
 	const user = await context.authenticated(request);
 	if (!user) return new Response("unauthenticated", { status: 401 });
-	const status = await context.reconcile(user.id);
-	if (status === "missing") return new Response("not found", { status: 404 });
+	if (path === "/api/reconcile") {
+		const body = await boundedBody(request, 4_000);
+		let installationIds: string[] | undefined;
+		if (body) {
+			try {
+				const installationId = String(JSON.parse(body).installationId ?? "");
+				if (!installationId)
+					return new Response("invalid reconciliation request", {
+						status: 400,
+					});
+				if (!(await approvedInstallationIdsForUser(context.db, user.id)).includes(installationId))
+					return new Response("not found", { status: 404 });
+				installationIds = [installationId];
+			} catch {
+				return new Response("invalid reconciliation request", { status: 400 });
+			}
+		}
+		const status = await context.reconcile(user.id, "manual", installationIds);
+		if (status === "missing") return new Response("not found", { status: 404 });
+		return Response.json({ status }, { status: status === "failed" ? 502 : status === "running" ? 202 : 200 });
+	}
+	if (!["/api/reconcile/pull-request", "/api/reconcile/pull-requests"].includes(path)) return undefined;
+	if (!(await approvedInstallationIdsForUser(context.db, user.id)).length)
+		return new Response("not found", { status: 404 });
+	const targets = (await dashboardForUser(context.db, user.id)).pullRequests
+		.filter((pullRequest) => pullRequest.state === "open")
+		.map((pullRequest) => ({
+			installationId: String(pullRequest.installation_id),
+			repositoryId: String(pullRequest.repository_id),
+			number: Number(pullRequest.number),
+		}));
+	if (path === "/api/reconcile/pull-request") {
+		const body = await boundedBody(request, 4_000);
+		if (!body) return new Response("invalid reconciliation request", { status: 400 });
+		let target: {
+			installationId: string;
+			repositoryId: string;
+			number: number;
+		};
+		try {
+			const parsed = JSON.parse(body);
+			target = {
+				installationId: String(parsed.installationId),
+				repositoryId: String(parsed.repositoryId),
+				number: Number(parsed.number),
+			};
+		} catch {
+			return new Response("invalid reconciliation request", { status: 400 });
+		}
+		if (
+			!targets.some(
+				(item) =>
+					item.installationId === target.installationId &&
+					item.repositoryId === target.repositoryId &&
+					item.number === target.number,
+			)
+		)
+			return new Response("not found", { status: 404 });
+		const status = await context.reconcilePullRequest(target);
+		return Response.json({ status }, { status: status === "success" ? 200 : 502 });
+	}
+	const unique = [
+		...new Map(
+			targets.map((target) => [`${target.installationId}:${target.repositoryId}:${target.number}`, target]),
+		).values(),
+	];
+	const results = await Promise.all(unique.map((target) => context.reconcilePullRequest(target)));
+	const failedCount = results.filter((result) => result === "failed").length;
 	return Response.json(
-		{ status },
-		{ status: status === "failed" ? 502 : status === "running" ? 202 : 200 },
+		{
+			status: failedCount ? "partial_failure" : "success",
+			count: unique.length,
+			successfulCount: unique.length - failedCount,
+			failedCount,
+			estimatedProviderRequests: unique.length * 4,
+		},
+		{ status: failedCount ? 502 : 200 },
 	);
 };
 
-const mergeRoute = async (
-	context: AppContext,
-	request: Request,
-	path: string,
-) => {
-	if (path !== "/api/merge/start" || request.method !== "POST")
-		return undefined;
-	if (!trustedOrigin(request, context.config))
-		return new Response("invalid public origin", { status: 400 });
+const mergeRoute = async (context: AppContext, request: Request, path: string) => {
+	if (path !== "/api/merge/start" || request.method !== "POST") return undefined;
+	if (!trustedOrigin(request, context.config)) return new Response("invalid public origin", { status: 400 });
 	const user = await context.authenticated(request);
 	const body = await boundedBody(request, 4_000);
 	if (!user) return new Response("unauthenticated", { status: 401 });
@@ -879,9 +853,7 @@ const mergeRoute = async (
 		headSha?: string;
 	};
 	try {
-		target = request.headers
-			.get("content-type")
-			?.includes("application/x-www-form-urlencoded")
+		target = request.headers.get("content-type")?.includes("application/x-www-form-urlencoded")
 			? Object.fromEntries(new URLSearchParams(body))
 			: JSON.parse(body);
 	} catch {
@@ -901,8 +873,7 @@ const mergeRoute = async (
 			status: 409,
 		});
 	const session = cookie(request);
-	if (!session || !context.config.githubClientId)
-		return new Response("merge is unavailable", { status: 503 });
+	if (!session || !context.config.githubClientId) return new Response("merge is unavailable", { status: 503 });
 	const state = await createMergeIntent(context.db, {
 		userId: user.id,
 		sessionId: mergeIntentHash(session),
@@ -922,25 +893,16 @@ const mergeRoute = async (
 	);
 };
 
-const mergeConfirmRoute = async (
-	context: AppContext,
-	request: Request,
-	path: string,
-) => {
-	if (path !== "/api/merge/confirm" || request.method !== "POST")
-		return undefined;
-	if (!trustedOrigin(request, context.config))
-		return new Response("invalid public origin", { status: 400 });
+const mergeConfirmRoute = async (context: AppContext, request: Request, path: string) => {
+	if (path !== "/api/merge/confirm" || request.method !== "POST") return undefined;
+	if (!trustedOrigin(request, context.config)) return new Response("invalid public origin", { status: 400 });
 	const user = await context.authenticated(request);
 	const body = await boundedBody(request, 4_000);
-	if (!user || !body)
-		return new Response("invalid merge confirmation", { status: 400 });
+	if (!user || !body) return new Response("invalid merge confirmation", { status: 400 });
 	let token: string;
 	try {
 		const contentType = request.headers.get("content-type") ?? "";
-		const confirmation = contentType.includes(
-			"application/x-www-form-urlencoded",
-		)
+		const confirmation = contentType.includes("application/x-www-form-urlencoded")
 			? Object.fromEntries(new URLSearchParams(body))
 			: (JSON.parse(body) as { confirmation?: string });
 		token = String(confirmation.confirmation ?? "");
@@ -948,18 +910,13 @@ const mergeConfirmRoute = async (
 		return new Response("invalid merge confirmation", { status: 400 });
 	}
 	const intent = await mergeIntentFor(context.db, token);
-	if (
-		!intent ||
-		intent.userId !== user.id ||
-		intent.sessionId !== mergeIntentHash(cookie(request) ?? "")
-	)
+	if (!intent || intent.userId !== user.id || intent.sessionId !== mergeIntentHash(cookie(request) ?? ""))
 		return new Response("invalid merge confirmation", { status: 403 });
 	if (!(await advanceMergeIntent(context.db, token, "authorized", "consumed")))
 		return new Response("stale merge confirmation", { status: 409 });
 	try {
 		const provider = context.mergeProvider;
-		if (!provider || !intent.pullRequestId)
-			return new Response("merge is unavailable", { status: 503 });
+		if (!provider || !intent.pullRequestId) return new Response("merge is unavailable", { status: 503 });
 		if (!(await currentMergeTarget(context, user.id, intent)))
 			return Response.json({ status: "blocked" }, { status: 409 });
 		const result = await confirmExactMerge({
@@ -969,20 +926,16 @@ const mergeConfirmRoute = async (
 				if (!projected) return {};
 				return {
 					...(await provider.inspect(intent)),
+					labels: projected.labels,
+					open_specs: projected.open_specs,
 					open_spec: projected.open_spec,
 				};
 			},
 			merge: (variables) => provider.merge(intent, variables),
 		});
-		return Response.json(
-			{ status: result },
-			{ status: result === "success" ? 200 : 409 },
-		);
+		return Response.json({ status: result }, { status: result === "success" ? 200 : 409 });
 	} catch (error) {
-		console.error(
-			"merge confirmation failed",
-			error instanceof Error ? error.message : "unknown error",
-		);
+		console.error("merge confirmation failed", error instanceof Error ? error.message : "unknown error");
 		return Response.json({ status: "blocked" }, { status: 502 });
 	} finally {
 		context.refresh(user.id);
@@ -992,7 +945,12 @@ const mergeConfirmRoute = async (
 const handleRequest = async (context: AppContext, request: Request) => {
 	const url = new URL(request.url);
 	const path = url.pathname;
-	const publicAsset = await publicResponse(path);
+	let publicAsset: Response | undefined;
+	try {
+		publicAsset = await publicResponse(path);
+	} catch {
+		return new Response("frontend assets unavailable", { status: 503 });
+	}
 	if (publicAsset) return publicAsset;
 	if (path === "/health") return Response.json({ ok: true });
 	if (path === "/ready") return readyResponse(context);
@@ -1009,37 +967,251 @@ const handleRequest = async (context: AppContext, request: Request) => {
 	);
 };
 
+type PullRequestTarget = {
+	installationId: string;
+	repositoryId: string;
+	number: number;
+};
+type ReconciliationOptions = {
+	db: Db;
+	config: Config;
+	dependencies: AppDependencies;
+	reconcileAll: typeof reconcileInstallations;
+	reconcileTarget: typeof reconcilePullRequest;
+	refresh(userId: string): void;
+};
+
+export const auditReconciliationRun = async (db: Db, run: ReconciliationRun) => {
+	try {
+		await db.reconciliationRuns.insertOne(run);
+	} catch (error) {
+		console.error("reconciliation audit failed", error instanceof Error ? error.name : "unknown");
+	}
+};
+
+const reconcileTargetedPullRequest = async (options: ReconciliationOptions, target: PullRequestTarget) => {
+	const { db, config, dependencies, reconcileTarget, refresh } = options;
+	const counted = countedFetch(fetch);
+	const before = (
+		await db.users.findOne(
+			{ "installations.installationId": target.installationId },
+			{ projection: { installations: 1 } },
+		)
+	)?.installations
+		.find((item) => item.installationId === target.installationId)
+		?.repositories.find((item) => item.repositoryId === target.repositoryId)
+		?.pullRequests.find((item) => Number(item.number) === target.number);
+	const result = dependencies.reconcilePullRequest
+		? await reconcileTarget(db, {
+				...target,
+				token: "",
+				fetcher: counted.fetcher,
+			})
+		: await (async () => {
+				const appId = config.githubAppId;
+				const privateKey = config.githubAppPrivateKey;
+				if (!appId || !privateKey) throw new Error("GitHub App is not configured");
+				const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
+				return reconcileTarget(db, {
+					...target,
+					token: await installationToken(appJwt, target.installationId, counted.fetcher),
+					fetcher: counted.fetcher,
+					reportFailure: logGitHubRequestFailure,
+				});
+			})();
+	if (result.kind === "changed")
+		for (const user of await db.users
+			.find({ "installations.installationId": target.installationId }, { projection: { _id: 1 } })
+			.toArray())
+			refresh(user._id);
+	return {
+		...result,
+		providerRequestCount: counted.count(),
+		changedFieldCategories: result.kind === "changed" ? lifecycleChangedFields(before, result.body) : [],
+	};
+};
+
+const createTargetedCoordinator = (options: ReconciliationOptions) =>
+	createReconciliationCoordinator({
+		reconcilePullRequest: (target) => reconcileTargetedPullRequest(options, target),
+		reconcileInstallations: async () => {},
+		recordRun: async (run) => {
+			await auditReconciliationRun(options.db, run);
+		},
+	});
+
+const createBroadReconciler = (options: ReconciliationOptions) => {
+	let reconciling: Promise<"success" | "failed"> | undefined;
+	let startupPending = false;
+	const reconcile = async (
+		userId?: string,
+		trigger: "scheduled" | "webhook" | "startup" | "manual" = "manual",
+		scopedInstallationIds?: string[],
+	): Promise<"success" | "running" | "failed" | "missing"> => {
+		const { db, config, reconcileAll, refresh } = options;
+		const installationIds =
+			scopedInstallationIds ?? (userId ? await approvedInstallationIdsForUser(db, userId) : undefined);
+		if (userId && !installationIds?.length) return "missing";
+		const appId = config.githubAppId;
+		const privateKey = config.githubAppPrivateKey;
+		if (!appId || !privateKey) return "failed";
+		if (reconciling) {
+			if (trigger === "startup" && !userId && !scopedInstallationIds) startupPending = true;
+			return "running";
+		}
+		const requestCounts = new Map<string, number>();
+		let activeInstallationId: string | undefined;
+		const countingFetch = (...input: Parameters<typeof fetch>) => {
+			if (activeInstallationId)
+				requestCounts.set(activeInstallationId, (requestCounts.get(activeInstallationId) ?? 0) + 1);
+			return fetch(...input);
+		};
+		const work = reconcileAll(
+			db,
+			async (id) => {
+				activeInstallationId = id;
+				const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
+				return {
+					token: await installationToken(appJwt, id, countingFetch),
+					appJwt,
+				};
+			},
+			countingFetch,
+			installationIds,
+			undefined,
+			undefined,
+			async ({ installationId, startedAt, result }) => {
+				const counts = directReconciliationCounts(result);
+				if (result.kind === "changed")
+					for (const user of await db.users
+						.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
+						.toArray())
+						refresh(user._id);
+				const completedAt = new Date();
+				const repairedDeliveryCount =
+					result.kind !== "changed" || !Array.isArray(result.body)
+						? 0
+						: await markDeliveriesRepairedByReconciliation(
+								db,
+								installationId,
+								result.body.map((repository: { id?: unknown }) => String(repository.id ?? "")),
+							);
+				const unresolvedDeliveryCount = (
+					await db.inboxDeliveries
+						.find({ provider: "github", status: "pending_verification" }, { projection: { payload: 1 } })
+						.toArray()
+				).filter((delivery) => githubPayloadInstallationId(delivery.payload) === installationId).length;
+				await auditReconciliationRun(db, {
+					installationId,
+					trigger,
+					startedAt,
+					completedAt,
+					durationMs: completedAt.getTime() - startedAt.getTime(),
+					prCount: counts.prCount,
+					providerRequestCount: requestCounts.get(installationId) ?? 0,
+					changedPrCount: counts.changedPrCount,
+					unchangedPrCount: counts.unchangedPrCount,
+					changedFieldCategories: result.kind === "changed" ? ["installation"] : [],
+					failureCount: result.kind === "error" ? 1 : 0,
+					unresolvedDeliveryCount,
+					repairedDeliveryCount,
+					outcome: result.kind === "error" ? "failure" : "success",
+				});
+			},
+		)
+			.then(() => "success" as const)
+			.catch(() => "failed" as const);
+		reconciling = work;
+		try {
+			const status = await work;
+			return status;
+		} finally {
+			if (reconciling === work) {
+				reconciling = undefined;
+				if (startupPending) {
+					startupPending = false;
+					void reconcile(undefined, "startup");
+				}
+			}
+		}
+	};
+	return reconcile;
+};
+
+const knownOpenPullRequests = async (db: Db, initialized: Promise<unknown>) => {
+	await initialized;
+	return (await db.users.find({}, { projection: { installations: 1 } }).toArray()).flatMap((user) =>
+		user.installations.flatMap((installation) =>
+			approvedInstallationAccount(installation.accountLogin)
+				? installation.repositories.flatMap((repository) =>
+						repository.pullRequests
+							.filter((pullRequest) => pullRequest.state === "open")
+							.map((pullRequest) => ({
+								installationId: installation.installationId,
+								repositoryId: repository.repositoryId,
+								number: Number(pullRequest.number),
+							})),
+					)
+				: [],
+		),
+	);
+};
+
+const createScheduleDrain = (options: {
+	db: Db;
+	initialized: Promise<unknown>;
+	githubTasks: Parameters<typeof drainInbox>[1];
+	reviewBot: Config["reviewBot"];
+	targetedCoordinator: ReturnType<typeof createTargetedCoordinator>;
+	reconcile: ReturnType<typeof createBroadReconciler>;
+	refresh(userId: string): void;
+}) => {
+	let draining = Promise.resolve();
+	let startupReconciled = false;
+	return () => {
+		draining = draining
+			.then(async () => {
+				await options.initialized;
+				const users = await drainInbox(
+					options.db,
+					options.githubTasks,
+					options.reviewBot,
+					undefined,
+					undefined,
+					(target) => options.targetedCoordinator.enqueue(target, "webhook"),
+				);
+				for (const user of users) options.refresh(user);
+				if (!startupReconciled) {
+					startupReconciled = true;
+					void options.reconcile(undefined, "startup");
+				}
+			})
+			.catch((error) =>
+				console.error("webhook drain failed", error instanceof Error ? error.message : "unknown error"),
+			);
+		return draining;
+	};
+};
+
 export function createApp(
 	db: Db,
 	config: Config,
 	mergeProvider?: AppContext["mergeProvider"],
+	dependencies: AppDependencies = {},
 ) {
-	const initialized = initializeDatabase(db).then(() =>
-		config.localDemo ? seedLocalDemo(db) : undefined,
-	);
-	const streams = new Map<
-		string,
-		Set<ReadableStreamDefaultController<Uint8Array>>
-	>();
+	const initialized = initializeDatabase(db).then(() => (config.localDemo ? seedLocalDemo(db) : undefined));
+	const streams = new Map<string, Set<ReadableStreamDefaultController<Uint8Array>>>();
 	const encoder = new TextEncoder();
 	const refresh = (userId: string) => {
 		for (const controller of streams.get(userId) ?? [])
-			controller.enqueue(encoder.encode("event: refresh\\ndata: {}\\n\\n"));
+			controller.enqueue(encoder.encode("event: refresh\ndata: {}\n\n"));
 	};
-	let draining = Promise.resolve();
-	let reconciling: Promise<"success" | "failed"> | undefined;
-	const githubTasks = async (input: {
-		installationId: string;
-		repositoryId: string;
-		path: string;
-		sha: string;
-	}) => {
+	const reconcileAll = dependencies.reconcileInstallations ?? reconcileInstallations;
+	const reconcileTarget = dependencies.reconcilePullRequest ?? reconcilePullRequest;
+	const githubTasks = async (input: { installationId: string; repositoryId: string; path: string; sha: string }) => {
 		if (!config.githubAppId || !config.githubAppPrivateKey) return null;
 		const token = await installationToken(
-			githubAppJwt(
-				config.githubAppId,
-				config.githubAppPrivateKey.replace(/\\n/g, "\n"),
-			),
+			githubAppJwt(config.githubAppId, config.githubAppPrivateKey.replace(/\\n/g, "\n")),
 			input.installationId,
 		);
 		const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
@@ -1053,37 +1225,20 @@ export function createApp(
 		if (response.status === 404) {
 			const treeTarget = `https://api.github.com/repositories/${input.repositoryId}/git/trees/${input.sha}?recursive=1`;
 			const tree = await githubFetch(fetch, treeTarget, {
-				headers: {
-					authorization: `Bearer ${token}`,
-					accept: "application/vnd.github+json",
-				},
+				headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" },
 			});
 			if (tree.ok) {
-				let body: unknown;
 				try {
-					body = await tree.json();
-				} catch (error) {
-					console.error(
-						"GitHub final tree payload was invalid",
-						error instanceof Error ? error.name : "unknown",
-					);
-					return null;
-				}
-				const value = body as {
-					truncated?: unknown;
-					tree?: Array<{ path?: unknown; type?: unknown }>;
-				};
-				if (
-					value.truncated === false &&
-					Array.isArray(value.tree) &&
-					!value.tree.some(
-						(entry) =>
-							typeof entry.path === "string" &&
-							entry.path === input.path &&
-							entry.type === "blob",
+					const body = (await tree.json()) as { truncated?: unknown; tree?: Array<{ path?: unknown; type?: unknown }> };
+					if (
+						body.truncated === false &&
+						Array.isArray(body.tree) &&
+						!body.tree.some((entry) => entry.path === input.path && entry.type === "blob")
 					)
-				)
-					return { finalTreeAbsent: true } as const;
+						return { finalTreeAbsent: true } as const;
+				} catch (error) {
+					console.error("GitHub final tree payload was invalid", error instanceof Error ? error.name : "unknown");
+				}
 			} else {
 				logGitHubRequestFailure({
 					operation: "webhook OpenSpec task final tree fetch",
@@ -1102,6 +1257,16 @@ export function createApp(
 		});
 		return null;
 	};
+	const reconciliationOptions = {
+		db,
+		config,
+		dependencies,
+		reconcileAll,
+		reconcileTarget,
+		refresh,
+	};
+	const targetedCoordinator = createTargetedCoordinator(reconciliationOptions);
+	const reconcile = createBroadReconciler(reconciliationOptions);
 	const context = {
 		db,
 		config,
@@ -1109,62 +1274,39 @@ export function createApp(
 		streams,
 		encoder,
 		mergeProvider: mergeProvider ?? defaultMergeProvider(config),
+		bootstrapInstallation: dependencies.bootstrapInstallation,
 		refresh,
 		authenticated: async (request: Request) => {
 			if (config.localDemo) return LOCAL_DEMO_USER;
 			const token = cookie(request);
 			return token ? sessionUser(db, token) : null;
 		},
-		reconcile: async (userId?: string) => {
-			const installationIds = userId
-				? await approvedInstallationIdsForUser(db, userId)
-				: undefined;
-			if (userId && !installationIds?.length) return "missing";
-			const appId = config.githubAppId,
-				privateKey = config.githubAppPrivateKey;
-			if (!appId || !privateKey) return "failed";
-			if (reconciling) return "running";
-			const work = reconcileInstallations(
-				db,
-				async (id) => {
-					const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
-					return { token: await installationToken(appJwt, id), appJwt };
-				},
-				fetch,
-				installationIds,
-			)
-				.then(() => "success" as const)
-				.catch(() => "failed" as const);
-			reconciling = work;
-			try {
-				const status = await work;
-				if (status === "success" && userId) refresh(userId);
-				return status;
-			} finally {
-				if (reconciling === work) reconciling = undefined;
-			}
-		},
+		reconcile,
+		reconcilePullRequest: (target) => targetedCoordinator.enqueue(target, "manual"),
 		scheduleDrain: async () => {},
 	} satisfies AppContext;
-	context.scheduleDrain = () => {
-		draining = draining
-			.then(async () => {
-				await initialized;
-				const users = await drainInbox(db, githubTasks, config.reviewBot);
-				for (const user of users) refresh(user);
-			})
-			.catch((error) =>
-				console.error(
-					"webhook drain failed",
-					error instanceof Error ? error.message : "unknown error",
-				),
-			);
-		return draining;
-	};
+	context.scheduleDrain = createScheduleDrain({
+		db,
+		initialized,
+		githubTasks,
+		reviewBot: config.reviewBot,
+		targetedCoordinator,
+		reconcile,
+		refresh,
+	});
+	const scheduler = createWeekdayReconciliationScheduler({
+		knownOpenPullRequests: () => knownOpenPullRequests(db, initialized),
+		enqueue: targetedCoordinator.enqueue,
+	});
+	if (config.githubAppId && config.githubAppPrivateKey) scheduler.start();
 	return {
 		drain: context.scheduleDrain,
 		reconcile: () => context.reconcile(),
 		fetch: (request: Request) => handleRequest(context, request),
+		stop() {
+			scheduler.stop();
+			targetedCoordinator.stop();
+		},
 	};
 }
 if (import.meta.main) {
@@ -1180,16 +1322,12 @@ if (import.meta.main) {
 				hostname: config.hostname,
 				idleTimeout: 255,
 				fetch: app.fetch,
+				error: serverError,
 			});
 			void app.drain();
-			if (config.githubAppId && config.githubAppPrivateKey)
-				setInterval(() => void app.reconcile(), config.reconcileIntervalMs);
 		})
 		.catch((error) => {
-			console.error(
-				"MongoDB startup failed",
-				error instanceof Error ? error.message : "unknown error",
-			);
+			console.error("MongoDB startup failed", error instanceof Error ? error.message : "unknown error");
 			process.exitCode = 1;
 		});
 }

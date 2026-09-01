@@ -2,11 +2,13 @@
 	"compilerOptions": {
 		"target": "ESNext",
 		"allowJs": true,
+		"jsx": "react-jsx",
 		"module": "Preserve",
 		"moduleResolution": "bundler",
 		"paths": {
 			"#/*": ["./src/*"]
 		},
+		"skipLibCheck": true,
 		"strict": true,
 		"noEmit": true,
 		"types": ["bun"]

@@ -6,15 +6,7 @@ const execFileAsync = promisify(execFile);
 const paths = process.argv.slice(2);
 const trackedPaths = paths.length
 	? paths
-	: (
-			await execFileAsync("git", [
-				"ls-files",
-				"--cached",
-				"--others",
-				"--exclude-standard",
-				"-z",
-			])
-		).stdout
+	: (await execFileAsync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"])).stdout
 			.split("\0")
 			.filter(Boolean);
 const credentialBearingMongoUri = /mongodb(?:\+srv)?:\/\/[^:\s/]+:[^@\s]+@/;
@@ -34,9 +26,7 @@ for (const path of trackedPaths) {
 	const lines = content.split(/\r?\n/);
 	for (const [index, line] of lines.entries()) {
 		if (!credentialBearingMongoUri.test(line)) continue;
-		console.error(
-			`${path}:${index + 1}: credential-bearing MongoDB URI is not allowed`,
-		);
+		console.error(`${path}:${index + 1}: credential-bearing MongoDB URI is not allowed`);
 		found = true;
 	}
 }

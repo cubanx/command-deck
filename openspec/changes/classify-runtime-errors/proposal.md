@@ -6,7 +6,7 @@ Healthy Command Deck deployments currently report expected or recoverable runtim
 
 - Treat a push task path missing from the webhook's final SHA as an expected stale artifact only when a bounded GitHub read positively proves absence; preserve prior evidence and fail closed on ambiguous 404s or other provider failures.
 - Preserve provider retry behavior while reporting terminal reconciliation failures once with the installation, operation, status when available, and sanitized diagnostic.
-- Keep unauthenticated `/api/snapshot` responses at 401, keep the client to one request, render the signed-out state, and avoid logging that expected outcome as an application error.
+- Keep unauthenticated `/api/snapshot` responses at 401, keep the client to one request without TanStack retry, render the signed-out state, and avoid logging that expected outcome as an application error; retain TanStack retry behavior for every non-401 failure.
 - Add focused regression coverage for expected classifications and genuine failure paths without adding dependencies or changing external systems.
 
 ## Capabilities

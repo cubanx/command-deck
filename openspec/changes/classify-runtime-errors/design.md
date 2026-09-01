@@ -27,9 +27,9 @@ This uses GitHub's authoritative final tree instead of replaying incomplete webh
 
 Carry the existing sanitized GitHub failure fields through the installation catch path, persist them in reconciliation evidence, and emit one terminal error at the boundary that owns installation identity. The aggregate reconciliation failure remains fail-closed after all approved installations are attempted. A new logger or error hierarchy is unnecessary.
 
-### Special-case only snapshot 401 in the browser loader
+### Special-case only snapshot 401 in the dashboard query
 
-Represent the numeric status long enough for the load catch to skip `console.error` only for `401`; render the existing signed-out copy and retain one request. Other statuses and request failures keep the current sanitized log and recovery UI. Server authentication behavior remains unchanged.
+Represent `401` as the existing signed-out snapshot data, so TanStack Query completes without retrying or entering its error state. Other statuses and request failures continue to throw through TanStack Query, preserving its configured retries, sanitized error classification, and recovery UI. Server authentication behavior remains unchanged.
 
 ## Risks / Trade-offs
 
