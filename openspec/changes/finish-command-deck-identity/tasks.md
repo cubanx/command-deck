@@ -28,8 +28,8 @@
 
 ## 6. Codex and local continuity
 
-- [ ] 6.1 Preserve existing worktree paths and verify saved-project and task continuity after the GitHub rename.
-- [ ] 6.2 Use `command-deck` for future checkouts and worktrees after continuity evidence is recorded.
+- [x] 6.1 Preserve existing worktree paths and verify saved-project and task continuity after the GitHub rename.
+- [x] 6.2 Use `command-deck` for future checkouts and worktrees after continuity evidence is recorded.
 
 ## 7. Final evidence and archive gate
 
