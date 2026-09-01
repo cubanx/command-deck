@@ -7,8 +7,8 @@
 
 ## 2. GitHub continuity
 
-- [ ] 2.1 Independently verify the user-reported `cubanx/command-deck` rename, default branch, and old-slug redirect; record current-state evidence.
-- [ ] 2.2 With authorization, update shared origin to `cubanx/command-deck` and verify GitHub App, webhook, and link continuity; restore the prior origin on failure.
+- [x] 2.1 Independently verify the user-reported `cubanx/command-deck` rename, default branch, and old-slug redirect; record current-state evidence.
+- [x] 2.2 With authorization, update shared origin to `cubanx/command-deck` and verify GitHub App, webhook, and link continuity; restore the prior origin on failure.
 
 ## 3. Railway continuity
 

@@ -35,3 +35,7 @@ See proposal.md. `Command Deck.ai` is the human brand; `command-deck` is the can
 3. Execute the separately authorized Railway, Atlas, and 1Password metadata steps with their rollback checks.
 4. Verify Codex/local continuity and use `command-deck` only for future checkouts/worktrees.
 5. Archive only after final cross-system evidence is complete.
+
+## Current GitHub Observation
+
+On 2026-09-01, visible-browser evidence and authorized REST reads verified public `cubanx/command-deck`, default branch `main`, old-slug redirect, and canonical PR #21. Repository Settings lists active `Command Deck.ai` with the configured Railway webhook URL, secret, SSL verification, and a successful `workflow_run.in_progress` delivery at 11:30:38; an empty repository-webhook list is expected for the App webhook. Shared origin changed from `https://github.com/cubanx/dev-command-center.git` to `https://github.com/cubanx/command-deck.git`; remote HEAD and `main` resolve to `0b3e67cc044d25f2994d9072277a9c68ac9ca043`, and `origin/cd/finish-command-deck-identity` resolves to `c89cd372e106283359241ccdb2bbe36d2579870a`.
