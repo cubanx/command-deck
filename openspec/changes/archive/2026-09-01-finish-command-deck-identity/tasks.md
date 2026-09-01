@@ -33,5 +33,5 @@
 
 ## 7. Final evidence and archive gate
 
-- [ ] 7.1 Record final GitHub, Railway, Atlas, 1Password, and Codex evidence only after all authorized continuity and rollback checks pass.
-- [ ] 7.2 Archive the change only after final evidence and review acceptance are complete.
+- [x] 7.1 Record final GitHub, Railway, Atlas, 1Password, and Codex evidence only after all authorized continuity and rollback checks pass.
+- [x] 7.2 Archive the change only after final evidence and review acceptance are complete.
