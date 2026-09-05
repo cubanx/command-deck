@@ -15,6 +15,34 @@ export const countedFetch = (fetcher: FetchLike) => {
 	};
 };
 export type ReconciliationTrigger = "scheduled" | "webhook" | "startup" | "manual";
+export type ReconciliationErrorCategory = "targeted" | "broad" | "bookkeeping";
+export type ReconciliationErrorContext = {
+	installationId?: string;
+	operation: string;
+	category: ReconciliationErrorCategory;
+	status?: number;
+};
+
+const safeValue = (value: unknown, fallback: string) =>
+	typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9 _./:-]{0,99}$/.test(value) ? value : fallback;
+const safeStatus = (value: unknown) =>
+	Number.isSafeInteger(value) && Number(value) >= 100 && Number(value) <= 599 ? Number(value) : undefined;
+export const logReconciliationError = ({ installationId, operation, category, status }: ReconciliationErrorContext) => {
+	const safeInstallationId = safeValue(installationId, "unknown");
+	const safeOperation = safeValue(operation, "reconciliation");
+	const safeHttpStatus = safeStatus(status);
+	console.error(
+		JSON.stringify({
+			event: "reconciliation_failed",
+			level: "error",
+			message: `reconciliation failed installation=${safeInstallationId} operation=${safeOperation} category=${category}`,
+			installationId: safeInstallationId,
+			operation: safeOperation,
+			category,
+			...(safeHttpStatus === undefined ? {} : { status: safeHttpStatus }),
+		}),
+	);
+};
 type ReconciliationResult = {
 	kind?: "changed" | "unchanged" | "error";
 	providerRequestCount?: number;
@@ -49,7 +77,7 @@ type CoordinatorDependencies = {
 		outcome: "success" | "partial_failure" | "failure";
 	}) => Promise<void>;
 	debounceMs?: number;
-	onError?: (error: unknown) => void;
+	onError?: (error: unknown, context: ReconciliationErrorContext) => void;
 };
 
 type InstallationWork = {
@@ -66,7 +94,7 @@ export function createReconciliationCoordinator({
 	reconcileInstallations,
 	recordRun,
 	debounceMs = 250,
-	onError = (error) => console.error("reconciliation failed", error instanceof Error ? error.name : "unknown"),
+	onError = (_error, context) => logReconciliationError(context),
 }: CoordinatorDependencies) {
 	const installations = new Map<string, InstallationWork>();
 	let broadRequested = false;
@@ -86,7 +114,7 @@ export function createReconciliationCoordinator({
 		broadRequested = false;
 		broadRunning = true;
 		void reconcileInstallations()
-			.catch(onError)
+			.catch((error) => onError(error, { operation: "reconciliation", category: "broad" }))
 			.finally(() => {
 				broadRunning = false;
 				for (const installationId of installations.keys()) run(installationId);
@@ -105,8 +133,10 @@ export function createReconciliationCoordinator({
 		work.pending.delete(key);
 		work.active = key;
 		const startedAt = new Date();
+		let targetResolved = false;
 		void reconcilePullRequest(queued.target)
 			.then(async (result) => {
+				targetResolved = true;
 				const completedAt = new Date();
 				await recordRun?.({
 					installationId,
@@ -129,7 +159,12 @@ export function createReconciliationCoordinator({
 				});
 			})
 			.catch((error) => {
-				onError(error);
+				onError(
+					error,
+					targetResolved
+						? { installationId, operation: "reconciliation_audit", category: "bookkeeping" }
+						: { installationId, operation: "pull_request", category: "targeted" },
+				);
 				queued.waiters.forEach((waiter) => {
 					waiter("failed");
 				});

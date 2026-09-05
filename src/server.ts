@@ -30,6 +30,7 @@ import {
 	githubFetch,
 	githubNextLink,
 	installationToken,
+	isReportedReconciliationFailure,
 	logReconciliationFailure,
 	normalizedReconciliationFailure,
 	persistReconciliationFailure,
@@ -47,7 +48,7 @@ import {
 	mergeIntentFor,
 	mergeIntentHash,
 } from "#/merge";
-import { countedFetch, createReconciliationCoordinator } from "#/reconciliation-coordinator";
+import { countedFetch, createReconciliationCoordinator, logReconciliationError } from "#/reconciliation-coordinator";
 import { createWeekdayReconciliationScheduler } from "#/reconciliation-scheduler";
 import { frontendAssetLoader } from "#/web/frontend-assets";
 
@@ -462,8 +463,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 	if (!context.bootstrapInstallation && (!githubAppId || !githubAppPrivateKey)) return;
 	queueMicrotask(() => {
 		void (async () => {
-			let result: ReadResult,
-				classification = "ReadResult";
+			let result: ReadResult;
 			try {
 				if (context.bootstrapInstallation)
 					result = await context.bootstrapInstallation(context.db, installationId, "", fetch, "");
@@ -480,22 +480,16 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 						logGitHubRequestFailure,
 					);
 				}
-			} catch (error) {
+			} catch {
 				result = normalizedReconciliationFailure();
-				classification = error instanceof Error ? "Error" : "unknown";
 			}
 			if (result.kind === "error") {
 				try {
 					await persistReconciliationFailure(context.db, installationId, result);
 				} catch (error) {
-					logReconciliationFailure(
-						"installation bootstrap persistence failed",
-						installationId,
-						result,
-						error instanceof Error ? "Error" : "unknown",
-					);
+					logReconciliationFailure("installation bootstrap persistence failed", installationId, result, "bookkeeping");
 				}
-				logReconciliationFailure("installation bootstrap failed", installationId, result, classification);
+				logReconciliationFailure("installation bootstrap failed", installationId, result, "broad");
 			} else {
 				if (result.kind === "changed")
 					for (const user of await context.db.users
@@ -745,12 +739,7 @@ const repairRoute = async (context: AppContext, request: Request, path: string) 
 	} catch (error) {
 		const result = normalizedReconciliationFailure();
 		await persistReconciliationFailure(context.db, installationId, result);
-		logReconciliationFailure(
-			"installation repair failed",
-			installationId,
-			result,
-			error instanceof Error ? "Error" : "unknown",
-		);
+		logReconciliationFailure("installation repair failed", installationId, result, "targeted");
 		return Response.json(result);
 	}
 };
@@ -981,49 +970,90 @@ type ReconciliationOptions = {
 	refresh(userId: string): void;
 };
 
+const reconciliationStage = Symbol("reconciliationStage");
+const withReconciliationStage = async <T>(operation: string, work: () => Promise<T>) => {
+	try {
+		return await work();
+	} catch (error) {
+		throw Object.assign(new Error("Reconciliation operation failed"), { [reconciliationStage]: operation });
+	}
+};
+const stageFromError = (error: unknown) =>
+	error && typeof error === "object" && typeof (error as Record<symbol, unknown>)[reconciliationStage] === "string"
+		? String((error as Record<symbol, unknown>)[reconciliationStage])
+		: undefined;
+
 export const auditReconciliationRun = async (db: Db, run: ReconciliationRun) => {
 	try {
 		await db.reconciliationRuns.insertOne(run);
-	} catch (error) {
-		console.error("reconciliation audit failed", error instanceof Error ? error.name : "unknown");
+	} catch {
+		logReconciliationError({
+			installationId: run.installationId,
+			operation: "reconciliation_audit",
+			category: "bookkeeping",
+		});
 	}
 };
 
 const reconcileTargetedPullRequest = async (options: ReconciliationOptions, target: PullRequestTarget) => {
 	const { db, config, dependencies, reconcileTarget, refresh } = options;
 	const counted = countedFetch(fetch);
+	let reportedFailure = false;
 	const before = (
-		await db.users.findOne(
-			{ "installations.installationId": target.installationId },
-			{ projection: { installations: 1 } },
+		await withReconciliationStage("target_lookup", () =>
+			db.users.findOne({ "installations.installationId": target.installationId }, { projection: { installations: 1 } }),
 		)
 	)?.installations
 		.find((item) => item.installationId === target.installationId)
 		?.repositories.find((item) => item.repositoryId === target.repositoryId)
 		?.pullRequests.find((item) => Number(item.number) === target.number);
 	const result = dependencies.reconcilePullRequest
-		? await reconcileTarget(db, {
-				...target,
-				token: "",
-				fetcher: counted.fetcher,
-			})
-		: await (async () => {
-				const appId = config.githubAppId;
-				const privateKey = config.githubAppPrivateKey;
-				if (!appId || !privateKey) throw new Error("GitHub App is not configured");
-				const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
-				return reconcileTarget(db, {
+		? await withReconciliationStage("targeted_provider", () =>
+				reconcileTarget(db, {
 					...target,
-					token: await installationToken(appJwt, target.installationId, counted.fetcher),
+					token: "",
 					fetcher: counted.fetcher,
-					reportFailure: logGitHubRequestFailure,
+				}),
+			)
+		: await (async () => {
+				const token = await withReconciliationStage("targeted_credentials", async () => {
+					const appId = config.githubAppId;
+					const privateKey = config.githubAppPrivateKey;
+					if (!appId || !privateKey) throw new Error("GitHub App is not configured");
+					const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
+					return installationToken(appJwt, target.installationId, counted.fetcher);
 				});
+				return withReconciliationStage("targeted_provider", () =>
+					reconcileTarget(db, {
+						...target,
+						token,
+						fetcher: counted.fetcher,
+						reportFailure: (failure) => {
+							reportedFailure = true;
+							logReconciliationError({
+								installationId: target.installationId,
+								operation: failure.operation,
+								category: "targeted",
+								status: failure.status,
+							});
+						},
+					}),
+				);
 			})();
+	if (result.kind === "error" && !reportedFailure)
+		logReconciliationError({
+			installationId: target.installationId,
+			operation: result.operation ?? "pull_request",
+			category: "targeted",
+			status: result.status,
+		});
 	if (result.kind === "changed")
-		for (const user of await db.users
-			.find({ "installations.installationId": target.installationId }, { projection: { _id: 1 } })
-			.toArray())
-			refresh(user._id);
+		await withReconciliationStage("refresh", async () => {
+			for (const user of await db.users
+				.find({ "installations.installationId": target.installationId }, { projection: { _id: 1 } })
+				.toArray())
+				refresh(user._id);
+		});
 	return {
 		...result,
 		providerRequestCount: counted.count(),
@@ -1035,6 +1065,11 @@ const createTargetedCoordinator = (options: ReconciliationOptions) =>
 	createReconciliationCoordinator({
 		reconcilePullRequest: (target) => reconcileTargetedPullRequest(options, target),
 		reconcileInstallations: async () => {},
+		onError: (error, context) =>
+			logReconciliationError({
+				...context,
+				operation: stageFromError(error) ?? context.operation,
+			}),
 		recordRun: async (run) => {
 			await auditReconciliationRun(options.db, run);
 		},
@@ -1120,7 +1155,11 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			},
 		)
 			.then(() => "success" as const)
-			.catch(() => "failed" as const);
+			.catch((error) => {
+				if (!isReportedReconciliationFailure(error))
+					logReconciliationError({ operation: "reconciliation", category: "broad" });
+				return "failed" as const;
+			});
 		reconciling = work;
 		try {
 			const status = await work;

@@ -753,15 +753,16 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			const body = await failed.text();
 			expect(JSON.parse(body)).toEqual({ status: "failed" });
 			expect(body).not.toContain("fixture-token-value");
-			const reconciliationLog = logs.find((log) => log[0] === "installation reconciliation failed");
-			expect(reconciliationLog).toEqual([
-				"installation reconciliation failed",
-				"12",
-				"openspec",
-				"unknown",
-				"ReadResult",
-				"GitHub OpenSpec artifact fetch failed",
-			]);
+			const reconciliationLogs = logs.map(([line]) => JSON.parse(String(line)));
+			expect(reconciliationLogs).toHaveLength(1);
+			expect(reconciliationLogs).toContainEqual({
+				event: "reconciliation_failed",
+				level: "error",
+				message: "reconciliation failed installation=12 operation=openspec category=broad",
+				installationId: "12",
+				operation: "openspec",
+				category: "broad",
+			});
 			expect(logs.filter((log) => log[0] === "GitHub request failed")).toHaveLength(0);
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
@@ -1527,23 +1528,25 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			expect(failedInstallation).not.toHaveProperty("lastSyncError");
 			expect(failedInstallation?.reconciliationEvidence).toBeUndefined();
 			expect(JSON.stringify(failedInstallation)).not.toContain("github diagnostic");
-			expect(logs).toMatchObject([
-				[
-					"installation bootstrap persistence failed",
-					"12",
-					"installation_identity",
-					401,
-					"Error",
-					"GitHub request failed (401)",
-				],
-				[
-					"installation bootstrap failed",
-					"12",
-					"installation_identity",
-					401,
-					"ReadResult",
-					"GitHub request failed (401)",
-				],
+			expect(logs.map(([line]) => JSON.parse(String(line)))).toMatchObject([
+				{
+					event: "reconciliation_failed",
+					level: "error",
+					message:
+						"reconciliation failed installation=12 operation=installation bootstrap persistence category=bookkeeping",
+					installationId: "12",
+					operation: "installation bootstrap persistence",
+					category: "bookkeeping",
+				},
+				{
+					event: "reconciliation_failed",
+					level: "error",
+					message: "reconciliation failed installation=12 operation=installation_identity category=broad",
+					installationId: "12",
+					operation: "installation_identity",
+					category: "broad",
+					status: 401,
+				},
 			]);
 			await new Promise((resolve) => setTimeout(resolve));
 			expect(unhandled).toEqual([]);
