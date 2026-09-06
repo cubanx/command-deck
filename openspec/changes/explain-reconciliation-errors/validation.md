@@ -56,3 +56,13 @@ Required `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all` passe
 ## Hosted acceptance
 
 Pending Group 2 prerequisites and fresh natural evidence. Local subprocess stderr tests cannot establish Railway ingestion, deployed SHA, or production success.
+
+## PR 23 review corrections
+
+The independent exact-head review of `6ec8ec0fed13a3e11031849451a3694b0c63c450` found two sibling-path gaps: OAuth bootstrap still supplied a raw provider reporter before its aggregate logger, and manual installation repair did not log resolved error results. Both P1 findings were submitted through the canonical review bot on that head.
+
+Focused regressions reproduced both gaps before the fixes. OAuth bootstrap now uses only its structured aggregate owner; manual repair logs resolved failures once and distinguishes persistence failures as bookkeeping. A further status assertion failed because the bootstrap task fetcher discarded HTTP status; retaining that numeric status on its locally authored error restores it without retaining provider content. The regression now proves one sanitized JSON diagnostic with status 500. Separate tests cover persistence failures after both returned and thrown provider errors while preserving response semantics.
+
+The historical review remains bound to its original head; fixing and publishing the code does not itself clear the review or establish a newer-head independent review. Group 2 remains incomplete.
+
+Final review-fix validation: required `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all` passed with **236/236 tests, 28/28 files; 229 functions checked, none above CRAP 30**, including credential scans, lint, typecheck and frontend build. Strict OpenSpec validation and `git diff --check` passed. The initial check caught formatting; a later test run caught the older broad-reconciliation assertion omitting the now-preserved HTTP 500 status. Both were corrected before the final successful run. Ephemeral log: `/tmp/cd-pr23-fixes-validation.log`.

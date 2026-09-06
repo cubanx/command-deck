@@ -470,15 +470,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 				else {
 					const appJwt = githubAppJwt(githubAppId!, githubAppPrivateKey!.replace(/\\n/g, "\n"));
 					const token = await installationToken(appJwt, installationId);
-					result = await bootstrapInstallation(
-						context.db,
-						installationId,
-						token,
-						fetch,
-						appJwt,
-						undefined,
-						logGitHubRequestFailure,
-					);
+					result = await bootstrapInstallation(context.db, installationId, token, fetch, appJwt, undefined);
 				}
 			} catch {
 				result = normalizedReconciliationFailure();
@@ -719,8 +711,14 @@ const repairRoute = async (context: AppContext, request: Request, path: string) 
 			fetch,
 			appJwt,
 		);
-		if (result.kind === "error") await persistReconciliationFailure(context.db, installationId, result);
-		else {
+		if (result.kind === "error") {
+			try {
+				await persistReconciliationFailure(context.db, installationId, result);
+			} catch {
+				logReconciliationFailure("installation repair persistence failed", installationId, result, "bookkeeping");
+			}
+			logReconciliationFailure("installation repair failed", installationId, result, "targeted");
+		} else {
 			await markDeliveriesRepairedByReconciliation(
 				context.db,
 				installationId,
@@ -738,7 +736,11 @@ const repairRoute = async (context: AppContext, request: Request, path: string) 
 		return Response.json(result);
 	} catch (error) {
 		const result = normalizedReconciliationFailure();
-		await persistReconciliationFailure(context.db, installationId, result);
+		try {
+			await persistReconciliationFailure(context.db, installationId, result);
+		} catch {
+			logReconciliationFailure("installation repair persistence failed", installationId, result, "bookkeeping");
+		}
 		logReconciliationFailure("installation repair failed", installationId, result, "targeted");
 		return Response.json(result);
 	}

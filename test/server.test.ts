@@ -762,6 +762,7 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 				installationId: "12",
 				operation: "openspec",
 				category: "broad",
+				status: 500,
 			});
 			expect(logs.filter((log) => log[0] === "GitHub request failed")).toHaveLength(0);
 			const failedUser = await db.users.findOne({ _id: "u" });
@@ -1573,6 +1574,192 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			app.stop();
 		}
 	}));
+
+test("OAuth bootstrap logs one sanitized aggregate for an OpenSpec task failure", () =>
+	withDatabase(async (db) => {
+		const { privateKey } = await crypto.subtle.generateKey(
+			{
+				name: "RSASSA-PKCS1-v1_5",
+				modulusLength: 2048,
+				publicExponent: new Uint8Array([1, 0, 1]),
+				hash: "SHA-256",
+			},
+			true,
+			["sign", "verify"],
+		);
+		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
+			.toString("base64")
+			.match(/.{1,64}/g)
+			?.join("\n")}\n-----END PRIVATE KEY-----`;
+		const app = createApp(db, {
+			...testConfig,
+			githubClientId: "client",
+			githubClientSecret: "secret",
+			githubAppId: "1",
+			githubAppPrivateKey: pem,
+		});
+		const original = globalThis.fetch,
+			originalError = console.error,
+			logs: unknown[][] = [],
+			canary = "bootstrap-provider-secret";
+		console.error = (...args: unknown[]) => logs.push(args);
+		fetchTarget.fetch = async (input) => {
+			const url = String(input);
+			if (url.includes("access_token")) return Response.json({ access_token: "oauth-token" });
+			if (url.endsWith("/user")) return Response.json({ id: 9, login: "kira" });
+			if (url.includes("user/installations"))
+				return Response.json({ installations: [{ id: 12, account: { login: "Crisp-Inc" } }] });
+			if (url.includes("access_tokens")) return Response.json({ token: "installation-token" });
+			if (url.includes("/app/installations/")) return Response.json({ account: { login: "Crisp-Inc" } });
+			if (url.endsWith("/repos/Crisp-Inc/defiant")) return Response.json({ default_branch: "main" });
+			if (url.includes("/rules/branches/main")) return Response.json([]);
+			if (url.includes("/branches/main/protection")) return new Response(null, { status: 404 });
+			if (url.includes("installation/repositories"))
+				return Response.json({ repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }] });
+			if (url.includes("/repositories/2/pulls?") && !url.includes("/files"))
+				return Response.json([
+					{
+						number: 1,
+						title: "Repair the defiant",
+						user: { login: "kira" },
+						state: "open",
+						head: { sha: "a".repeat(40) },
+						body: "## OpenSpecs\n- hostile-bootstrap",
+					},
+				]);
+			if (url.includes("/repositories/2/pulls/1/files"))
+				return Response.json([{ filename: "openspec/changes/hostile-bootstrap/tasks.md" }]);
+			if (url.includes("contents/openspec/changes/hostile-bootstrap/tasks.md"))
+				return Response.json(
+					{
+						message: canary,
+						documentation_url: "https://docs.github.com/rest",
+						raw_body: canary,
+					},
+					{ status: 500 },
+				);
+			if (url.includes("/deployments")) return Response.json([]);
+			throw new Error(`unexpected GitHub request ${url}`);
+		};
+		try {
+			const state = await createOAuthState(db);
+			expect(
+				(await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`)))
+					.status,
+			).toBe(302);
+			for (let attempts = 0; !logs.length && attempts < 100; attempts++)
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(logs).toHaveLength(1);
+			expect(logs[0]).toHaveLength(1);
+			const aggregate = JSON.parse(String(logs[0]?.[0]));
+			expect(aggregate).toMatchObject({
+				event: "reconciliation_failed",
+				installationId: "12",
+				operation: "openspec",
+				category: "broad",
+				status: 500,
+			});
+			expect(logs.some(([label]) => label === "GitHub request failed")).toBe(false);
+			expect(JSON.stringify(logs)).not.toContain(canary);
+		} finally {
+			globalThis.fetch = original;
+			console.error = originalError;
+			app.stop();
+		}
+	}));
+
+test("manual repair logs a returned error once with a targeted sanitized diagnostic", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "kira");
+		await bindInstallation(db, "u", "12", "cubanx");
+		const session = await createSession(db, "u");
+		const app = createApp(db, testConfig, undefined, {
+			bootstrapInstallation: async () => ({
+				kind: "error",
+				stale: true,
+				message: "resolved repair failure",
+				operation: "openspec",
+				summary: "OpenSpec task fetch failed",
+				repository: "Crisp-Inc/defiant",
+				status: 502,
+			}),
+		});
+		const originalError = console.error,
+			logs: unknown[][] = [];
+		console.error = (...args: unknown[]) => logs.push(args);
+		try {
+			const response = await app.fetch(
+				new Request("http://local/api/installations/12/repair", {
+					method: "POST",
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			expect(response.status).toBe(200);
+			expect(await response.json()).toEqual({
+				kind: "error",
+				stale: true,
+				message: "resolved repair failure",
+				operation: "openspec",
+				summary: "OpenSpec task fetch failed",
+				repository: "Crisp-Inc/defiant",
+				status: 502,
+			});
+			expect(logs.map(([line]) => JSON.parse(String(line)))).toEqual([
+				{
+					event: "reconciliation_failed",
+					level: "error",
+					message: "reconciliation failed installation=12 operation=openspec category=targeted",
+					installationId: "12",
+					operation: "openspec",
+					category: "targeted",
+					status: 502,
+				},
+			]);
+		} finally {
+			console.error = originalError;
+			app.stop();
+		}
+	}));
+
+test.each([false, true])("manual repair reports persistence failures separately (provider throws=%s)", (throws) =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "odo", "odo");
+		await bindInstallation(db, "odo", "12", "cubanx");
+		const session = await createSession(db, "odo");
+		const app = createApp(db, testConfig, undefined, {
+			bootstrapInstallation: async () => {
+				if (throws) throw new Error("Quark provider secret");
+				return { kind: "error", stale: true, message: "Provider failed", operation: "repository_list", status: 503 };
+			},
+		});
+		const write = vi.spyOn(db.users, "replaceOne").mockRejectedValue(new Error("Quark storage secret"));
+		const log = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			const response = await app.fetch(
+				new Request("http://local/api/installations/12/repair", {
+					method: "POST",
+					headers: { cookie: `dcc_session=${session.token}` },
+				}),
+			);
+			expect(response.status).toBe(200);
+			expect((await response.json()).kind).toBe("error");
+			const lines = log.mock.calls.map(([line]) => JSON.parse(String(line)));
+			expect(lines).toHaveLength(2);
+			expect(lines[0]).toMatchObject({
+				installationId: "12",
+				operation: "installation repair persistence",
+				category: "bookkeeping",
+			});
+			expect(lines[1]).toMatchObject({ installationId: "12", category: "targeted" });
+			expect(lines[0]).not.toHaveProperty("status");
+			expect(JSON.stringify(lines)).not.toContain("Quark");
+		} finally {
+			write.mockRestore();
+			log.mockRestore();
+			app.stop();
+		}
+	}),
+);
 
 test("startup drain projects a pending OpenSpec push and clears the inbox payload", () =>
 	withDatabase(async (db) => {

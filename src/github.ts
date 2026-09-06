@@ -1166,7 +1166,7 @@ export async function bootstrapInstallation(
 				target,
 				diagnostic: await githubErrorDiagnostic(response),
 			});
-			throw new Error("GitHub OpenSpec artifact fetch failed");
+			throw Object.assign(new Error("GitHub OpenSpec artifact fetch failed"), { status: response.status });
 		});
 	const bound = await db.users
 		.find({ "installations.installationId": installationId }, { projection: { _id: 1, github: 1, installations: 1 } })
