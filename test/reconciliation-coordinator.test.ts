@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vitest";
 import { createReconciliationCoordinator } from "#/reconciliation-coordinator";
 
@@ -121,11 +123,108 @@ test("logs sanitized diagnostics for failed targeted and broad reconciliation", 
 		console.error = originalError;
 		vi.useRealTimers();
 	}
-	expect(logs).toEqual([
-		["reconciliation failed", "ProviderTimeout"],
-		["reconciliation failed", "ProviderTimeout"],
+	expect(logs.map(([line]) => JSON.parse(String(line)))).toEqual([
+		{
+			event: "reconciliation_failed",
+			level: "error",
+			message: "reconciliation failed installation=9 operation=pull_request category=targeted",
+			installationId: "9",
+			operation: "pull_request",
+			category: "targeted",
+		},
+		{
+			event: "reconciliation_failed",
+			level: "error",
+			message: "reconciliation failed installation=unknown operation=reconciliation category=broad",
+			installationId: "unknown",
+			operation: "reconciliation",
+			category: "broad",
+		},
 	]);
 	expect(JSON.stringify(logs)).not.toContain("must-not-escape");
+});
+
+test("passes ownership context to targeted, bookkeeping, and broad failures", async () => {
+	vi.useFakeTimers();
+	try {
+		const errors: Array<{ error: unknown; context: unknown }> = [];
+		const coordinator = createReconciliationCoordinator({
+			reconcilePullRequest: async () => {
+				throw new Error("target diagnostic");
+			},
+			reconcileInstallations: async () => {
+				throw new Error("broad diagnostic");
+			},
+			recordRun: async () => {
+				throw new Error("bookkeeping diagnostic");
+			},
+			onError: (error, context) => errors.push({ error, context }),
+		});
+		const targeted = coordinator.enqueue(target(7));
+		vi.advanceTimersByTime(250);
+		await expect(targeted).resolves.toBe("failed");
+		coordinator.reconcileInstallations();
+		await Promise.resolve();
+		expect(errors).toHaveLength(2);
+		expect(errors.map(({ context }) => context)).toEqual([
+			{ installationId: "9", operation: "pull_request", category: "targeted" },
+			{ operation: "reconciliation", category: "broad" },
+		]);
+		const bookkeeping = createReconciliationCoordinator({
+			reconcilePullRequest: async () => ({ kind: "unchanged" as const }),
+			reconcileInstallations: async () => {},
+			recordRun: async () => {
+				throw new Error("bookkeeping diagnostic");
+			},
+			onError: (error, context) => errors.push({ error, context }),
+		});
+		const result = bookkeeping.enqueue(target(8));
+		vi.advanceTimersByTime(250);
+		await expect(result).resolves.toBe("failed");
+		expect(errors.at(-1)?.context).toEqual({
+			installationId: "9",
+			operation: "reconciliation_audit",
+			category: "bookkeeping",
+		});
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+test("emits one parseable sanitized JSON diagnostic on real Bun stderr", async () => {
+	const child = spawn("bun", [fileURLToPath(new URL("./fixtures/reconciliation-stderr.ts", import.meta.url))], {
+		cwd: process.cwd(),
+	});
+	let stderr = "";
+	child.stderr.on("data", (chunk: Buffer) => {
+		stderr += chunk;
+	});
+	const [exitCode] = await new Promise<[number | null]>((resolve, reject) => {
+		child.on("error", reject);
+		child.on("close", (code) => resolve([code]));
+	});
+	const lines = stderr.trim().split("\n");
+	expect(exitCode).toBe(0);
+	expect(lines).toHaveLength(5);
+	expect(lines.map((line) => JSON.parse(line).operation)).toEqual([
+		"pull_request",
+		"reconciliation",
+		"reconciliation_audit",
+		"installation_credentials",
+		"installation_identity",
+	]);
+	expect(JSON.parse(lines[4]!)).toMatchObject({ installationId: "9", status: 401 });
+	expect(JSON.parse(lines[0]!)).toEqual({
+		event: "reconciliation_failed",
+		level: "error",
+		message: "reconciliation failed installation=9 operation=pull_request category=targeted",
+		installationId: "9",
+		operation: "pull_request",
+		category: "targeted",
+	});
+	expect(stderr).not.toContain("token=canary");
+	expect(stderr).not.toContain("raw canary");
+	expect(stderr).not.toContain("secret-canary");
 });
 
 test("stops pending debounce timers", () => {

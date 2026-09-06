@@ -9,6 +9,7 @@ import {
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks, projectOpenSpec } from "#/openspec";
+import { logReconciliationError, type ReconciliationErrorCategory } from "#/reconciliation-coordinator";
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
@@ -1090,8 +1091,8 @@ export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestIn
 		const read = await readOpenPullRequest(db, input, request, owner, name, repository, stage);
 		stage.value = "persistence";
 		return read
-			? applyOpenPullRequest(db, users, installation, repository, input, read)
-			: removeClosedPullRequest(db, users, input);
+			? await applyOpenPullRequest(db, users, installation, repository, input, read)
+			: await removeClosedPullRequest(db, users, input);
 	} catch (error) {
 		const status = Number((error as { status?: unknown })?.status);
 		const diagnostic = (
@@ -1165,7 +1166,7 @@ export async function bootstrapInstallation(
 				target,
 				diagnostic: await githubErrorDiagnostic(response),
 			});
-			throw new Error("GitHub OpenSpec artifact fetch failed");
+			throw Object.assign(new Error("GitHub OpenSpec artifact fetch failed"), { status: response.status });
 		});
 	const bound = await db.users
 		.find({ "installations.installationId": installationId }, { projection: { _id: 1, github: 1, installations: 1 } })
@@ -1478,10 +1479,11 @@ export async function reconcileInstallations(
 	const results: Array<{ installationId: string; result: ReadResult }> = [];
 	for (const installationId of ids) {
 		const startedAt = new Date();
-		let result: ReadResult,
-			classification = "ReadResult";
+		let result: ReadResult;
+		let operation = "installation_credentials";
 		try {
 			const { token, appJwt } = await credentialsFor(installationId);
+			operation = "installation_bootstrap";
 			result = await bootstrapInstallation(
 				db,
 				installationId,
@@ -1491,9 +1493,11 @@ export async function reconcileInstallations(
 				fetchTasks,
 				reportTaskFetchFailure,
 			);
-		} catch (error) {
-			result = normalizedReconciliationFailure();
-			classification = error instanceof Error ? error.name : "unknown";
+		} catch {
+			result = {
+				...normalizedReconciliationFailure(),
+				operation,
+			};
 		}
 		results.push({ installationId, result });
 		try {
@@ -1503,11 +1507,11 @@ export async function reconcileInstallations(
 				"installation reconciliation bookkeeping failed",
 				installationId,
 				normalizedReconciliationFailure(),
-				error instanceof Error ? error.name : "unknown",
+				"bookkeeping",
 			);
 		}
 		if (result.kind === "error") {
-			logReconciliationFailure("installation reconciliation failed", installationId, result, classification);
+			logReconciliationFailure("installation reconciliation failed", installationId, result, "broad");
 			try {
 				await persistReconciliationFailure(db, installationId, result);
 			} catch (error) {
@@ -1515,16 +1519,27 @@ export async function reconcileInstallations(
 					"installation reconciliation persistence failed",
 					installationId,
 					normalizedReconciliationFailure(),
-					error instanceof Error ? error.name : "unknown",
+					"bookkeeping",
 				);
 			}
 		}
 	}
 	const failures = results.filter((item) => item.result.kind === "error");
-	if (failures.length)
-		throw new Error(`reconciliation failed for installations ${failures.map((item) => item.installationId).join(",")}`);
+	if (failures.length) {
+		const error = new Error(
+			`reconciliation failed for installations ${failures.map((item) => item.installationId).join(",")}`,
+		);
+		Object.defineProperty(error, reportedReconciliationFailure, { value: true });
+		throw error;
+	}
 	return results;
 }
+
+const reportedReconciliationFailure = Symbol("reportedReconciliationFailure");
+export const isReportedReconciliationFailure = (error: unknown) =>
+	typeof error === "object" &&
+	error !== null &&
+	(error as Record<symbol, unknown>)[reportedReconciliationFailure] === true;
 
 export const normalizedReconciliationFailure = (): Extract<ReadResult, { kind: "error" }> => ({
 	kind: "error",
@@ -1538,16 +1553,17 @@ export const logReconciliationFailure = (
 	event: string,
 	installationId: string,
 	result: Extract<ReadResult, { kind: "error" }>,
-	classification: string,
+	category: ReconciliationErrorCategory,
 ) =>
-	console.error(
-		event,
+	logReconciliationError({
 		installationId,
-		result.operation ?? "reconciliation",
-		result.status ?? "unknown",
-		classification,
-		result.message,
-	);
+		operation:
+			category === "bookkeeping" || result.operation === "reconciliation"
+				? event.replace(/ failed$/, "")
+				: (result.operation ?? event),
+		category,
+		status: category === "bookkeeping" ? undefined : result.status,
+	});
 
 export async function persistReconciliationFailure(
 	db: Db,

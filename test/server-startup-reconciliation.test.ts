@@ -1,9 +1,77 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { bindInstallation, createSession, upsertIdentity } from "#/access";
 import { mutateUser } from "#/db";
 import { acceptGitHubDelivery } from "#/events";
 import { auditReconciliationRun, createApp, serverError } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
+
+test("targeted failures retain operation for frozen and primitive throws and recover", () =>
+	withDatabase(async (db) => {
+		const log = vi.spyOn(console, "error").mockImplementation(() => {});
+		const failures = [Object.freeze(new Error("Garak secret")), "Garak secret"];
+		const app = createApp(db, { ...testConfig, localDemo: true }, undefined, {
+			reconcilePullRequest: async () => {
+				if (failures.length) throw failures.shift();
+				return { kind: "unchanged" };
+			},
+		});
+		try {
+			const snapshot = await (await app.fetch(new Request("http://local/api/snapshot"))).json();
+			const pr = snapshot.pullRequests.find((item: { state: string }) => item.state === "open");
+			const repair = () =>
+				app.fetch(
+					new Request("http://local/api/reconcile/pull-request", {
+						method: "POST",
+						body: JSON.stringify({
+							installationId: String(pr.installation_id),
+							repositoryId: String(pr.repository_id),
+							number: Number(pr.number),
+						}),
+					}),
+				);
+			expect((await repair()).status).toBe(502);
+			expect((await repair()).status).toBe(502);
+			expect((await repair()).status).toBe(200);
+			expect(log.mock.calls).toHaveLength(2);
+			for (const [line] of log.mock.calls)
+				expect(JSON.parse(line)).toMatchObject({
+					installationId: String(pr.installation_id),
+					operation: "targeted_provider",
+				});
+			expect(JSON.stringify(log.mock.calls)).not.toContain("Garak secret");
+		} finally {
+			app.stop();
+			log.mockRestore();
+		}
+	}));
+
+test("unexpected broad failures are logged once and a later run recovers", () =>
+	withDatabase(async (db) => {
+		const log = vi.spyOn(console, "error").mockImplementation(() => {});
+		let fail = true;
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fictional" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async () => {
+					if (fail) throw new Error("Garak secret");
+					return [];
+				},
+			},
+		);
+		try {
+			expect(await app.reconcile()).toBe("failed");
+			fail = false;
+			expect(await app.reconcile()).toBe("success");
+			expect(log.mock.calls).toHaveLength(1);
+			expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({ installationId: "unknown", category: "broad" });
+			expect(JSON.stringify(log.mock.calls)).not.toContain("Garak secret");
+		} finally {
+			app.stop();
+			log.mockRestore();
+		}
+	}));
 
 test("sanitizes unhandled Bun request errors", async () => {
 	const originalError = console.error,
@@ -32,12 +100,14 @@ test("keeps provider outcomes independent from server audit persistence", async 
 						Promise.reject(Object.assign(new Error("token=must-not-escape"), { name: "AuditWriteFailure" })),
 				},
 			} as never,
-			{} as never,
+			{ installationId: "9" } as never,
 		);
 	} finally {
 		console.error = originalError;
 	}
-	expect(logs).toEqual([["reconciliation audit failed", "AuditWriteFailure"]]);
+	expect(logs.map(([line]) => JSON.parse(String(line)))).toEqual([
+		expect.objectContaining({ installationId: "9", operation: "reconciliation_audit", category: "bookkeeping" }),
+	]);
 	expect(JSON.stringify(logs)).not.toContain("must-not-escape");
 });
 

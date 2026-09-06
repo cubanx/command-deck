@@ -16,6 +16,32 @@ import {
 import { countedFetch } from "#/reconciliation-coordinator";
 import { withDatabase } from "./mongo-support";
 
+test("thrown bootstrap failure is not misclassified as credentials", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "quark", "quark");
+		await bindInstallation(db, "quark", "9", "cubanx");
+		const log = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await expect(
+				reconcileInstallations(
+					db,
+					async () => ({ token: "fictional", appJwt: "fictional" }),
+					async () => {
+						throw new Error("Quark secret");
+					},
+				),
+			).rejects.toThrow("reconciliation failed");
+			expect(log.mock.calls).toHaveLength(1);
+			expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+				installationId: "9",
+				operation: "installation_bootstrap",
+			});
+			expect(JSON.stringify(log.mock.calls)).not.toContain("Quark secret");
+		} finally {
+			log.mockRestore();
+		}
+	}));
+
 test("counted fetch includes token, retry, and pagination attempts", async () => {
 	const calls: string[] = [];
 	const counted = countedFetch(async (input) => {
@@ -144,6 +170,20 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		repaired.installations[0]!.repositories[0]!.openSpecs = [];
 		await db.users.replaceOne({ _id: "u" }, repaired);
 		expect((await reconcilePullRequest(db, input)).kind).toBe("changed");
+		const persistenceFailures: GitHubRequestFailure[] = [];
+		input.reportFailure = (failure) => {
+			persistenceFailures.push(failure);
+		};
+		const write = vi.spyOn(db.users, "replaceOne").mockRejectedValueOnce(new Error("Quark persistence secret"));
+		try {
+			expect((await reconcilePullRequest(db, input)).kind).toBe("error");
+			expect(persistenceFailures).toEqual([
+				expect.objectContaining({ operation: "targeted pull request reconciliation persistence" }),
+			]);
+			expect(JSON.stringify(persistenceFailures)).not.toContain("Quark persistence secret");
+		} finally {
+			write.mockRestore();
+		}
 		const failures: GitHubRequestFailure[] = [];
 		input.fetchTasks = async () => {
 			throw Object.assign(new Error("fixture failure"), { status: 500 });
@@ -1674,8 +1714,15 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		} finally {
 			console.error = originalError;
 		}
-		expect(logs).toEqual([
-			["installation reconciliation failed", "9", "reconciliation", "unknown", "Error", "reconciliation failed"],
+		expect(logs.map(([line]) => JSON.parse(String(line)))).toEqual([
+			{
+				event: "reconciliation_failed",
+				level: "error",
+				message: "reconciliation failed installation=9 operation=installation_credentials category=broad",
+				installationId: "9",
+				operation: "installation_credentials",
+				category: "broad",
+			},
 		]);
 		expect(JSON.stringify(logs)).not.toContain("raw provider diagnostic");
 		expect((await db.users.findOne({ _id: "u" }))?.installations[0]).toMatchObject({
@@ -1688,7 +1735,7 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 		const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
 		expect(failedEvidence).toMatchObject({
 			outcome: "failure",
-			operation: "reconciliation",
+			operation: "installation_credentials",
 		});
 		expect(JSON.stringify(failedEvidence)).not.toContain("raw provider diagnostic");
 		expect((await dashboardForUser(db, "u")).stale).toBe(true);
@@ -1751,24 +1798,26 @@ test("installation reconciliation logs each terminal provider failure once and c
 		} finally {
 			console.error = originalError;
 		}
-		expect(logs.filter((log) => log[1] === "9")).toHaveLength(1);
-		expect(logs.filter((log) => log[1] === "10")).toEqual([
-			[
-				"installation reconciliation bookkeeping failed",
-				"10",
-				"reconciliation",
-				"unknown",
-				"Error",
-				"reconciliation failed",
-			],
-		]);
-		expect(logs.find((log) => log[1] === "9")).toEqual([
-			"installation reconciliation failed",
-			"9",
-			"repository_list",
-			503,
-			"ReadResult",
-			"GitHub request failed (503)",
+		expect(logs.filter(([line]) => JSON.parse(String(line)).installationId === "9")).toHaveLength(1);
+		expect(logs.map(([line]) => JSON.parse(String(line)))).toEqual([
+			{
+				event: "reconciliation_failed",
+				level: "error",
+				message:
+					"reconciliation failed installation=10 operation=installation reconciliation bookkeeping category=bookkeeping",
+				installationId: "10",
+				operation: "installation reconciliation bookkeeping",
+				category: "bookkeeping",
+			},
+			{
+				event: "reconciliation_failed",
+				level: "error",
+				message: "reconciliation failed installation=9 operation=repository_list category=broad",
+				status: 503,
+				installationId: "9",
+				operation: "repository_list",
+				category: "broad",
+			},
 		]);
 		expect(JSON.stringify(logs)).not.toContain("raw provider body");
 		expect(JSON.stringify(logs)).not.toContain("raw bookkeeping diagnostic");
@@ -1815,18 +1864,25 @@ test("installation reconciliation isolates persistence bookkeeping failures", ()
 			console.error = originalError;
 		}
 		expect(credentials).toEqual(["10", "9"]);
-		expect(logs.filter((log) => log[0] === "installation reconciliation failed")).toEqual([
-			["installation reconciliation failed", "10", "repository_list", 503, "ReadResult", "GitHub request failed (503)"],
-		]);
-		expect(logs.filter((log) => log[0] === "installation reconciliation persistence failed")).toEqual([
-			[
-				"installation reconciliation persistence failed",
-				"10",
-				"reconciliation",
-				"unknown",
-				"Error",
-				"reconciliation failed",
-			],
+		expect(logs.map(([line]) => JSON.parse(String(line)))).toEqual([
+			{
+				event: "reconciliation_failed",
+				level: "error",
+				message: "reconciliation failed installation=10 operation=repository_list category=broad",
+				status: 503,
+				installationId: "10",
+				operation: "repository_list",
+				category: "broad",
+			},
+			{
+				event: "reconciliation_failed",
+				level: "error",
+				message:
+					"reconciliation failed installation=10 operation=installation reconciliation persistence category=bookkeeping",
+				installationId: "10",
+				operation: "installation reconciliation persistence",
+				category: "bookkeeping",
+			},
 		]);
 		expect(JSON.stringify(logs)).not.toContain("raw persistence diagnostic");
 		expect(JSON.stringify(logs)).not.toContain("raw provider body");
@@ -1853,14 +1909,15 @@ test("reconciliation evidence retains the newest 20 failures deterministically",
 		} finally {
 			console.error = originalError;
 		}
-		expect(logs).toContainEqual([
-			"installation reconciliation failed",
-			"9",
-			"installation_identity",
-			500,
-			"ReadResult",
-			"GitHub request failed (500)",
-		]);
+		expect(logs.map(([line]) => JSON.parse(String(line)))).toContainEqual({
+			event: "reconciliation_failed",
+			level: "error",
+			message: "reconciliation failed installation=9 operation=installation_identity category=broad",
+			installationId: "9",
+			operation: "installation_identity",
+			category: "broad",
+			status: 500,
+		});
 		const user = await db.users.findOne({ _id: "u" });
 		if (!user) throw new Error("test user missing");
 		const installation = user.installations[0];
