@@ -565,7 +565,7 @@ test("filters, orders, clears, and persists the operational card view", async ()
 		fireEvent.click(clear);
 	};
 	fireEvent.click(status());
-	expect(within(await screen.findByRole("listbox")).getAllByRole("option", { hidden: true })).toHaveLength(8);
+	expect(within(await screen.findByRole("listbox")).getAllByRole("option", { hidden: true })).toHaveLength(9);
 	expect(screen.queryByRole("checkbox", { name: "All" })).toBeNull();
 	expect(screen.queryByText("Lifecycle")).toBeNull();
 	expect(screen.queryByText("Attention")).toBeNull();
@@ -698,4 +698,39 @@ test("renders only complete, lifecycle-ready native merge forms", async () => {
 	])
 		expect(within(screen.getByRole("article", { name: title })).queryByRole("form")).toBeNull();
 	expect(screen.queryByRole("article", { name: "Closed merge" })).toBeNull();
+});
+
+test("default and cleared filters show retained work as merged with merge disabled", async () => {
+	renderFrontend(
+		<OperationalDashboard
+			snapshot={{
+				...snapshot,
+				pullRequests: [
+					...snapshot.pullRequests,
+					{
+						...snapshot.pullRequests[0],
+						number: 143,
+						title: "Defiant follow-up",
+						state: "closed",
+						merged: true,
+						retention_candidate: true,
+						draft: true,
+						post_merge_unresolved: true,
+					},
+				],
+			}}
+		/>,
+	);
+	const card = screen.getByRole("article", { name: "Defiant follow-up" });
+	expect(screen.getAllByRole("article")[0]).toBe(card);
+	expect(within(card).getAllByText(/Merged/).length).toBeGreaterThan(0);
+	expect(within(card).queryByText(/Draft/)).toBeNull();
+	fireEvent.change(screen.getByRole("textbox", { name: /search pull requests/i }), { target: { value: "Wormhole" } });
+	expect(screen.queryByRole("article", { name: "Defiant follow-up" })).toBeNull();
+	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+	expect(screen.getAllByRole("article")[0].getAttribute("aria-label")).toBe("Defiant follow-up");
+	fireEvent.click(screen.getByRole("button", { name: "Actions for Defiant follow-up" }));
+	await screen.findByRole("menuitem", { name: "Reconcile PR" });
+	expect(screen.queryByRole("menuitem", { name: "Merge" })).toBeNull();
+	expect(screen.queryByRole("form", { name: "Merge Defiant follow-up" })).toBeNull();
 });

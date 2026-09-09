@@ -17,6 +17,7 @@ const normalize = (value: unknown) =>
 		.replaceAll(" ", "_");
 const needsAttention = (pr: Record<string, unknown>) =>
 	Boolean(pr.draft) ||
+	pr.post_merge_unresolved === true ||
 	normalize(pr.review_state) === "changes_requested" ||
 	badPrStates.has(normalize(pr.checks_state)) ||
 	badPrStates.has(normalize(pr.workflow_state)) ||
@@ -279,7 +280,7 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
 			})),
 	);
 	const byIdentity = new Map<string, PullRequest>();
-	for (const pr of projectedPullRequests.filter((pr) => pr.state === "open")) {
+	for (const pr of projectedPullRequests.filter((pr) => pr.state === "open" || pr.retention_candidate === true)) {
 		const key = `${pr.repository_id}:${pr.number}`;
 		const previous = byIdentity.get(key);
 		if (!previous || String(pr.updated_at ?? "") > String(previous.updated_at ?? "")) byIdentity.set(key, pr);
@@ -309,6 +310,7 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
 		})
 		.sort(
 			(a, b) =>
+				Number(b.retention_candidate === true) - Number(a.retention_candidate === true) ||
 				Number(b.needs_attention) - Number(a.needs_attention) ||
 				String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")),
 		);

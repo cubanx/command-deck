@@ -42,6 +42,53 @@ test("derives lifecycle precedence and authoritative OpenSpec blockers", () => {
 	});
 });
 
+test("retained merged work is visible first and cannot be merged", () => {
+	const retained = {
+		...ready,
+		number: 1,
+		full_name: "ds9/ops",
+		state: "closed",
+		merged: true,
+		retention_candidate: true,
+		post_merge_unresolved: true,
+	};
+	const open = { ...ready, number: 2, full_name: "ds9/ops", state: "open" };
+	expect(lifecycleFor(retained)).toEqual({ stage: "post-merge", blockers: ["Post-merge work unresolved"] });
+	expect(mergeControlFor(retained)).toMatchObject({ state: "closed" });
+	for (const direction of ["asc", "desc"] as const)
+		expect(
+			numbers(derivePullRequests([{ pr: open }, { pr: retained }], { sort: { mode: "repository", direction } })),
+		).toEqual([1, 2]);
+});
+
+test("retention partitions preserve every sort comparator and remain filterable", () => {
+	const items = [4, 1, 3, 2].map((number) => ({
+		pr: {
+			...ready,
+			number,
+			title: number <= 2 ? "Defiant follow-up" : "Station repair",
+			full_name: number % 2 ? "ds9/alpha" : "ds9/beta",
+			opened_at: `2026-09-0${number % 2 ? 1 : 2}T12:00:00Z`,
+			updated_at: `2026-09-0${number % 2 ? 1 : 2}T12:00:00Z`,
+			state: number <= 2 ? "closed" : "open",
+			merged: number <= 2,
+			retention_candidate: number <= 2,
+			draft: number <= 2,
+		},
+		spec: { completed: number % 2 ? 0 : 3, total: 4 },
+	}));
+	for (const mode of ["opened", "closest", "updated", "progress", "repository"] as const)
+		for (const direction of ["asc", "desc"] as const) {
+			const highFirst = mode === "closest" ? direction === "asc" : direction === "desc";
+			expect(numbers(derivePullRequests(items, { sort: { mode, direction } }))).toEqual(
+				highFirst ? [2, 1, 4, 3] : [1, 2, 3, 4],
+			);
+		}
+	expect(numbers(derivePullRequests(items, { statuses: new Set(["post-merge"]) }))).toEqual([2, 1]);
+	expect(numbers(derivePullRequests(items, { query: "Defiant" }))).toEqual([2, 1]);
+	expect(numbers(derivePullRequests(items, { repositories: new Set(["ds9/alpha"]) }))).toEqual([1, 3]);
+});
+
 test("keeps lifecycle buckets exclusive while composing attention, failure, repository, and fuzzy filters", () => {
 	const items = [
 		{

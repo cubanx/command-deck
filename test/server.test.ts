@@ -512,111 +512,123 @@ test("reconcile route requires an authenticated user with an approved bound inst
 		).toBe(400);
 	}));
 
-test("manual PR reconciliation is scoped to known open PRs and all-known repair stays targeted", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "kira");
-		await upsertIdentity(db, "foreign", "garak");
-		await bindInstallation(db, "u", "12", "cubanx");
-		await bindInstallation(db, "foreign", "13", "cubanx");
-		await mutateUser(db, "u", (user) => {
-			user.installations[0]!.repositories = [
-				{
-					repositoryId: "42",
-					full_name: "cubanx/defiant",
-					openSpecs: [],
-					deployments: [],
-					pullRequests: [
-						{
-							number: 7,
-							title: "Repair the Defiant",
-							author_login: "kira",
-							state: "open",
-							draft: false,
-							mergeable: "unknown",
-						},
-					],
-				},
-			];
-		});
-		const calls: Array<{
-			installationId: string;
-			repositoryId: string;
-			number: number;
-		}> = [];
-		let fail = false;
-		const app = createApp(db, testConfig, undefined, {
-			reconcilePullRequest: async (_db, target) => {
-				calls.push(target);
-				return fail ? { kind: "error", message: "repair failed", stale: true } : { kind: "unchanged" };
-			},
-		});
-		const session = await createSession(db, "u");
-		const post = (path: string, body?: unknown) =>
-			app.fetch(
-				new Request(`http://local${path}`, {
-					method: "POST",
-					headers: {
-						cookie: `dcc_session=${session.token}`,
-						...(body === undefined ? {} : { "content-type": "application/json" }),
+test.each(["open", "closed"])(
+	"manual repair includes %s work and confines recovery to authorized repositories",
+	(state) =>
+		withDatabase(async (db) => {
+			await upsertIdentity(db, "u", "kira");
+			await upsertIdentity(db, "foreign", "garak");
+			await bindInstallation(db, "u", "12", "cubanx");
+			await bindInstallation(db, "foreign", "13", "cubanx");
+			await mutateUser(db, "u", (user) => {
+				user.installations[0]!.repositories = [
+					{
+						repositoryId: "42",
+						full_name: "cubanx/defiant",
+						openSpecs: [],
+						deployments: [],
+						pullRequests: [
+							{
+								number: 7,
+								title: "Repair the Defiant",
+								author_login: "kira",
+								state,
+								merged: state === "closed",
+								retention_candidate: state === "closed",
+								draft: false,
+								mergeable: "unknown",
+							},
+						],
 					},
-					body: body === undefined ? undefined : JSON.stringify(body),
-				}),
-			);
-		expect(
-			(
-				await post("/api/reconcile/pull-request", {
-					installationId: "12",
-					repositoryId: "42",
-					number: 7,
-				})
-			).status,
-		).toBe(200);
-		expect(await (await post("/api/reconcile/pull-requests")).json()).toEqual({
-			status: "success",
-			count: 1,
-			successfulCount: 1,
-			failedCount: 0,
-			estimatedProviderRequests: 4,
-		});
-		expect(
-			calls.map(({ installationId, repositoryId, number }) => ({
-				installationId,
-				repositoryId,
-				number,
-			})),
-		).toEqual([
-			{ installationId: "12", repositoryId: "42", number: 7 },
-			{ installationId: "12", repositoryId: "42", number: 7 },
-		]);
-		fail = true;
-		const partial = await post("/api/reconcile/pull-requests");
-		expect(partial.status).toBe(502);
-		expect(await partial.json()).toEqual({
-			status: "partial_failure",
-			count: 1,
-			successfulCount: 0,
-			failedCount: 1,
-			estimatedProviderRequests: 4,
-		});
-		expect(
-			(
-				await post("/api/reconcile/pull-request", {
-					installationId: "13",
-					repositoryId: "42",
-					number: 7,
-				})
-			).status,
-		).toBe(404);
-		expect(
-			(
-				await post("/api/reconcile/pull-request", {
-					installationId: "12",
-					repositoryId: "42",
-					number: 99,
-				})
-			).status,
-		).toBe(404);
-	}));
+				];
+			});
+			const calls: Array<{
+				installationId: string;
+				repositoryId: string;
+				number: number;
+			}> = [];
+			let fail = false;
+			const app = createApp(db, testConfig, undefined, {
+				reconcilePullRequest: async (_db, target) => {
+					calls.push(target);
+					return fail ? { kind: "error", message: "repair failed", stale: true } : { kind: "unchanged" };
+				},
+			});
+			const session = await createSession(db, "u");
+			const post = (path: string, body?: unknown) =>
+				app.fetch(
+					new Request(`http://local${path}`, {
+						method: "POST",
+						headers: {
+							cookie: `dcc_session=${session.token}`,
+							...(body === undefined ? {} : { "content-type": "application/json" }),
+						},
+						body: body === undefined ? undefined : JSON.stringify(body),
+					}),
+				);
+			expect(
+				(
+					await post("/api/reconcile/pull-request", {
+						installationId: "12",
+						repositoryId: "42",
+						number: 7,
+					})
+				).status,
+			).toBe(200);
+			expect(await (await post("/api/reconcile/pull-requests")).json()).toEqual({
+				status: "success",
+				count: 1,
+				successfulCount: 1,
+				failedCount: 0,
+				estimatedProviderRequests: 4,
+			});
+			expect(
+				calls.map(({ installationId, repositoryId, number }) => ({
+					installationId,
+					repositoryId,
+					number,
+				})),
+			).toEqual([
+				{ installationId: "12", repositoryId: "42", number: 7 },
+				{ installationId: "12", repositoryId: "42", number: 7 },
+			]);
+			fail = true;
+			const partial = await post("/api/reconcile/pull-requests");
+			expect(partial.status).toBe(502);
+			expect(await partial.json()).toEqual({
+				status: "partial_failure",
+				count: 1,
+				successfulCount: 0,
+				failedCount: 1,
+				estimatedProviderRequests: 4,
+			});
+			expect(
+				(
+					await post("/api/reconcile/pull-request", {
+						installationId: "13",
+						repositoryId: "42",
+						number: 7,
+					})
+				).status,
+			).toBe(404);
+			fail = false;
+			expect(
+				(
+					await post("/api/reconcile/pull-request", {
+						installationId: "12",
+						repositoryId: "42",
+						number: 99,
+					})
+				).status,
+			).toBe(200);
+			for (const target of [
+				{ installationId: "12", repositoryId: "unbound", number: 99 },
+				{ installationId: "12", repositoryId: "42", number: 0 },
+			])
+				expect((await post("/api/reconcile/pull-request", target)).status).toBe(404);
+			app.stop();
+		}),
+);
 
 test("manual reconciliation scopes work to the signed-in user, refreshes, and sanitizes failures", () =>
 	withDatabase(async (db) => {

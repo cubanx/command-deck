@@ -5,6 +5,45 @@ import { mutateUser } from "#/db";
 import { acceptGitHubDelivery, drainInbox, githubSignatureValid } from "#/events";
 import { withDatabase } from "./mongo-support";
 
+test("discarded webhook CAS attempts do not emit mergeability notifications", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await bindInstallation(db, "sisko", "9", "cubanx");
+		await mutateUser(db, "sisko", (user) => {
+			user.installations[0]!.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				deployments: [],
+				openSpecs: [],
+				pullRequests: [{ number: 8, state: "open", author_login: "sisko", mergeable: "false" }],
+			});
+		});
+		await acceptGitHubDelivery(
+			db,
+			"defiant-cas",
+			"pull_request",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				action: "synchronize",
+				pull_request: { number: 8, title: "Launch Defiant", state: "open", user: { login: "sisko" }, mergeable: true },
+			}),
+		);
+		const replace = db.users.replaceOne.bind(db.users);
+		let attempts = 0;
+		db.users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
+			if (++attempts === 1) await replace(...args);
+			return replace(...args);
+		};
+		try {
+			await drainInbox(db);
+			expect(attempts).toBe(2);
+			expect(await db.notifications.countDocuments({ userId: "sisko", title: "Mergeability changed" })).toBe(0);
+		} finally {
+			db.users.replaceOne = replace;
+		}
+	}));
+
 test("malformed webhook bodies are rejected without an inbox row", () =>
 	withDatabase(async (db) => {
 		expect(await acceptGitHubDelivery(db, "bad-json", "pull_request", "{")).toEqual({ kind: "malformed" });
@@ -65,7 +104,9 @@ test("GitHub close delivery without installation account projects an existing PR
 			status: "done",
 			resolvedAccount: "crisp-inc",
 		});
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toEqual([]);
+		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toMatchObject([
+			{ number: 186, state: "closed", merged: true, retention_candidate: true },
+		]);
 	}));
 
 test("GitHub delivery without installation account remains durable", () =>
@@ -471,6 +512,39 @@ test("closed pull requests remove directly without enqueueing, and pending verif
 		);
 		await drain();
 		expect(targets).toHaveLength(1);
+	}));
+
+test("default-branch pushes enqueue retained candidates for canonical refresh", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "u", "sisko");
+		await bindInstallation(db, "u", "9", "cubanx");
+		await mutateUser(db, "u", (user) => {
+			user.installations[0]!.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{ number: 143, state: "closed", merged: true, retention_candidate: true, author_login: "sisko" },
+					{ number: 144, state: "open", author_login: "sisko" },
+				],
+				openSpecs: [],
+				deployments: [],
+			});
+		});
+		const targets: unknown[] = [];
+		await acceptGitHubDelivery(
+			db,
+			"retained-push",
+			"push",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2 },
+				ref: "refs/heads/main",
+				after: "b".repeat(40),
+				commits: [{ modified: ["README.md"] }],
+			}),
+		);
+		await drainInbox(db, undefined, undefined, undefined, undefined, (target) => targets.push(target));
+		expect(targets).toEqual([{ installationId: "9", repositoryId: "2", number: 143 }]);
 	}));
 
 test("closed pull requests remove their projection", () =>

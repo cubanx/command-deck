@@ -1,4 +1,4 @@
-import type { Db } from "#/db";
+import type { Db, Repository } from "#/db";
 import { mutateUser } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 import { activeOpenSpecGroups } from "#/openspec-tasks";
@@ -73,11 +73,57 @@ export function parseTasks(content: string) {
 		completed: tasks.filter((task) => task.completed).length,
 		total: tasks.length,
 		preMergeReady: !activeGroups.length,
+		postMergeIncomplete: groups.some(
+			(group) => group.title.includes("[post-merge]") && group.tasks.some((task) => !task.completed),
+		),
 		activeGroup: activeGroups[0] ?? null,
 		activeGroups,
 		incompleteGroups,
 	};
 }
+export function projectRepositoryTasks(
+	repository: Repository,
+	changeName: string,
+	input: { content?: string; sha: string; sourceRef?: string },
+) {
+	const progress = parseTasks(input.content ?? "");
+	const index = repository.openSpecs.findIndex((item) => item.change_name === changeName),
+		previous = index >= 0 ? repository.openSpecs[index] : undefined;
+	const completed =
+		progress.total > 0 &&
+		progress.completed === progress.total &&
+		(!previous || Number(previous.completed) < Number(previous.total));
+	const next = {
+		change_name: changeName,
+		completed: progress.completed,
+		total: progress.total,
+		pre_merge_ready: progress.preMergeReady,
+		source_commit: input.sha,
+		...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
+		active_group: progress.activeGroup ? JSON.stringify(progress.activeGroup) : null,
+		active_groups: JSON.stringify(progress.activeGroups),
+		incomplete_groups: JSON.stringify(progress.incompleteGroups),
+		updated_at: new Date().toISOString(),
+	};
+	const changed =
+		!previous ||
+		(
+			[
+				"completed",
+				"total",
+				"pre_merge_ready",
+				"source_commit",
+				"source_ref",
+				"active_group",
+				"active_groups",
+				"incomplete_groups",
+			] as const
+		).some((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
+	if (index >= 0) repository.openSpecs[index] = next;
+	else repository.openSpecs.push(next);
+	return { changed, completed };
+}
+
 export async function projectOpenSpec(
 	db: Db,
 	input: {
@@ -98,10 +144,11 @@ export async function projectOpenSpec(
 		const users = await db.users
 			.find({ "installations.installationId": input.installationId }, { projection: { _id: 1 } })
 			.toArray();
-		let changed = false;
-		await Promise.all(
-			users.map((user) =>
-				mutateUser(db, user._id, (aggregate) => {
+		const changes = await Promise.all(
+			users.map(async (user) => {
+				let changed = false;
+				await mutateUser(db, user._id, (aggregate) => {
+					changed = false;
 					const installation = aggregate.installations.find((item) => item.installationId === input.installationId);
 					if (
 						!installation ||
@@ -115,20 +162,22 @@ export async function projectOpenSpec(
 						repository.openSpecs = repository.openSpecs.filter((item) => item.change_name !== changeName);
 						changed ||= repository.openSpecs.length !== before;
 					}
-				}),
-			),
+				});
+				return changed;
+			}),
 		);
-		return { changed, completed: false };
+		return { changed: changes.some(Boolean), completed: false };
 	}
-	const progress = parseTasks(input.content ?? "");
 	const users = await db.users
 		.find({ "installations.installationId": input.installationId }, { projection: { _id: 1 } })
 		.toArray();
-	let changed = false,
-		completed = false;
-	await Promise.all(
-		users.map((user) =>
-			mutateUser(db, user._id, (aggregate) => {
+	const results = await Promise.all(
+		users.map(async (user) => {
+			let changed = false,
+				completed = false;
+			await mutateUser(db, user._id, (aggregate) => {
+				changed = false;
+				completed = false;
 				const installation = aggregate.installations.find((item) => item.installationId === input.installationId);
 				if (
 					!installation ||
@@ -138,42 +187,12 @@ export async function projectOpenSpec(
 					return;
 				const repository = installation.repositories.find((item) => item.repositoryId === input.repositoryId);
 				if (!repository) return;
-				const index = repository.openSpecs.findIndex((item) => item.change_name === changeName),
-					previous = index >= 0 ? repository.openSpecs[index] : undefined;
-				completed ||=
-					progress.total > 0 &&
-					progress.completed === progress.total &&
-					(!previous || Number(previous.completed) < Number(previous.total));
-				const next = {
-					change_name: changeName,
-					completed: progress.completed,
-					total: progress.total,
-					pre_merge_ready: progress.preMergeReady,
-					source_commit: input.sha,
-					...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
-					active_group: progress.activeGroup ? JSON.stringify(progress.activeGroup) : null,
-					active_groups: JSON.stringify(progress.activeGroups),
-					incomplete_groups: JSON.stringify(progress.incompleteGroups),
-					updated_at: new Date().toISOString(),
-				};
-				changed ||=
-					!previous ||
-					(
-						[
-							"completed",
-							"total",
-							"pre_merge_ready",
-							"source_commit",
-							"source_ref",
-							"active_group",
-							"active_groups",
-							"incomplete_groups",
-						] as const
-					).some((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
-				if (index >= 0) repository.openSpecs[index] = next;
-				else repository.openSpecs.push(next);
-			}),
-		),
+				const result = projectRepositoryTasks(repository, changeName, input);
+				changed = result.changed;
+				completed = result.completed;
+			});
+			return { changed, completed };
+		}),
 	);
-	return { changed, completed };
+	return { changed: results.some((result) => result.changed), completed: results.some((result) => result.completed) };
 }

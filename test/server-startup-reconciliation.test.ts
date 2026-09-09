@@ -6,6 +6,46 @@ import { acceptGitHubDelivery } from "#/events";
 import { auditReconciliationRun, createApp, serverError } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
 
+test("weekday repair includes retained merged work without closed unrelated history", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await bindInstallation(db, "sisko", "9", "cubanx");
+		await mutateUser(db, "sisko", (user) => {
+			user.installations[0]!.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				openSpecs: [],
+				deployments: [],
+				pullRequests: [
+					{ number: 7, state: "open", author_login: "sisko" },
+					{ number: 8, state: "closed", merged: true, retention_candidate: true, author_login: "sisko" },
+					{ number: 9, state: "closed", author_login: "sisko" },
+				],
+			});
+		});
+		const calls: number[] = [];
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2030-01-02T15:00:00Z"));
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fictional" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async () => [],
+				reconcilePullRequest: async (_db, target) => {
+					calls.push(target.number);
+					return { kind: "unchanged" };
+				},
+			},
+		);
+		try {
+			await vi.waitFor(() => expect(calls).toEqual([7, 8]), { timeout: 2000 });
+		} finally {
+			app.stop();
+			vi.useRealTimers();
+		}
+	}));
+
 test("targeted failures retain operation for frozen and primitive throws and recover", () =>
 	withDatabase(async (db) => {
 		const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -594,7 +634,7 @@ test("targeted persistence reports safe details once through the real server rep
 		const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
 			if (String(input).endsWith("/access_tokens")) return Response.json({ token: "fictional" });
 			if (String(input) === "https://api.github.com/graphql")
-				return Response.json({ data: { repository: { pullRequest: { state: "MERGED" } } } });
+				return Response.json({ data: { repository: { pullRequest: { state: "CLOSED" } } } });
 			throw new Error("Unexpected fixture request");
 		});
 		const write = vi.spyOn(db.users, "replaceOne");

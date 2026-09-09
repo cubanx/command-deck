@@ -117,6 +117,7 @@ type GitHubPayload = {
 		merge_commit_sha?: unknown;
 		merged_at?: unknown;
 		merged?: unknown;
+		base?: { ref?: unknown };
 		created_at?: unknown;
 		updated_at?: unknown;
 	};
@@ -224,6 +225,48 @@ const retainMergedPullRequest = (
 		]);
 };
 
+const projectClosedPullRequest = (
+	repository: import("./db").Repository,
+	pr: NonNullable<GitHubPayload["pull_request"]>,
+	previous: Record<string, unknown> | undefined,
+	index: number,
+	userLogin: string | undefined,
+) => {
+	const authoredMerge = sameLogin(pr.user?.login, userLogin) && pr.merged === true;
+	if (authoredMerge) {
+		const next: Record<string, unknown> = {
+			...previous,
+			number: Number(pr.number),
+			title: pr.title ?? previous?.title ?? "Untitled",
+			url: pr.html_url ?? previous?.url,
+			author_login: pr.user?.login,
+			state: "closed",
+			merged: true,
+			retention_candidate: true,
+			merge_sha: exactHeadSha(pr.merge_commit_sha) ?? previous?.merge_sha,
+			merged_at: typeof pr.merged_at === "string" ? pr.merged_at : previous?.merged_at,
+			base_ref: branch(pr.base?.ref) ?? previous?.base_ref,
+			head_sha: exactHeadSha(pr.head?.sha) ?? previous?.head_sha,
+			updated_at: pr.updated_at ?? previous?.updated_at ?? new Date().toISOString(),
+		};
+		if (typeof next.url !== "string") delete next.url;
+		if (typeof next.base_ref !== "string") delete next.base_ref;
+		if (index >= 0) repository.pullRequests[index] = next;
+		else repository.pullRequests.push(next);
+		retainMergedPullRequest(repository, pr, previous);
+	} else if (sameLogin(pr.user?.login, userLogin)) retainMergedPullRequest(repository, pr, previous);
+	if (!authoredMerge && index >= 0) repository.pullRequests.splice(index, 1);
+	if (repository.recentMergedPullRequests) {
+		const recent = retainRecentMergedPullRequests(repository.recentMergedPullRequests);
+		if (recent.length) repository.recentMergedPullRequests = recent;
+		else delete repository.recentMergedPullRequests;
+	}
+	repository.deployments = repository.deployments.map((deployment) =>
+		correlateDeploymentPullRequest(deployment, repository.pullRequests, repository.recentMergedPullRequests),
+	);
+	return false;
+};
+
 const projectPullRequest = (
 	repository: import("./db").Repository,
 	data: GitHubPayload,
@@ -233,19 +276,8 @@ const projectPullRequest = (
 	if (!pr) return false;
 	const index = repository.pullRequests.findIndex((item) => item.number === Number(pr.number));
 	const previous = index >= 0 ? repository.pullRequests[index] : undefined;
-	if (data.action === "closed" || pr.state !== "open" || !sameLogin(pr.user?.login, userLogin)) {
-		if (sameLogin(pr.user?.login, userLogin)) retainMergedPullRequest(repository, pr, previous);
-		if (index >= 0) repository.pullRequests.splice(index, 1);
-		if (repository.recentMergedPullRequests) {
-			const recent = retainRecentMergedPullRequests(repository.recentMergedPullRequests);
-			if (recent.length) repository.recentMergedPullRequests = recent;
-			else delete repository.recentMergedPullRequests;
-		}
-		repository.deployments = repository.deployments.map((deployment) =>
-			correlateDeploymentPullRequest(deployment, repository.pullRequests, repository.recentMergedPullRequests),
-		);
-		return false;
-	}
+	if (data.action === "closed" || pr.state !== "open" || !sameLogin(pr.user?.login, userLogin))
+		return projectClosedPullRequest(repository, pr, previous, index, userLogin);
 	const mergeabilityChanged = Boolean(previous) && pr.mergeable != null && previous?.mergeable !== String(pr.mergeable);
 	const headRef = branch(pr.head?.ref);
 	const next: Record<string, unknown> = {
@@ -258,6 +290,7 @@ const projectPullRequest = (
 		draft: pr.draft ? 1 : 0,
 		opened_at: typeof pr.created_at === "string" ? pr.created_at : previous?.opened_at,
 		head_ref: headRef,
+		base_ref: branch(pr.base?.ref),
 		head_sha: typeof pr.head?.sha === "string" && /^[0-9a-f]{40}$/i.test(pr.head.sha) ? pr.head.sha : undefined,
 		mergeable: String(pr.mergeable ?? "unknown"),
 		updated_at: pr.updated_at ?? new Date().toISOString(),
@@ -310,9 +343,11 @@ const lifecycleTargets = (
 	} else if (event === "status") {
 		const sha = exactHeadSha(data.sha);
 		if (sha) numbers = repository.pullRequests.filter((pr) => pr.head_sha === sha).map((pr) => Number(pr.number));
+	} else if (event === "push") {
+		numbers = repository.pullRequests.filter((pr) => pr.retention_candidate === true).map((pr) => Number(pr.number));
 	}
 	return repository.pullRequests
-		.filter((pr) => pr.state === "open" && numbers.includes(Number(pr.number)))
+		.filter((pr) => (pr.state === "open" || pr.retention_candidate === true) && numbers.includes(Number(pr.number)))
 		.map((pr) => ({
 			installationId,
 			repositoryId: repository.repositoryId,
@@ -457,7 +492,22 @@ const projectPush = async (
 		...(commit.removed ?? []),
 	]);
 	const sourceRef = data.ref?.startsWith("refs/heads/") ? branch(data.ref.slice(11)) : undefined;
-	for (const path of changedTaskPaths(files)) {
+	const retentionPaths = files.filter(
+		(path) =>
+			/^openspec\/changes\/[^/]+\/tasks\.md$/.test(path) ||
+			/^openspec\/changes\/archive\/\d{4}-\d{2}-\d{2}-[^/]+\/tasks\.md$/.test(path),
+	);
+	const paths = [...new Set([...changedTaskPaths(files), ...retentionPaths])];
+	paths.sort((left, right) => {
+		const leftDeleted = commits.some((commit) => (commit.removed ?? []).includes(left));
+		const rightDeleted = commits.some((commit) => (commit.removed ?? []).includes(right));
+		return Number(rightDeleted) - Number(leftDeleted);
+	});
+	for (const path of paths) {
+		const changeName =
+			path.match(/^openspec\/changes\/([^/]+)\/tasks\.md$/)?.[1] ??
+			path.match(/^openspec\/changes\/archive\/\d{4}-\d{2}-\d{2}-([^/]+)\/tasks\.md$/)?.[1];
+		if (!changeName) continue;
 		const deleted = commits.some((commit) => (commit.removed ?? []).includes(path));
 		const content = deleted
 			? undefined
@@ -474,6 +524,7 @@ const projectPush = async (
 			accountLogin: account,
 			repositoryId,
 			path,
+			changeName,
 			content: typeof content === "string" ? content : "",
 			deleted,
 			sha: data.after ?? "unknown",
@@ -628,19 +679,27 @@ async function projectGitHub(
 	const users = await db.users
 		.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
 		.toArray();
-	for (const user of users)
+	for (const user of users) {
+		let userTerminalTransition = false;
+		let userMergeabilityChanged = false;
+		let userChanged = false;
+		let userTargets: ReconciliationTarget[] = [];
 		await mutateUser(db, user._id, (aggregate) => {
 			const before = JSON.stringify(aggregate);
 			const result = applyGitHubEvent(aggregate, installationId, repositoryId, account, event, data, reviewBot);
-			terminalTransition ||= result.terminalTransition;
-			if (result.mergeabilityChanged) mergeabilityUsers.add(aggregate._id);
-			changed ||= before !== JSON.stringify(aggregate);
+			userTerminalTransition = result.terminalTransition;
+			userMergeabilityChanged = result.mergeabilityChanged;
+			userChanged = before !== JSON.stringify(aggregate);
 			const repository = aggregate.installations
 				.find((item) => item.installationId === installationId)
 				?.repositories.find((item) => item.repositoryId === repositoryId);
-			for (const target of repository ? lifecycleTargets(installationId, repository, event, data) : [])
-				targets.set(`${target.repositoryId}:${target.number}`, target);
+			userTargets = repository ? lifecycleTargets(installationId, repository, event, data) : [];
 		});
+		terminalTransition ||= userTerminalTransition;
+		if (userMergeabilityChanged) mergeabilityUsers.add(user._id);
+		changed ||= userChanged;
+		for (const target of userTargets) targets.set(`${target.repositoryId}:${target.number}`, target);
+	}
 	if (event === "push" && fetchTasks)
 		changed ||= await projectPush(db, data, installationId, repositoryId, account, fetchTasks);
 	await notifyProjectionChanges(
