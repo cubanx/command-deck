@@ -21,16 +21,82 @@ export type ReconciliationErrorContext = {
 	operation: string;
 	category: ReconciliationErrorCategory;
 	status?: number;
+	failureClass?: string;
+	code?: number;
+	target?: string;
 };
 
 const safeValue = (value: unknown, fallback: string) =>
 	typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9 _./:-]{0,99}$/.test(value) ? value : fallback;
 const safeStatus = (value: unknown) =>
 	Number.isSafeInteger(value) && Number(value) >= 100 && Number(value) <= 599 ? Number(value) : undefined;
-export const logReconciliationError = ({ installationId, operation, category, status }: ReconciliationErrorContext) => {
+const safeCode = (value: unknown) =>
+	Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 2147483647 ? Number(value) : undefined;
+const failureClasses = new Set([
+	"aggregate_conflict",
+	"aggregate_missing",
+	"aggregate_size",
+	"network",
+	"timeout",
+	"server_selection",
+	"database",
+	"serialization",
+	"unknown",
+]);
+const namedFailures: Record<string, string> = {
+	UserAggregateSizeError: "aggregate_size",
+	MongoNetworkError: "network",
+	MongoNetworkTimeoutError: "timeout",
+	MongoOperationTimeoutError: "timeout",
+	MongoServerSelectionError: "server_selection",
+	MongoServerError: "database",
+	BSONError: "serialization",
+	BSONVersionError: "serialization",
+	BSONRuntimeError: "serialization",
+	DataCloneError: "serialization",
+};
+export const errorField = (error: unknown, key: PropertyKey): unknown => {
+	try {
+		return error !== null && typeof error === "object" ? Reflect.get(error, key) : undefined;
+	} catch {
+		// An unreadable exception field has no safe diagnostic value.
+		return undefined;
+	}
+};
+export const failureDetails = (error: unknown) => {
+	const name = errorField(error, "name");
+	const message = errorField(error, "message");
+	const failureClass =
+		message === "user aggregate changed concurrently"
+			? "aggregate_conflict"
+			: message === "user aggregate not found"
+				? "aggregate_missing"
+				: typeof name === "string" && Object.hasOwn(namedFailures, name)
+					? namedFailures[name]!
+					: "unknown";
+	const code = safeCode(errorField(error, "code"));
+	const status = safeStatus(errorField(error, "status"));
+	return { failureClass, ...(code === undefined ? {} : { code }), ...(status === undefined ? {} : { status }) };
+};
+const safeTarget = (value: unknown) => {
+	if (typeof value !== "string") return undefined;
+	const match = /^repositories\/([1-9][0-9]{0,19})\/pulls\/([1-9][0-9]{0,15})$/.exec(value);
+	return match && Number.isSafeInteger(Number(match[2])) ? value : undefined;
+};
+export const logReconciliationError = ({
+	installationId,
+	operation,
+	category,
+	status,
+	failureClass,
+	code,
+	target,
+}: ReconciliationErrorContext) => {
 	const safeInstallationId = safeValue(installationId, "unknown");
 	const safeOperation = safeValue(operation, "reconciliation");
 	const safeHttpStatus = safeStatus(status);
+	const numericCode = safeCode(code);
+	const prTarget = safeTarget(target);
 	console.error(
 		JSON.stringify({
 			event: "reconciliation_failed",
@@ -40,6 +106,11 @@ export const logReconciliationError = ({ installationId, operation, category, st
 			operation: safeOperation,
 			category,
 			...(safeHttpStatus === undefined ? {} : { status: safeHttpStatus }),
+			...(failureClass === undefined
+				? {}
+				: { failureClass: failureClasses.has(failureClass) ? failureClass : "unknown" }),
+			...(numericCode === undefined ? {} : { code: numericCode }),
+			...(prTarget === undefined ? {} : { target: prTarget }),
 		}),
 	);
 };
@@ -94,7 +165,7 @@ export function createReconciliationCoordinator({
 	reconcileInstallations,
 	recordRun,
 	debounceMs = 250,
-	onError = (_error, context) => logReconciliationError(context),
+	onError = (error, context) => logReconciliationError({ ...context, ...failureDetails(error) }),
 }: CoordinatorDependencies) {
 	const installations = new Map<string, InstallationWork>();
 	let broadRequested = false;
@@ -162,8 +233,18 @@ export function createReconciliationCoordinator({
 				onError(
 					error,
 					targetResolved
-						? { installationId, operation: "reconciliation_audit", category: "bookkeeping" }
-						: { installationId, operation: "pull_request", category: "targeted" },
+						? {
+								installationId,
+								target: `repositories/${queued.target.repositoryId}/pulls/${queued.target.number}`,
+								operation: "reconciliation_audit",
+								category: "bookkeeping",
+							}
+						: {
+								installationId,
+								target: `repositories/${queued.target.repositoryId}/pulls/${queued.target.number}`,
+								operation: "pull_request",
+								category: "targeted",
+							},
 				);
 				queued.waiters.forEach((waiter) => {
 					waiter("failed");

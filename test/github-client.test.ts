@@ -174,11 +174,23 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		input.reportFailure = (failure) => {
 			persistenceFailures.push(failure);
 		};
-		const write = vi.spyOn(db.users, "replaceOne").mockRejectedValueOnce(new Error("Quark persistence secret"));
+		const write = vi
+			.spyOn(db.users, "replaceOne")
+			.mockRejectedValueOnce(
+				Object.freeze(
+					Object.assign(new Error("Quark persistence secret"), { name: "MongoServerError", code: 112, status: 503 }),
+				),
+			);
 		try {
 			expect((await reconcilePullRequest(db, input)).kind).toBe("error");
 			expect(persistenceFailures).toEqual([
-				expect.objectContaining({ operation: "targeted pull request reconciliation persistence" }),
+				expect.objectContaining({
+					operation: "targeted pull request reconciliation persistence",
+					failureClass: "database",
+					code: 112,
+					status: 503,
+					target: "repositories/2/pulls/7",
+				}),
 			]);
 			expect(JSON.stringify(persistenceFailures)).not.toContain("Quark persistence secret");
 		} finally {
@@ -194,6 +206,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		expect((await reconcilePullRequest(db, input)).kind).toBe("error");
 		expect(failures).toEqual([
 			{
+				failureClass: "unknown",
 				operation: "targeted pull request reconciliation active OpenSpec task",
 				status: 500,
 				target: "repositories/2/pulls/7",
@@ -213,6 +226,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		expect((await reconcilePullRequest(db, input)).kind).toBe("error");
 		expect(failures).toEqual([
 			{
+				failureClass: "unknown",
 				operation: "targeted pull request reconciliation GraphQL lifecycle",
 				status: 200,
 				target: "repositories/2/pulls/7",
@@ -243,6 +257,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		expect((await reconcilePullRequest(db, input)).kind).toBe("error");
 		expect(failures).toEqual([
 			{
+				failureClass: "unknown",
 				operation: "targeted pull request reconciliation GraphQL lifecycle",
 				status: 200,
 				target: "repositories/2/pulls/7",

@@ -48,7 +48,13 @@ import {
 	mergeIntentFor,
 	mergeIntentHash,
 } from "#/merge";
-import { countedFetch, createReconciliationCoordinator, logReconciliationError } from "#/reconciliation-coordinator";
+import {
+	countedFetch,
+	createReconciliationCoordinator,
+	errorField,
+	failureDetails,
+	logReconciliationError,
+} from "#/reconciliation-coordinator";
 import { createWeekdayReconciliationScheduler } from "#/reconciliation-scheduler";
 import { frontendAssetLoader } from "#/web/frontend-assets";
 
@@ -973,17 +979,21 @@ type ReconciliationOptions = {
 };
 
 const reconciliationStage = Symbol("reconciliationStage");
+const reconciliationDiagnostic = Symbol("reconciliationDiagnostic");
 const withReconciliationStage = async <T>(operation: string, work: () => Promise<T>) => {
 	try {
 		return await work();
 	} catch (error) {
-		throw Object.assign(new Error("Reconciliation operation failed"), { [reconciliationStage]: operation });
+		throw Object.assign(new Error("Reconciliation operation failed"), {
+			[reconciliationStage]: operation,
+			[reconciliationDiagnostic]: failureDetails(error),
+		});
 	}
 };
-const stageFromError = (error: unknown) =>
-	error && typeof error === "object" && typeof (error as Record<symbol, unknown>)[reconciliationStage] === "string"
-		? String((error as Record<symbol, unknown>)[reconciliationStage])
-		: undefined;
+const stageFromError = (error: unknown) => {
+	const stage = errorField(error, reconciliationStage);
+	return typeof stage === "string" ? stage : undefined;
+};
 
 export const auditReconciliationRun = async (db: Db, run: ReconciliationRun) => {
 	try {
@@ -1037,6 +1047,9 @@ const reconcileTargetedPullRequest = async (options: ReconciliationOptions, targ
 								operation: failure.operation,
 								category: "targeted",
 								status: failure.status,
+								failureClass: failure.failureClass,
+								code: failure.code,
+								target: failure.target,
 							});
 						},
 					}),
@@ -1045,6 +1058,7 @@ const reconcileTargetedPullRequest = async (options: ReconciliationOptions, targ
 	if (result.kind === "error" && !reportedFailure)
 		logReconciliationError({
 			installationId: target.installationId,
+			target: `repositories/${target.repositoryId}/pulls/${target.number}`,
 			operation: result.operation ?? "pull_request",
 			category: "targeted",
 			status: result.status,
@@ -1070,6 +1084,8 @@ const createTargetedCoordinator = (options: ReconciliationOptions) =>
 		onError: (error, context) =>
 			logReconciliationError({
 				...context,
+				...((errorField(error, reconciliationDiagnostic) as ReturnType<typeof failureDetails> | undefined) ??
+					failureDetails(error)),
 				operation: stageFromError(error) ?? context.operation,
 			}),
 		recordRun: async (run) => {
@@ -1228,7 +1244,7 @@ const createScheduleDrain = (options: {
 				}
 			})
 			.catch((error) =>
-				console.error("webhook drain failed", error instanceof Error ? error.message : "unknown error"),
+				logReconciliationError({ operation: "webhook_drain", category: "bookkeeping", ...failureDetails(error) }),
 			);
 		return draining;
 	};

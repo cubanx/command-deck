@@ -213,8 +213,11 @@ export async function mutateUser(db: Db, userId: string, mutate: (user: UserAggr
 		next.revision++;
 		next.updatedAt = new Date();
 		if (BSON.serialize(next).byteLength > MAX_USER_BSON_BYTES)
-			throw new Error(
-				`user ${userId} installations ${next.installations.map((item) => item.installationId).join(",") || "none"} exceeds ${MAX_USER_BSON_BYTES} byte limit`,
+			throw Object.assign(
+				new Error(
+					`user ${userId} installations ${next.installations.map((item) => item.installationId).join(",") || "none"} exceeds ${MAX_USER_BSON_BYTES} byte limit`,
+				),
+				{ name: "UserAggregateSizeError" },
 			); // ponytail: whole-document CAS is enough today; use targeted positional updates if measured write amplification matters.
 		if ((await db.users.replaceOne({ _id: userId, revision: existing.revision }, next)).modifiedCount === 1)
 			return next;
