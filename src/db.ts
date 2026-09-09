@@ -204,7 +204,31 @@ export async function closeDatabase(db: Db) {
 	await db.client.close();
 	cached = undefined;
 }
+const userWrites = new WeakMap<Db, Map<string, Promise<void>>>();
+
 export async function mutateUser(db: Db, userId: string, mutate: (user: UserAggregate) => void) {
+	// ponytail: process-local coordination; CAS still protects against other processes and direct writers.
+	let pending = userWrites.get(db);
+	if (!pending) {
+		pending = new Map();
+		userWrites.set(db, pending);
+	}
+	const previous = pending.get(userId);
+	let release!: () => void;
+	const current = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	pending.set(userId, current);
+	await previous;
+	try {
+		return await mutateUserNow(db, userId, mutate);
+	} finally {
+		if (pending.get(userId) === current) pending.delete(userId);
+		release();
+	}
+}
+
+async function mutateUserNow(db: Db, userId: string, mutate: (user: UserAggregate) => void) {
 	for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
 		const existing = await db.users.findOne({ _id: userId });
 		if (!existing) throw new Error("user aggregate not found");

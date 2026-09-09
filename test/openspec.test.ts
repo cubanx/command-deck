@@ -3,6 +3,44 @@ import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
 import { changedTaskPaths, openSpecGate, parseOpenSpecDeclaration, parseTasks, projectOpenSpec } from "#/openspec";
 import { withDatabase } from "./mongo-support";
 
+test.each([false, true])("OpenSpec retry reports only its committed transition (deletion=%s)", (deleted) =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await bindInstallation(db, "sisko", "1", "cubanx");
+		const user = await db.users.findOne({ _id: "sisko" });
+		user!.installations[0]!.repositories.push({
+			repositoryId: "r",
+			full_name: "ds9/ops",
+			pullRequests: [],
+			openSpecs: [],
+			deployments: [],
+		});
+		await db.users.replaceOne({ _id: "sisko" }, user!);
+		const input = {
+			installationId: "1",
+			accountLogin: "cubanx",
+			repositoryId: "r",
+			path: "openspec/changes/defiant/tasks.md",
+			content: "- [x] Launch",
+			sha: "a".repeat(40),
+		};
+		if (deleted) await projectOpenSpec(db, input);
+		const replace = db.users.replaceOne.bind(db.users);
+		let attempts = 0;
+		db.users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
+			// Another writer commits the same transition before this writer's first CAS.
+			if (++attempts === 1) await replace(...args);
+			return replace(...args);
+		};
+		try {
+			expect(await projectOpenSpec(db, { ...input, deleted })).toEqual({ changed: false, completed: false });
+			expect(attempts).toBe(2);
+		} finally {
+			db.users.replaceOne = replace;
+		}
+	}),
+);
+
 test("projects installation-scoped OpenSpec progress", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");

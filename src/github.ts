@@ -8,7 +8,7 @@ import {
 } from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
-import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks, projectOpenSpec } from "#/openspec";
+import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks, projectRepositoryTasks } from "#/openspec";
 import {
 	errorField,
 	failureDetails,
@@ -128,6 +128,10 @@ const providerAggregateState = (items: unknown[], stateFor: (item: unknown) => u
 	return pending ? "pending" : unknown ? "unknown" : "success";
 };
 const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
+const validBranch = (value: unknown) =>
+	typeof value === "string" && value.length <= 255 && /^[A-Za-z0-9._/-]+$/.test(value) && !value.includes("..")
+		? value
+		: undefined;
 const base64url = (value: string | Buffer) => Buffer.from(value).toString("base64url");
 const diagnosticString = (value: unknown) => (typeof value === "string" ? value.slice(0, 200) : undefined);
 const graphqlErrorDiagnostic = (errors: unknown) => {
@@ -470,6 +474,12 @@ type PullRequestOpenSpecs = {
 	tasks: OpenSpecTask[];
 	declaration: "absent" | "empty" | "declared" | "invalid";
 	detected: string[];
+	retention?: {
+		obligations: string[];
+		unresolved: boolean;
+		sourceCommit?: string;
+		sourceRef?: string;
+	};
 };
 const openSpecProjection = (
 	evidence: PullRequestOpenSpecs | undefined,
@@ -502,6 +512,151 @@ const openSpecProjection = (
 		open_spec: open_specs?.[0] ?? null,
 		open_spec_declaration: evidence?.declaration ?? "absent",
 		detected_open_specs: evidence?.detected ?? [],
+		...(evidence?.retention
+			? {
+					post_merge_obligations: evidence.retention.obligations,
+					post_merge_unresolved: evidence.retention.unresolved,
+					post_merge_source_commit: evidence.retention.sourceCommit,
+					post_merge_source_ref: evidence.retention.sourceRef,
+				}
+			: {}),
+	};
+};
+
+const mergedTaskPaths = (paths: unknown[], name: string) => {
+	const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return paths
+		.map(String)
+		.filter((path) => new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escaped}/tasks\\.md$`).test(path));
+};
+
+const readDefaultBranch = async (request: FetchLike, repository: string) => {
+	const details = await githubFetch(request, `https://api.github.com/repos/${repository}`);
+	if (!details.ok) throw Object.assign(new Error("GitHub default branch read failed"), { status: details.status });
+	const body = (await details.json()) as { default_branch?: unknown };
+	const ref = validBranch(body.default_branch);
+	if (!ref) throw new Error("GitHub default branch was unavailable");
+	const commit = await githubFetch(
+		request,
+		`https://api.github.com/repos/${repository}/commits/${encodeURIComponent(ref)}`,
+	);
+	if (!commit.ok) throw Object.assign(new Error("GitHub default branch commit read failed"), { status: commit.status });
+	const commitBody = (await commit.json()) as { sha?: unknown };
+	if (typeof commitBody.sha !== "string" || !/^[0-9a-f]{40}$/i.test(commitBody.sha))
+		throw new Error("GitHub default branch commit was unavailable");
+	return { ref, sha: commitBody.sha };
+};
+
+const readDefaultTree = async (request: FetchLike, repository: string, sha: string) => {
+	const response = await githubFetch(
+		request,
+		`https://api.github.com/repos/${repository}/git/trees/${encodeURIComponent(sha)}?recursive=1`,
+	);
+	if (!response.ok)
+		throw Object.assign(new Error("GitHub default branch tree read failed"), { status: response.status });
+	const body = (await response.json()) as { truncated?: unknown; tree?: Array<{ path?: unknown; type?: unknown }> };
+	if (body.truncated !== false || !Array.isArray(body.tree))
+		throw new Error("GitHub default branch tree was incomplete");
+	return body.tree.filter((item) => item.type === "blob").map((item) => String(item.path ?? ""));
+};
+
+const fetchMergedOpenSpecTasks = async (input: {
+	installationId: string;
+	repositoryId: string;
+	request: FetchLike;
+	taskFetcher: TaskFetcher;
+	repository: string;
+	ref: string;
+	sha: string;
+	number: number;
+	body: unknown;
+	priorObligations: string[];
+	priorUnresolved?: boolean;
+}): Promise<PullRequestOpenSpecs> => {
+	const declaration = parseOpenSpecDeclaration(input.body);
+	const declared = declaration.state === "declared" ? declaration.slugs : [];
+	const obligations = [...new Set([...input.priorObligations, ...declared])].sort();
+	if (!obligations.length)
+		return {
+			number: input.number,
+			tasks: [],
+			declaration: declaration.state,
+			detected: [],
+			...(declaration.state === "invalid" || input.priorUnresolved
+				? {
+						retention: {
+							obligations: [],
+							unresolved: true,
+							sourceCommit: input.sha,
+							sourceRef: input.ref,
+						},
+					}
+				: {}),
+		};
+	let tree: string[] | undefined;
+	const tasks: OpenSpecTask[] = [];
+	let unresolved = declaration.state === "invalid";
+	let retentionNeeded =
+		input.priorObligations.length > 0 || input.priorUnresolved === true || declaration.state === "invalid";
+	for (const changeName of obligations) {
+		let path = `openspec/changes/${changeName}/tasks.md`;
+		let content: string | null | { finalTreeAbsent: true };
+		try {
+			content = await input.taskFetcher({
+				installationId: input.installationId,
+				repositoryId: input.repositoryId,
+				path,
+				sha: input.sha,
+			});
+		} catch {
+			unresolved = true;
+			continue;
+		}
+		if (typeof content !== "string") {
+			tree ??= await readDefaultTree(input.request, input.repository, input.sha);
+			const archives = mergedTaskPaths(tree, changeName);
+			if (archives.length !== 1) {
+				unresolved = true;
+				continue;
+			}
+			path = archives[0]!;
+			try {
+				content = await input.taskFetcher({
+					installationId: input.installationId,
+					repositoryId: input.repositoryId,
+					path,
+					sha: input.sha,
+				});
+			} catch {
+				unresolved = true;
+				continue;
+			}
+		}
+		if (typeof content !== "string") {
+			unresolved = true;
+			continue;
+		}
+		if (parseTasks(content).total === 0) {
+			unresolved = true;
+		}
+		if (parseTasks(content).postMergeIncomplete) retentionNeeded = true;
+		tasks.push({ repositoryId: input.repositoryId, path, changeName, sha: input.sha, content });
+	}
+	return {
+		number: input.number,
+		tasks,
+		declaration: declaration.state,
+		detected: [],
+		...(retentionNeeded || unresolved
+			? {
+					retention: {
+						obligations,
+						unresolved,
+						sourceCommit: input.sha,
+						sourceRef: input.ref,
+					},
+				}
+			: {}),
 	};
 };
 
@@ -716,7 +871,7 @@ async function refreshRepositoryPolicy(
 const pullRequestLifecycleQuery = `query PullRequestLifecycle($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      state merged isDraft createdAt updatedAt title body url headRefName headRefOid mergeable reviewDecision
+      state merged isDraft createdAt updatedAt title body url headRefName headRefOid baseRefName mergeCommit { oid } mergedAt author { login } mergeable reviewDecision
       labels(first: 100) { nodes { name } pageInfo { hasNextPage endCursor } }
       reviewRequests(first: 100) { totalCount }
       reviews(first: 100) { nodes { state } pageInfo { hasNextPage endCursor } }
@@ -794,6 +949,7 @@ type ReconcilePullRequestInput = {
 type PullRequestRead = {
 	pullRequest: Record<string, unknown>;
 	headSha: string;
+	merged: boolean;
 	labels: unknown[];
 	reviews: unknown[];
 	threads: unknown[];
@@ -804,7 +960,10 @@ type PullRequestRead = {
 
 const loadReconciliationTarget = async (db: Db, input: ReconcilePullRequestInput) => {
 	const users = await db.users
-		.find({ "installations.installationId": input.installationId }, { projection: { _id: 1, installations: 1 } })
+		.find(
+			{ "installations.installationId": input.installationId },
+			{ projection: { _id: 1, github: 1, installations: 1 } },
+		)
 		.toArray();
 	const installation = users
 		.flatMap((user) => user.installations)
@@ -824,22 +983,137 @@ const removeClosedPullRequest = async (
 	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
 	input: ReconcilePullRequestInput,
 ): Promise<ReadResult> => {
-	let changed = false;
-	await Promise.all(
-		users.map((user) =>
-			mutateUser(db, user._id, (aggregate) => {
+	const results = await Promise.all(
+		users.map(async (user) => {
+			let changed = false;
+			await mutateUser(db, user._id, (aggregate) => {
+				changed = false;
 				const target = aggregate.installations
 					.find((item) => item.installationId === input.installationId)
 					?.repositories.find((item) => item.repositoryId === input.repositoryId);
+				const previous = target?.pullRequests.find((item) => Number(item.number) === input.number);
+				const observed = user.installations
+					.find((item) => item.installationId === input.installationId)
+					?.repositories.find((item) => item.repositoryId === input.repositoryId)
+					?.pullRequests.find((item) => Number(item.number) === input.number);
+				if (previous?.merged === true || JSON.stringify(previous) !== JSON.stringify(observed)) return;
 				if (target) {
 					const before = target.pullRequests.length;
 					target.pullRequests = target.pullRequests.filter((item) => Number(item.number) !== input.number);
 					changed ||= target.pullRequests.length !== before;
 				}
-			}),
-		),
+			});
+			return changed;
+		}),
 	);
+	const changed = results.some(Boolean);
 	return { kind: changed ? "changed" : "unchanged", body: null };
+};
+
+const readMergedOpenSpecs = async (
+	input: ReconcilePullRequestInput,
+	request: FetchLike,
+	repository: Repository,
+	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
+	taskFetcher: TaskFetcher,
+	pullRequest: Record<string, unknown>,
+): Promise<PullRequestOpenSpecs> => {
+	const priorPullRequests = users.flatMap((user) =>
+		user.installations
+			.filter((item) => item.installationId === input.installationId && approvedInstallationAccount(item.accountLogin))
+			.flatMap((item) => item.repositories)
+			.filter((item) => item.repositoryId === input.repositoryId)
+			.flatMap((item) => item.pullRequests.map((pullRequest) => ({ pullRequest, login: user.github.login }))),
+	);
+	const providerAuthor = optionalString((pullRequest.author as { login?: unknown } | undefined)?.login);
+	const matchingPriorPullRequests = priorPullRequests
+		.filter(({ login }) => sameLogin(login, providerAuthor))
+		.map(({ pullRequest }) => pullRequest);
+	const priorObligations = [
+		...new Set(
+			matchingPriorPullRequests
+				.filter((item) => Number(item.number) === input.number)
+				.flatMap((item) =>
+					Array.isArray(item.post_merge_obligations)
+						? item.post_merge_obligations.filter((value): value is string => typeof value === "string")
+						: [],
+				),
+		),
+	];
+	try {
+		const branchEvidence = await readDefaultBranch(request, repository.full_name);
+		return await fetchMergedOpenSpecTasks({
+			installationId: input.installationId,
+			repositoryId: input.repositoryId,
+			request,
+			taskFetcher,
+			repository: repository.full_name,
+			ref: branchEvidence.ref,
+			sha: branchEvidence.sha,
+			number: input.number,
+			body: pullRequest.body,
+			priorObligations,
+			priorUnresolved: matchingPriorPullRequests.some(
+				(item) => Number(item.number) === input.number && item.post_merge_unresolved === true,
+			),
+		});
+	} catch {
+		const declaration = parseOpenSpecDeclaration(pullRequest.body);
+		const obligations = [...new Set([...priorObligations, ...declaration.slugs])].sort();
+		// A failed branch/tree read leaves declared work unresolved, without claiming a source commit.
+		return {
+			number: input.number,
+			tasks: [],
+			declaration: declaration.state,
+			detected: [],
+			...(obligations.length ||
+			declaration.state === "invalid" ||
+			matchingPriorPullRequests.some(
+				(item) => Number(item.number) === input.number && item.post_merge_unresolved === true,
+			)
+				? { retention: { obligations, unresolved: true } }
+				: {}),
+		} satisfies PullRequestOpenSpecs;
+	}
+};
+
+const validatePullRequestRead = (
+	input: Omit<PullRequestRead, "openSpecEvidence"> & {
+		tasks: PullRequestOpenSpecs | Awaited<ReturnType<typeof fetchOpenSpecTasksForPullRequests>>;
+	},
+): PullRequestRead => {
+	const { pullRequest, headSha, merged, labels, reviews, threads, contexts, actions, tasks } = input;
+	if (
+		(merged && "kind" in tasks) ||
+		(!merged && (!Array.isArray(tasks) || tasks.length !== 1 || ("kind" in tasks && tasks.kind === "error")))
+	)
+		throw Object.assign(new Error("GitHub OpenSpec read was incomplete"), {
+			status: !Array.isArray(tasks) && "kind" in tasks && tasks.kind === "error" ? tasks.status : undefined,
+		});
+	if (
+		!labels.every((item: any) => item && typeof item.name === "string") ||
+		!reviews.every((item: any) => item && typeof item.state === "string") ||
+		!threads.every((item: any) => item && typeof item.isResolved === "boolean") ||
+		!contexts.every((item: any) => item && (typeof item.name === "string" || typeof item.context === "string"))
+	)
+		throw new Error("GitHub pull request response was incomplete");
+	const openSpecEvidence: PullRequestOpenSpecs | undefined = merged
+		? (tasks as PullRequestOpenSpecs)
+		: Array.isArray(tasks)
+			? tasks[0]
+			: undefined;
+	if (!openSpecEvidence || "kind" in openSpecEvidence) throw new Error("GitHub OpenSpec read was incomplete");
+	return {
+		pullRequest,
+		headSha,
+		merged,
+		labels,
+		reviews,
+		threads,
+		contexts,
+		actions,
+		openSpecEvidence,
+	};
 };
 
 const readOpenPullRequest = async (
@@ -849,6 +1123,7 @@ const readOpenPullRequest = async (
 	owner: string,
 	name: string,
 	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
+	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
 	stage: { value: string },
 ): Promise<PullRequestRead | undefined> => {
 	stage.value = "GraphQL lifecycle";
@@ -860,7 +1135,8 @@ const readOpenPullRequest = async (
 	);
 	const pullRequest = (data.repository as { pullRequest?: Record<string, unknown> } | undefined)?.pullRequest;
 	if (!pullRequest || typeof pullRequest !== "object") throw new Error("GitHub pull request response was incomplete");
-	if (["CLOSED", "MERGED"].includes(String(pullRequest.state)) || pullRequest.merged === true) return undefined;
+	const merged = pullRequest.merged === true || String(pullRequest.state) === "MERGED";
+	if (String(pullRequest.state) === "CLOSED" && !merged) return undefined;
 	if (!pullRequest.reviewRequests || typeof (pullRequest.reviewRequests as any).totalCount !== "number")
 		throw new Error("GitHub pull request response was incomplete");
 	const headSha = typeof pullRequest.headRefOid === "string" ? pullRequest.headRefOid : undefined;
@@ -905,7 +1181,8 @@ const readOpenPullRequest = async (
 	const taskFetcher =
 		input.fetchTasks ??
 		(async (task: Parameters<TaskFetcher>[0]) => {
-			const response = await request(
+			const response = await githubFetch(
+				request,
 				"https://api.github.com/repositories/" + task.repositoryId + "/contents/" + task.path + "?ref=" + task.sha,
 				{ headers: { accept: "application/vnd.github.raw" } },
 			);
@@ -916,55 +1193,41 @@ const readOpenPullRequest = async (
 			});
 		});
 	stage.value = "changed files";
-	const tasks = await fetchOpenSpecTasksForPullRequests(
-		db,
-		input.installationId,
-		input.repositoryId,
-		[
-			{
-				number: input.number,
-				head: { sha: headSha },
-				updated_at: pullRequest.updatedAt,
-				body: pullRequest.body,
-			},
-		],
-		request,
-		taskFetcher,
-		repository.full_name,
-		stage,
-	);
-	if (!Array.isArray(tasks) || tasks.length !== 1)
-		throw Object.assign(new Error("GitHub OpenSpec read was incomplete"), {
-			status: Array.isArray(tasks) || tasks.kind !== "error" ? undefined : tasks.status,
-		});
-	if (
-		!labels.every((item: any) => item && typeof item.name === "string") ||
-		!reviews.every((item: any) => item && typeof item.state === "string") ||
-		!threads.every((item: any) => item && typeof item.isResolved === "boolean") ||
-		!contexts.every((item: any) => item && (typeof item.name === "string" || typeof item.context === "string"))
-	)
-		throw new Error("GitHub pull request response was incomplete");
-	return {
+	const tasks = merged
+		? await readMergedOpenSpecs(input, request, repository, users, taskFetcher, pullRequest)
+		: await fetchOpenSpecTasksForPullRequests(
+				db,
+				input.installationId,
+				input.repositoryId,
+				[
+					{
+						number: input.number,
+						head: { sha: headSha },
+						updated_at: pullRequest.updatedAt,
+						body: pullRequest.body,
+					},
+				],
+				request,
+				taskFetcher,
+				repository.full_name,
+				stage,
+			);
+	return validatePullRequestRead({
 		pullRequest,
 		headSha,
+		merged,
 		labels,
 		reviews,
 		threads,
 		contexts,
 		actions: actions.body,
-		openSpecEvidence: tasks[0]!,
-	};
+		tasks,
+	});
 };
 
-const applyOpenPullRequest = async (
-	db: Db,
-	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
-	installation: Awaited<ReturnType<typeof loadReconciliationTarget>>["installation"],
-	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
-	input: ReconcilePullRequestInput,
-	read: PullRequestRead,
-): Promise<ReadResult> => {
-	const { pullRequest, headSha, labels, reviews, threads, contexts, actions, openSpecEvidence } = read;
+const pullRequestProjection = (repository: Repository, number: number, read: PullRequestRead) => {
+	const { pullRequest, headSha, labels, reviews, threads, contexts, actions, openSpecEvidence, merged } = read;
+	const priorPullRequest = repository.pullRequests.find((item) => Number(item.number) === number);
 	const reviewNodes = reviews as Array<{ state: string }>;
 	const threadNodes = threads as Array<{ isResolved: boolean }>;
 	const policy = repository.policy as
@@ -991,15 +1254,30 @@ const applyOpenPullRequest = async (
 					: "missing",
 		};
 	});
-	const next = {
-		number: input.number,
+	return {
+		number: number,
 		title: optionalString(pullRequest.title),
 		url: optionalString(pullRequest.url),
-		state: "open",
+		state: merged ? "closed" : "open",
+		author_login:
+			optionalString((pullRequest.author as { login?: unknown } | undefined)?.login) ??
+			optionalString(priorPullRequest?.author_login),
+		...(merged ? { merged: true, retention_candidate: true } : {}),
+		...(merged
+			? {
+					merge_sha:
+						optionalString((pullRequest.mergeCommit as { oid?: unknown } | undefined)?.oid) ??
+						optionalString(priorPullRequest?.merge_sha),
+					merged_at: optionalString(pullRequest.mergedAt) ?? optionalString(priorPullRequest?.merged_at),
+					base_ref: optionalString(pullRequest.baseRefName) ?? optionalString(priorPullRequest?.base_ref),
+				}
+			: {}),
 		draft: pullRequest.isDraft ? 1 : 0,
 		opened_at: optionalString(pullRequest.createdAt),
 		updated_at: optionalString(pullRequest.updatedAt),
 		head_ref: optionalString(pullRequest.headRefName),
+		base_ref:
+			optionalString(pullRequest.baseRefName) ?? (merged ? optionalString(priorPullRequest?.base_ref) : undefined),
 		head_sha: headSha,
 		mergeable:
 			pullRequest.mergeable === "MERGEABLE"
@@ -1026,24 +1304,71 @@ const applyOpenPullRequest = async (
 			const value = context as Record<string, unknown>;
 			return value.conclusion ?? value.state ?? value.status;
 		}),
-		...openSpecProjection(openSpecEvidence, pullRequest.headRefName, repository.full_name),
+		...openSpecProjection(
+			openSpecEvidence,
+			openSpecEvidence.retention?.sourceRef ?? pullRequest.headRefName,
+			repository.full_name,
+		),
 	};
-	let changed = false;
-	await Promise.all(
-		users.map((user) =>
-			mutateUser(db, user._id, (aggregate) => {
+};
+
+const canExcludeMergedPullRequest = (evidence: PullRequestOpenSpecs) => {
+	const retention = evidence.retention;
+	return (
+		!retention ||
+		(!retention.unresolved &&
+			(retention.obligations.length === 0 ||
+				(retention.obligations.length === evidence.tasks.length &&
+					evidence.tasks.every((task) => {
+						const progress = parseTasks(task.content);
+						return progress.total > 0 && progress.completed === progress.total;
+					}))))
+	);
+};
+
+const applyOpenPullRequest = async (
+	db: Db,
+	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
+	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
+	input: ReconcilePullRequestInput,
+	read: PullRequestRead,
+): Promise<ReadResult> => {
+	const { openSpecEvidence, merged } = read;
+	const next = pullRequestProjection(repository, input.number, read);
+	const results = await Promise.all(
+		users.map(async (user) => {
+			let changed = false;
+			await mutateUser(db, user._id, (aggregate) => {
+				changed = false;
 				const target = aggregate.installations
 					.find((item) => item.installationId === input.installationId)
 					?.repositories.find((item) => item.repositoryId === input.repositoryId);
 				const previous = target?.pullRequests.find((item) => Number(item.number) === input.number);
+				const observed = user.installations
+					.find((item) => item.installationId === input.installationId)
+					?.repositories.find((item) => item.repositoryId === input.repositoryId)
+					?.pullRequests.find((item) => Number(item.number) === input.number);
 				if (
 					!target ||
+					((!previous || merged) && !sameLogin(next.author_login, aggregate.github.login)) ||
+					(!merged && previous?.merged === true) ||
+					JSON.stringify(previous) !== JSON.stringify(observed) ||
 					(previous?.updated_at && String(previous.updated_at) > String(next.updated_at)) ||
 					(previous?.head_sha &&
 						previous.head_sha !== next.head_sha &&
 						String(previous.updated_at ?? "") >= String(next.updated_at ?? ""))
 				)
 					return;
+				for (const task of openSpecEvidence.tasks)
+					changed =
+						projectRepositoryTasks(target, task.changeName ?? task.path.split("/")[2]!, task).changed || changed;
+				if (merged && canExcludeMergedPullRequest(openSpecEvidence)) {
+					if (previous) {
+						target!.pullRequests = target!.pullRequests.filter((item) => Number(item.number) !== input.number);
+						changed = true;
+					}
+					return;
+				}
 				if (
 					previous?.lifecycle_stale === false &&
 					Object.entries(next).every(([key, value]) => JSON.stringify(previous?.[key]) === JSON.stringify(value))
@@ -1052,22 +1377,16 @@ const applyOpenPullRequest = async (
 				changed = true;
 				if (previous) Object.assign(previous, next, { lifecycle_stale: false });
 				else target.pullRequests.push({ ...next, lifecycle_stale: false });
-			}),
-		),
+			});
+			return changed;
+		}),
 	);
-	for (const task of openSpecEvidence.tasks) {
-		const openSpec = await projectOpenSpec(db, {
-			installationId: input.installationId,
-			accountLogin: installation?.accountLogin ?? "",
-			...task,
-		});
-		changed ||= openSpec.changed;
-	}
+	const changed = results.some(Boolean);
 	return { kind: changed ? "changed" : "unchanged", body: next };
 };
 
 export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestInput): Promise<ReadResult> {
-	const { users, installation, repository } = await loadReconciliationTarget(db, input);
+	const { users, repository } = await loadReconciliationTarget(db, input);
 	if (!repository)
 		return {
 			kind: "error",
@@ -1095,10 +1414,10 @@ export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestIn
 		});
 	const stage = { value: "GraphQL lifecycle" };
 	try {
-		const read = await readOpenPullRequest(db, input, request, owner, name, repository, stage);
+		const read = await readOpenPullRequest(db, input, request, owner, name, repository, users, stage);
 		stage.value = "persistence";
 		return read
-			? await applyOpenPullRequest(db, users, installation, repository, input, read)
+			? await applyOpenPullRequest(db, users, repository, input, read)
 			: await removeClosedPullRequest(db, users, input);
 	} catch (error) {
 		const details = failureDetails(error);
@@ -1130,6 +1449,68 @@ export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestIn
 		};
 	}
 }
+const mergeRepositorySnapshot = (
+	previous: Repository | undefined,
+	observed: Repository | undefined,
+	snapshot: Repository,
+	openSpecTasks: OpenSpecTask[],
+	login: string | undefined,
+): Repository[] => {
+	// ponytail: retry changed repositories on the next refresh; use per-PR guards if busy repositories starve.
+	if (JSON.stringify(previous) !== JSON.stringify(observed)) return previous ? [previous] : [];
+	const retained = previous?.pullRequests.filter((pr) => pr.retention_candidate === true) ?? [];
+	const next: Repository = {
+		...snapshot,
+		pullRequests: snapshot.pullRequests
+			.filter(
+				(pr) => pr.retention_candidate !== true && !retained.some((item) => Number(item.number) === Number(pr.number)),
+			)
+			.filter((pr) => sameLogin(pr.author_login, login))
+			.map((pr) =>
+				mergePullRequestSnapshot(
+					previous?.pullRequests.find((item) => item.number === pr.number),
+					pr,
+				),
+			)
+			.concat(retained),
+		openSpecs: [],
+		deployments: snapshot.deployments.slice(0, 20),
+	};
+	for (const task of openSpecTasks.filter((item) => item.repositoryId === snapshot.repositoryId))
+		projectRepositoryTasks(next, task.changeName ?? task.path.split("/")[2]!, task);
+	return [next];
+};
+
+const retainedReconciliationTargets = (
+	bound: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
+	installationId: string,
+	repositoryId: string,
+	pullRequests: unknown[],
+) => {
+	const targets: Array<{ installationId: string; repositoryId: string; number: number }> = [];
+	const reconciliationPullRequests = [
+		...new Map(
+			bound
+				.flatMap((user) => user.installations)
+				.filter((item) => item.installationId === installationId)
+				.flatMap((item) => item.repositories)
+				.filter((item) => item.repositoryId === repositoryId)
+				.flatMap((item) => item.pullRequests)
+				.filter((pr) => pr.retention_candidate === true || pr.state === "open")
+				.map((pr) => [Number(pr.number), pr] as const),
+		).values(),
+	];
+	for (const pr of reconciliationPullRequests)
+		if (
+			Number.isSafeInteger(Number(pr.number)) &&
+			Number(pr.number) > 0 &&
+			(pr.retention_candidate === true ||
+				!pullRequests.some((item) => Number((item as { number?: unknown }).number) === Number(pr.number)))
+		)
+			targets.push({ installationId, repositoryId: repositoryId, number: Number(pr.number) });
+	return { reconciliationPullRequests, targets };
+};
+
 export async function bootstrapInstallation(
 	db: Db,
 	installationId: string,
@@ -1231,6 +1612,7 @@ export async function bootstrapInstallation(
 	const repositories = repos.body as Array<{ id: number; full_name: string }>;
 	const snapshots: Repository[] = [];
 	const openSpecTasks: OpenSpecTask[] = [];
+	const retainedTargets: Array<{ installationId: string; repositoryId: string; number: number }> = [];
 	for (const repo of repositories) {
 		const existingRepository = bound
 			.flatMap((user) => user.installations)
@@ -1264,6 +1646,13 @@ export async function bootstrapInstallation(
 			head_sha: pr.head?.sha,
 		}));
 		const recentMergedPullRequests = retainRecentMergedPullRequests(existingRepository?.recentMergedPullRequests ?? []);
+		const { reconciliationPullRequests, targets } = retainedReconciliationTargets(
+			bound,
+			installationId,
+			String(repo.id),
+			pullRequests,
+		);
+		retainedTargets.push(...targets);
 		const tasks = await fetchOpenSpecTasksForPullRequests(
 			db,
 			installationId,
@@ -1287,36 +1676,41 @@ export async function bootstrapInstallation(
 						},
 					}
 				: {}),
-			pullRequests: Array.isArray(prs.body)
-				? prs.body.map((item): PullRequest => {
-						const pr = item as {
-							number?: unknown;
-							title?: unknown;
-							html_url?: unknown;
-							user?: { login?: unknown };
-							state?: unknown;
-							draft?: unknown;
-							head?: { ref?: unknown; sha?: unknown };
-							created_at?: unknown;
-							updated_at?: unknown;
-							body?: unknown;
-						};
-						const evidence = evidenceByNumber.get(Number(pr.number));
-						return {
-							number: pr.number,
-							title: pr.title,
-							url: pr.html_url,
-							author_login: pr.user?.login,
-							state: pr.state,
-							draft: pr.draft ? 1 : 0,
-							opened_at: optionalString(pr.created_at),
-							head_ref: pr.head?.ref,
-							head_sha: pr.head?.sha,
-							updated_at: pr.updated_at,
-							...openSpecProjection(evidence, pr.head?.ref, repo.full_name),
-						};
-					})
-				: [],
+			pullRequests: [
+				...(Array.isArray(prs.body)
+					? prs.body.map((item): PullRequest => {
+							const pr = item as {
+								number?: unknown;
+								title?: unknown;
+								html_url?: unknown;
+								user?: { login?: unknown };
+								state?: unknown;
+								draft?: unknown;
+								head?: { ref?: unknown; sha?: unknown };
+								created_at?: unknown;
+								updated_at?: unknown;
+								body?: unknown;
+							};
+							const evidence = evidenceByNumber.get(Number(pr.number));
+							return {
+								number: pr.number,
+								title: pr.title,
+								url: pr.html_url,
+								author_login: pr.user?.login,
+								state: pr.state,
+								draft: pr.draft ? 1 : 0,
+								opened_at: optionalString(pr.created_at),
+								head_ref: pr.head?.ref,
+								head_sha: pr.head?.sha,
+								updated_at: pr.updated_at,
+								...openSpecProjection(evidence, pr.head?.ref, repo.full_name),
+							};
+						})
+					: []),
+				...reconciliationPullRequests.filter(
+					(pr) => !pullRequests.some((item) => Number((item as { number?: unknown }).number) === Number(pr.number)),
+				),
+			],
 			openSpecs: [],
 			deployments: (deploymentRows as Record<string, unknown>[]).map((deployment) =>
 				correlateDeploymentPullRequest(deployment, deploymentPullRequests, recentMergedPullRequests),
@@ -1345,30 +1739,23 @@ export async function bootstrapInstallation(
 						(!approvedInstallationAccount(installation.accountLogin) || !sameLogin(installation.accountLogin, account)))
 				)
 					return;
-				attemptCounts = projectedPullRequestCounts(installation.repositories, snapshots, aggregate.github.login);
+				const previousRepositories = installation.repositories;
 				if (!installation.accountLogin) installation.accountLogin = account;
 				installation.permissions = {
 					pull_requests: typeof pullRequestsPermission === "string" ? pullRequestsPermission : undefined,
 				};
-				installation.repositories = snapshots.map((snapshot) => {
-					const previous = installation.repositories.find(
-						(repository) => repository.repositoryId === snapshot.repositoryId,
-					);
-					return {
-						...snapshot,
-						pullRequests: snapshot.pullRequests
-							.filter((pr) => sameLogin(pr.author_login, aggregate.github.login))
-							.map((pr) => {
-								const old = previous?.pullRequests.find((item) => item.number === pr.number);
-								return mergePullRequestSnapshot(old, pr);
-							}),
-						openSpecs: snapshot.openSpecs,
-						deployments: snapshot.deployments.slice(0, 20),
-						...(snapshot.recentMergedPullRequests
-							? { recentMergedPullRequests: snapshot.recentMergedPullRequests }
-							: {}),
-					};
+				installation.repositories = snapshots.flatMap((snapshot) => {
+					const previous = previousRepositories.find((item) => item.repositoryId === snapshot.repositoryId);
+					const observed = user.installations
+						.find((item) => item.installationId === installationId)
+						?.repositories.find((item) => item.repositoryId === snapshot.repositoryId);
+					return mergeRepositorySnapshot(previous, observed, snapshot, openSpecTasks, aggregate.github.login);
 				});
+				attemptCounts = projectedPullRequestCounts(
+					previousRepositories,
+					installation.repositories,
+					aggregate.github.login,
+				);
 				installation.lastSuccessfulSyncAt = new Date();
 				delete installation.lastSyncError;
 				appendReconciliationEvidence(installation, {
@@ -1389,12 +1776,15 @@ export async function bootstrapInstallation(
 		}),
 		{ prCount: 0, changedPrCount: 0, unchangedPrCount: 0 },
 	);
-	for (const task of openSpecTasks)
-		await projectOpenSpec(db, {
-			installationId,
-			accountLogin: account,
-			...task,
+	for (const target of retainedTargets) {
+		const result = await reconcilePullRequest(db, {
+			...target,
+			token,
+			fetcher,
+			fetchTasks,
 		});
+		if (result.kind === "error") return result;
+	}
 	return { ...repos, ...prCounts };
 }
 export async function bootstrapDeployments(

@@ -780,13 +780,12 @@ const reconcileRoute = async (context: AppContext, request: Request, path: strin
 	if (!["/api/reconcile/pull-request", "/api/reconcile/pull-requests"].includes(path)) return undefined;
 	if (!(await approvedInstallationIdsForUser(context.db, user.id)).length)
 		return new Response("not found", { status: 404 });
-	const targets = (await dashboardForUser(context.db, user.id)).pullRequests
-		.filter((pullRequest) => pullRequest.state === "open")
-		.map((pullRequest) => ({
-			installationId: String(pullRequest.installation_id),
-			repositoryId: String(pullRequest.repository_id),
-			number: Number(pullRequest.number),
-		}));
+	const dashboard = await dashboardForUser(context.db, user.id);
+	const targets = dashboard.pullRequests.map((pullRequest) => ({
+		installationId: String(pullRequest.installation_id),
+		repositoryId: String(pullRequest.repository_id),
+		number: Number(pullRequest.number),
+	}));
 	if (path === "/api/reconcile/pull-request") {
 		const body = await boundedBody(request, 4_000);
 		if (!body) return new Response("invalid reconciliation request", { status: 400 });
@@ -806,11 +805,11 @@ const reconcileRoute = async (context: AppContext, request: Request, path: strin
 			return new Response("invalid reconciliation request", { status: 400 });
 		}
 		if (
-			!targets.some(
-				(item) =>
-					item.installationId === target.installationId &&
-					item.repositoryId === target.repositoryId &&
-					item.number === target.number,
+			!Number.isSafeInteger(target.number) ||
+			target.number <= 0 ||
+			!dashboard.repositories.some(
+				(repository) =>
+					repository.installation_id === target.installationId && repository.repository_id === target.repositoryId,
 			)
 		)
 			return new Response("not found", { status: 404 });
@@ -1202,7 +1201,7 @@ const knownOpenPullRequests = async (db: Db, initialized: Promise<unknown>) => {
 			approvedInstallationAccount(installation.accountLogin)
 				? installation.repositories.flatMap((repository) =>
 						repository.pullRequests
-							.filter((pullRequest) => pullRequest.state === "open")
+							.filter((pullRequest) => pullRequest.state === "open" || pullRequest.retention_candidate === true)
 							.map((pullRequest) => ({
 								installationId: installation.installationId,
 								repositoryId: repository.repositoryId,

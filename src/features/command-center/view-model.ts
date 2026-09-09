@@ -62,6 +62,10 @@ export type PullRequest = {
 	needs_attention?: boolean;
 	workflow_failures?: Array<{ name?: string; url?: string }>;
 	open_spec?: OpenSpecEvidence | null;
+	merged?: boolean;
+	retention_candidate?: boolean;
+	post_merge_unresolved?: boolean;
+	post_merge_obligations?: string[];
 };
 
 const asOpenSpecGroup = (value: unknown): OpenSpecGroup | null => {
@@ -163,7 +167,7 @@ export type ViewState = {
 	sort: SortPreference;
 };
 export type Lifecycle = {
-	stage: "closed" | "draft" | "openspec" | "ready" | "reviewing" | "mergeable";
+	stage: "closed" | "post-merge" | "draft" | "openspec" | "ready" | "reviewing" | "mergeable";
 	blockers: string[];
 };
 export type MergeControl =
@@ -237,6 +241,14 @@ const requiredChecksReady = (pr: PullRequest) =>
 			check.head_sha === pr.head_sha && ["success", "neutral", "skipped"].includes(normalized(check.conclusion)),
 	);
 export const lifecycleFor = (pr: PullRequest, spec?: OpenSpecEvidence | null): Lifecycle => {
+	if (
+		(pr.merged === true || normalized(pr.state) === "merged" || normalized(pr.state) === "closed") &&
+		pr.retention_candidate === true
+	)
+		return {
+			stage: "post-merge",
+			blockers: pr.post_merge_unresolved === true ? ["Post-merge work unresolved"] : [],
+		};
 	if (["closed", "merged"].includes(normalized(pr.state))) return { stage: "closed", blockers: [] };
 	if (pr.draft) return { stage: "draft", blockers: ["Draft"] };
 	const specs = specsFor(pr, spec);
@@ -302,7 +314,15 @@ const identityTie = (left: DerivedPullRequest, right: DerivedPullRequest) =>
 	codePointCompare(left.pr.repository_id, right.pr.repository_id) ||
 	Number(left.pr.number) - Number(right.pr.number);
 const closestCompare = (left: DerivedPullRequest, right: DerivedPullRequest, direction: SortDirection = "asc") => {
-	const stageRank = { mergeable: 0, reviewing: 1, ready: 2, openspec: 3, draft: 4, closed: 5 } as const;
+	const stageRank = {
+		"post-merge": 0,
+		mergeable: 1,
+		reviewing: 2,
+		ready: 3,
+		openspec: 4,
+		draft: 5,
+		closed: 6,
+	} as const;
 	const ordered =
 		stageRank[left.bucket] - stageRank[right.bucket] ||
 		nullableCompare(left.blockers.length, right.blockers.length) ||
@@ -373,7 +393,10 @@ export const derivePullRequests = (
 					: matchesSelection(item)) &&
 				(repositories === null || (typeof item.pr.full_name === "string" && repositories.has(item.pr.full_name))),
 		)
-		.sort((left, right) => sortCompare(left, right, sort));
+		.sort(
+			(left, right) =>
+				Number(right.bucket === "post-merge") - Number(left.bucket === "post-merge") || sortCompare(left, right, sort),
+		);
 };
 export const repositoryOptions = (items: PullRequestItem[]) =>
 	[...new Set(items.map(({ pr }) => pr.full_name).filter((name): name is string => typeof name === "string"))].sort(
@@ -427,8 +450,8 @@ export const parseTasks = (content: string) => {
 const mergeUnavailableReason = "GitHub App Pull requests write permission approval is required.";
 export const mergeControlFor = (pr: PullRequest): MergeControl => {
 	const gates: Array<{ blocked: boolean; state: Exclude<MergeControl["state"], "enabled"> }> = [
-		{ blocked: pr.installation_pull_requests !== "write", state: "permission-required" },
 		{ blocked: pr.state !== "open", state: "closed" },
+		{ blocked: pr.installation_pull_requests !== "write", state: "permission-required" },
 		{ blocked: Boolean(pr.draft), state: "draft" },
 		{ blocked: lifecycleFor(pr).stage !== "mergeable", state: "blocked" },
 	];
