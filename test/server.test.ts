@@ -1135,21 +1135,29 @@ test("public shell and health survive failed initialization while readiness repo
 		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(503);
 	}));
 
-test("failed initialization drain retains the full webhook diagnostic", () =>
+test("failed initialization drain sanitizes the webhook diagnostic", () =>
 	withDatabase(async (db) => {
 		const original = console.error,
 			originalCreateIndex = db.users.createIndex,
 			diagnostic = `webhook diagnostic ${"qapla".repeat(50)}`,
 			logs: unknown[][] = [];
 		db.users.createIndex = async () => {
-			throw new Error(diagnostic);
+			throw Object.freeze(Object.assign(new Error(diagnostic), { name: "MongoNetworkError", code: 91 }));
 		};
 		console.error = (...args: unknown[]) => {
 			logs.push(args);
 		};
 		try {
 			await createApp(db, testConfig).drain();
-			expect(logs).toEqual([["webhook drain failed", diagnostic]]);
+			expect(logs).toHaveLength(1);
+			expect(JSON.parse(String(logs[0]![0]))).toMatchObject({
+				event: "reconciliation_failed",
+				operation: "webhook_drain",
+				category: "bookkeeping",
+				failureClass: "network",
+				code: 91,
+			});
+			expect(JSON.stringify(logs)).not.toContain(diagnostic);
 		} finally {
 			console.error = original;
 			db.users.createIndex = originalCreateIndex;

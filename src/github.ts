@@ -9,7 +9,12 @@ import {
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks, projectOpenSpec } from "#/openspec";
-import { logReconciliationError, type ReconciliationErrorCategory } from "#/reconciliation-coordinator";
+import {
+	errorField,
+	failureDetails,
+	logReconciliationError,
+	type ReconciliationErrorCategory,
+} from "#/reconciliation-coordinator";
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
@@ -35,6 +40,8 @@ export type TaskFetcher = (input: {
 	sha: string;
 }) => Promise<string | null | { finalTreeAbsent: true }>;
 export type GitHubRequestFailure = {
+	failureClass?: string;
+	code?: number;
 	operation: string;
 	status: number;
 	target: string;
@@ -1094,15 +1101,12 @@ export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestIn
 			? await applyOpenPullRequest(db, users, installation, repository, input, read)
 			: await removeClosedPullRequest(db, users, input);
 	} catch (error) {
-		const status = Number((error as { status?: unknown })?.status);
-		const diagnostic = (
-			error as {
-				diagnostic?: GitHubRequestFailure["diagnostic"];
-			}
-		)?.diagnostic;
+		const details = failureDetails(error);
+		const diagnostic = errorField(error, "diagnostic") as GitHubRequestFailure["diagnostic"];
 		await input.reportFailure?.({
 			operation: `targeted pull request reconciliation ${stage.value}`,
-			status: Number.isSafeInteger(status) ? status : 0,
+			...details,
+			status: details.status ?? 0,
 			target: `repositories/${input.repositoryId}/pulls/${input.number}`,
 			...(diagnostic ? { diagnostic } : {}),
 		});

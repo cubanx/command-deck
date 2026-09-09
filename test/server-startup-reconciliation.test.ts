@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { expect, test, vi } from "vitest";
 import { bindInstallation, createSession, upsertIdentity } from "#/access";
 import { mutateUser } from "#/db";
@@ -8,7 +9,10 @@ import { testConfig, withDatabase } from "./mongo-support";
 test("targeted failures retain operation for frozen and primitive throws and recover", () =>
 	withDatabase(async (db) => {
 		const log = vi.spyOn(console, "error").mockImplementation(() => {});
-		const failures = [Object.freeze(new Error("Garak secret")), "Garak secret"];
+		const failures = [
+			Object.freeze(Object.assign(new Error("Garak secret"), { name: "MongoNetworkError", code: 91, status: 503 })),
+			"Garak secret",
+		];
 		const app = createApp(db, { ...testConfig, localDemo: true }, undefined, {
 			reconcilePullRequest: async () => {
 				if (failures.length) throw failures.shift();
@@ -33,6 +37,11 @@ test("targeted failures retain operation for frozen and primitive throws and rec
 			expect((await repair()).status).toBe(502);
 			expect((await repair()).status).toBe(200);
 			expect(log.mock.calls).toHaveLength(2);
+			expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+				failureClass: "network",
+				code: 91,
+				status: 503,
+			});
 			for (const [line] of log.mock.calls)
 				expect(JSON.parse(line)).toMatchObject({
 					installationId: String(pr.installation_id),
@@ -525,6 +534,106 @@ test("broad reconciliation records each installation's own elapsed duration", as
 			expect(second.durationMs).toBeGreaterThan(0);
 			expect(first.durationMs).toBeGreaterThan(second.durationMs * 10);
 		} finally {
+			app.stop();
+		}
+	}));
+
+test("webhook drain recovers after an unreadable thrown payload", () =>
+	withDatabase(async (db) => {
+		const app = createApp(db, testConfig);
+		const log = vi.spyOn(console, "error").mockImplementation(() => {});
+		const find = vi.spyOn(db.inboxDeliveries, "find");
+		try {
+			await app.drain();
+			find.mockImplementationOnce(() => {
+				throw new Proxy(
+					{},
+					{
+						get() {
+							throw new Error("Garak secret");
+						},
+					},
+				);
+			});
+			await app.drain();
+			expect(log.mock.calls).toHaveLength(1);
+			expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({ operation: "webhook_drain", failureClass: "unknown" });
+			await app.drain();
+			expect(log.mock.calls).toHaveLength(1);
+			expect(JSON.stringify(log.mock.calls)).not.toContain("Garak secret");
+		} finally {
+			find.mockRestore();
+			log.mockRestore();
+			app.stop();
+		}
+	}));
+
+test("targeted persistence reports safe details once through the real server reporter", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "Kira", "kira");
+		await bindInstallation(db, "Kira", "9", "cubanx");
+		await mutateUser(db, "Kira", (user) => {
+			user.installations[0]!.repositories = [
+				{
+					repositoryId: "2",
+					full_name: "cubanx/defiant",
+					openSpecs: [],
+					deployments: [],
+					pullRequests: [{ number: 7, state: "open", author_login: "kira", title: "Repair Defiant" }],
+				},
+			];
+		});
+		const session = await createSession(db, "Kira");
+		const { privateKey } = generateKeyPairSync("rsa", {
+			modulusLength: 2048,
+			privateKeyEncoding: { type: "pkcs8", format: "pem" },
+			publicKeyEncoding: { type: "spki", format: "pem" },
+		});
+		const app = createApp(db, { ...testConfig, githubAppId: "1", githubAppPrivateKey: privateKey });
+		const log = vi.spyOn(console, "error").mockImplementation(() => {});
+		const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+			if (String(input).endsWith("/access_tokens")) return Response.json({ token: "fictional" });
+			if (String(input) === "https://api.github.com/graphql")
+				return Response.json({ data: { repository: { pullRequest: { state: "MERGED" } } } });
+			throw new Error("Unexpected fixture request");
+		});
+		const write = vi.spyOn(db.users, "replaceOne");
+		try {
+			await app.fetch(new Request("http://local/ready"));
+			write.mockRejectedValueOnce(
+				Object.freeze(
+					Object.assign(new Error("Garak secret"), {
+						name: "MongoServerError",
+						code: 112,
+						status: 503,
+						diagnostic: { password: "Garak secret" },
+					}),
+				),
+			);
+			const response = await app.fetch(
+				new Request("http://local/api/reconcile/pull-request", {
+					method: "POST",
+					headers: { cookie: `dcc_session=${session.token}` },
+					body: JSON.stringify({ installationId: "9", repositoryId: "2", number: 7 }),
+				}),
+			);
+			expect(response.status).toBe(502);
+			expect(log.mock.calls).toHaveLength(1);
+			expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
+				operation: "targeted pull request reconciliation persistence",
+				failureClass: "database",
+				code: 112,
+				status: 503,
+				target: "repositories/2/pulls/7",
+			});
+			expect(JSON.stringify(log.mock.calls)).not.toContain("Garak secret");
+			expect(
+				(await db.users.findOne({ _id: "Kira" }))?.installations[0]?.repositories[0]?.pullRequests[0]?.lifecycle_stale,
+			).toBe(true);
+		} finally {
+			write.mockRestore();
+			fetcher.mockRestore();
+			log.mockRestore();
 			app.stop();
 		}
 	}));

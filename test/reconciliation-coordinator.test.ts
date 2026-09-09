@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, test, vi } from "vitest";
-import { createReconciliationCoordinator } from "#/reconciliation-coordinator";
+import { createReconciliationCoordinator, failureDetails, logReconciliationError } from "#/reconciliation-coordinator";
 
 const target = (number: number) => ({
 	installationId: "9",
@@ -130,6 +130,8 @@ test("logs sanitized diagnostics for failed targeted and broad reconciliation", 
 			message: "reconciliation failed installation=9 operation=pull_request category=targeted",
 			installationId: "9",
 			operation: "pull_request",
+			failureClass: "unknown",
+			target: "repositories/2/pulls/7",
 			category: "targeted",
 		},
 		{
@@ -138,6 +140,7 @@ test("logs sanitized diagnostics for failed targeted and broad reconciliation", 
 			message: "reconciliation failed installation=unknown operation=reconciliation category=broad",
 			installationId: "unknown",
 			operation: "reconciliation",
+			failureClass: "unknown",
 			category: "broad",
 		},
 	]);
@@ -167,7 +170,7 @@ test("passes ownership context to targeted, bookkeeping, and broad failures", as
 		await Promise.resolve();
 		expect(errors).toHaveLength(2);
 		expect(errors.map(({ context }) => context)).toEqual([
-			{ installationId: "9", operation: "pull_request", category: "targeted" },
+			{ installationId: "9", target: "repositories/2/pulls/7", operation: "pull_request", category: "targeted" },
 			{ operation: "reconciliation", category: "broad" },
 		]);
 		const bookkeeping = createReconciliationCoordinator({
@@ -184,6 +187,7 @@ test("passes ownership context to targeted, bookkeeping, and broad failures", as
 		expect(errors.at(-1)?.context).toEqual({
 			installationId: "9",
 			operation: "reconciliation_audit",
+			target: "repositories/2/pulls/8",
 			category: "bookkeeping",
 		});
 	} finally {
@@ -220,6 +224,10 @@ test("emits one parseable sanitized JSON diagnostic on real Bun stderr", async (
 		message: "reconciliation failed installation=9 operation=pull_request category=targeted",
 		installationId: "9",
 		operation: "pull_request",
+		failureClass: "unknown",
+		target: "repositories/2/pulls/7",
+		status: 503,
+		code: 91,
 		category: "targeted",
 	});
 	expect(stderr).not.toContain("token=canary");
@@ -294,4 +302,116 @@ test("returns the completed coalesced manual outcome", async () => {
 	} finally {
 		vi.useRealTimers();
 	}
+});
+
+test("finite failure details reject hostile payloads and invalid codes", () => {
+	const cases = [
+		[new Error("user aggregate changed concurrently"), "aggregate_conflict"],
+		[new Error("user aggregate not found"), "aggregate_missing"],
+		[{ name: "UserAggregateSizeError" }, "aggregate_size"],
+		[{ name: "MongoNetworkError" }, "network"],
+		[{ name: "MongoNetworkTimeoutError" }, "timeout"],
+		[{ name: "MongoServerSelectionError" }, "server_selection"],
+		[{ name: "MongoServerError" }, "database"],
+		[{ name: "BSONError" }, "serialization"],
+		[null, "unknown"],
+		["Garak secret", "unknown"],
+		[{ name: "Garak secret", diagnostic: "Garak secret" }, "unknown"],
+		[
+			{
+				get status() {
+					throw new Error("Garak secret");
+				},
+			},
+			"unknown",
+		],
+		[
+			new Proxy(
+				{},
+				{
+					get() {
+						throw new Error("Garak secret");
+					},
+				},
+			),
+			"unknown",
+		],
+	] as const;
+	for (const [error, failureClass] of cases) expect(failureDetails(error)).toEqual({ failureClass });
+	expect(
+		failureDetails(
+			Object.freeze(
+				Object.assign(new Error("Garak secret"), {
+					name: "MongoServerError",
+					code: 112,
+					status: 503,
+					cause: { password: "Garak secret" },
+				}),
+			),
+		),
+	).toEqual({ failureClass: "database", code: 112, status: 503 });
+	for (const code of [
+		"112",
+		-1,
+		1.5,
+		Infinity,
+		NaN,
+		2147483648,
+		{
+			valueOf() {
+				throw new Error("secret");
+			},
+		},
+	])
+		expect(failureDetails({ code, status: "503" })).toEqual({ failureClass: "unknown" });
+	for (const status of [99, 600, 200.5, Infinity])
+		expect(failureDetails({ status })).toEqual({ failureClass: "unknown" });
+});
+
+test("logger validates numeric PR targets and forwarded diagnostic fields", () => {
+	const log = vi.spyOn(console, "error").mockImplementation(() => {});
+	try {
+		for (const target of [
+			"repositories/2/pulls/7",
+			"https://secret",
+			"repositories/secret/pulls/7",
+			"repositories/2/pulls/0",
+			"repositories/2/pulls/9007199254740992",
+		])
+			logReconciliationError({
+				operation: "persistence",
+				category: "targeted",
+				target,
+				failureClass: "network",
+				code: 91,
+				status: 503,
+			});
+		const rows = log.mock.calls.map(([line]) => JSON.parse(line));
+		expect(rows[0]).toMatchObject({ target: "repositories/2/pulls/7", failureClass: "network", code: 91, status: 503 });
+		expect(rows.slice(1).every((row) => !("target" in row))).toBe(true);
+		logReconciliationError({
+			operation: "persistence",
+			category: "targeted",
+			failureClass: "secret",
+			code: "secret",
+		} as never);
+		expect(JSON.parse(log.mock.calls.at(-1)![0])).toMatchObject({ failureClass: "unknown" });
+		expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
+	} finally {
+		log.mockRestore();
+	}
+});
+
+test("aggregate size failures have a fixed diagnostic identity", async () => {
+	const { mutateUser } = await import("#/db");
+	const replaceOne = vi.fn();
+	const db = {
+		users: { findOne: async () => ({ _id: "Quark", revision: 0, installations: [], github: {} }), replaceOne },
+	};
+	await expect(
+		mutateUser(db as never, "Quark", (user) => {
+			user.github.login = "x".repeat(13 * 1024 * 1024);
+		}),
+	).rejects.toMatchObject({ name: "UserAggregateSizeError" });
+	expect(replaceOne).not.toHaveBeenCalled();
 });

@@ -8,6 +8,7 @@ const failure = Object.freeze(
 		name: "\nsecret-canary",
 		diagnostic: "raw canary",
 		status: 503,
+		code: 91,
 	}),
 );
 let fail = true;
