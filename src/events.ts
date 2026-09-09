@@ -538,7 +538,7 @@ const projectPush = async (
 				account,
 				`openspec-complete:${repositoryId}:${path}:${data.after}`,
 				"OpenSpec complete",
-				path.split("/")[2] ?? "OpenSpec",
+				changeName,
 			);
 	}
 	return changed;

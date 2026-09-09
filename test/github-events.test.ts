@@ -5,6 +5,42 @@ import { mutateUser } from "#/db";
 import { acceptGitHubDelivery, drainInbox, githubSignatureValid } from "#/events";
 import { withDatabase } from "./mongo-support";
 
+test("archived completion notifications name the change", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await bindInstallation(db, "sisko", "9", "cubanx");
+		await mutateUser(db, "sisko", (user) => {
+			user.installations[0]!.repositories.push({
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [],
+				deployments: [],
+				openSpecs: [{ change_name: "defiant", completed: 0, total: 1 }],
+			});
+		});
+		await acceptGitHubDelivery(
+			db,
+			"archive-defiant",
+			"push",
+			JSON.stringify({
+				installation: { id: 9, account: { login: "cubanx" } },
+				repository: { id: 2, full_name: "ds9/ops" },
+				ref: "refs/heads/main",
+				after: "a".repeat(40),
+				commits: [
+					{
+						removed: ["openspec/changes/defiant/tasks.md"],
+						added: ["openspec/changes/archive/2026-09-09-defiant/tasks.md"],
+					},
+				],
+			}),
+		);
+		await drainInbox(db, async () => "## Observe [post-merge]\n- [x] Observe Defiant");
+		expect(await db.notifications.findOne({ userId: "sisko", title: "OpenSpec complete" })).toMatchObject({
+			body: "defiant",
+		});
+	}));
+
 test("discarded webhook CAS attempts do not emit mergeability notifications", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "sisko", "sisko");
