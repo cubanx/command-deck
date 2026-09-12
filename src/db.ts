@@ -190,6 +190,7 @@ export async function initializeDatabase(db: Db) {
 		db.oauthStates.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.mergeIntents.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.inboxDeliveries.createIndex({ status: 1, nextAttemptAt: 1 }),
+		db.inboxDeliveries.createIndex({ receivedAt: 1 }),
 		db.notifications.createIndex({ userId: 1, transitionKey: 1 }, { unique: true }),
 		db.notifications.createIndex({ userId: 1, createdAt: -1 }),
 		db.reconciliationRuns.createIndex({ completedAt: 1 }, { expireAfterSeconds: 1_209_600 }),
