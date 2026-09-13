@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { BSON, type Collection, MongoClient, type Db as MongoDb } from "mongodb";
 
 export const MAX_USER_BSON_BYTES = 12 * 1024 * 1024;
@@ -191,6 +192,10 @@ export async function initializeDatabase(db: Db) {
 		db.mergeIntents.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.inboxDeliveries.createIndex({ status: 1, nextAttemptAt: 1 }),
 		db.inboxDeliveries.createIndex({ receivedAt: 1 }),
+		db.inboxDeliveries.createIndex(
+			{ processedAt: 1 },
+			{ expireAfterSeconds: 604_800, partialFilterExpression: { status: { $in: ["done", "ignored"] } } },
+		),
 		db.notifications.createIndex({ userId: 1, transitionKey: 1 }, { unique: true }),
 		db.notifications.createIndex({ userId: 1, createdAt: -1 }),
 		db.reconciliationRuns.createIndex({ completedAt: 1 }, { expireAfterSeconds: 1_209_600 }),
@@ -235,6 +240,7 @@ async function mutateUserNow(db: Db, userId: string, mutate: (user: UserAggregat
 		if (!existing) throw new Error("user aggregate not found");
 		const next = structuredClone(existing);
 		mutate(next);
+		if (isDeepStrictEqual(next, existing)) return existing;
 		next.revision++;
 		next.updatedAt = new Date();
 		if (BSON.serialize(next).byteLength > MAX_USER_BSON_BYTES)

@@ -695,7 +695,11 @@ test("aggregate CAS retries conflicts and preserves multiple bindings", () =>
 			upsertedCount: 0,
 			upsertedId: null,
 		});
-		await expect(mutateUser(db, "u", () => {})).rejects.toThrow("changed concurrently");
+		await expect(
+			mutateUser(db, "u", (user) => {
+				user.github.avatarUrl = "https://example.test/defiant.png";
+			}),
+		).rejects.toThrow("changed concurrently");
 		db.users.replaceOne = original;
 	}));
 

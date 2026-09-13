@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
 import { changedTaskPaths, openSpecGate, parseOpenSpecDeclaration, parseTasks, projectOpenSpec } from "#/openspec";
 import { withDatabase } from "./mongo-support";
@@ -32,10 +32,13 @@ test.each([false, true])("OpenSpec retry reports only its committed transition (
 			if (++attempts === 1) await replace(...args);
 			return replace(...args);
 		};
+		// Keep projection timestamps equal across attempts so this exercises an actual no-op.
+		vi.useFakeTimers({ toFake: ["Date"] });
 		try {
 			expect(await projectOpenSpec(db, { ...input, deleted })).toEqual({ changed: false, completed: false });
-			expect(attempts).toBe(2);
+			expect(attempts).toBe(1);
 		} finally {
+			vi.useRealTimers();
 			db.users.replaceOne = replace;
 		}
 	}),

@@ -2273,7 +2273,7 @@ test.each(["OPEN", "CLOSED"])("targeted %s repair reports only the committed CAS
 				},
 			});
 			expect(result.kind).toBe("unchanged");
-			expect(attempts).toBe(2);
+			expect(attempts).toBe(1); // The fresh retry observes the concurrent result and skips replacement.
 		} finally {
 			db.users.replaceOne = replace;
 		}

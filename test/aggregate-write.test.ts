@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { type Db, MAX_USER_BSON_BYTES, mutateUser, type UserAggregate } from "#/db";
 
 const aggregate = (_id: string): UserAggregate => ({
@@ -24,6 +24,49 @@ const collection = (...ids: string[]) => {
 	};
 	return { rows, users, db: { users } as unknown as Db };
 };
+
+test("unchanged mutations preserve the document and metadata without a database write", async () => {
+	const { db, users, rows } = collection("sisko");
+	const before = structuredClone(rows.get("sisko"));
+	const replace = vi.spyOn(users, "replaceOne");
+	const outcomes = await Promise.all([
+		mutateUser(db, "sisko", () => {}),
+		mutateUser(db, "sisko", (user) => {
+			user.github = { ...user.github };
+			user.installations = [...user.installations];
+			user.createdAt = new Date(user.createdAt);
+		}),
+	]);
+	expect(replace).not.toHaveBeenCalled();
+	expect(outcomes).toEqual([before, before]);
+	expect(rows.get("sisko")).toEqual(before);
+	await mutateUser(db, "sisko", (user) => {
+		user.createdAt = new Date(1);
+	});
+	expect(replace).toHaveBeenCalledTimes(1);
+	expect(rows.get("sisko")).toMatchObject({ revision: 1, createdAt: new Date(1) });
+});
+
+test("a CAS retry that becomes unchanged returns fresh state without another write", async () => {
+	const { db, users, rows } = collection("sisko");
+	const concurrent = {
+		...aggregate("sisko"),
+		revision: 1,
+		updatedAt: new Date(47),
+		github: { login: "sisko", avatarUrl: "https://example.test/defiant.png" },
+	};
+	const replace = vi.spyOn(users, "replaceOne").mockImplementationOnce(async () => {
+		rows.set("sisko", concurrent);
+		return { modifiedCount: 0 };
+	});
+	const mutate = vi.fn((user: UserAggregate) => {
+		user.github.login = "sisko";
+	});
+	expect(await mutateUser(db, "sisko", mutate)).toEqual(concurrent);
+	expect(mutate).toHaveBeenCalledTimes(2);
+	expect(replace).toHaveBeenCalledTimes(1);
+	expect(rows.get("sisko")).toEqual(concurrent);
+});
 
 test("four overlapping same-user writes preserve every independent change", async () => {
 	const { db, rows } = collection("sisko");

@@ -701,6 +701,11 @@ test("renders only complete, lifecycle-ready native merge forms", async () => {
 });
 
 test("default and cleared filters show retained work as merged with merge disabled", async () => {
+	// Menu assertions must not depend on animation frames running under parallel load.
+	vi.stubGlobal(
+		"requestAnimationFrame",
+		vi.fn(() => 1),
+	);
 	renderFrontend(
 		<OperationalDashboard
 			snapshot={{

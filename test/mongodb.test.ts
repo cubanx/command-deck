@@ -1,7 +1,80 @@
 import { expect, test, vi } from "vitest";
 import { closeDatabase, databaseReady, initializeDatabase, openDatabase, testDatabaseGuard } from "#/db";
-import { drainInbox } from "#/events";
+import { acceptGitHubDelivery, drainInbox } from "#/events";
 import { withDatabase } from "./mongo-support";
+
+test("inbox TTL expires only completed receipts and bounds delivery deduplication", async () => {
+	await withDatabase(async (db) => {
+		// Seed existing receipts before installing retention, with the native TTL monitor still running.
+		if ((await db.inboxDeliveries.listIndexes().toArray()).some((index) => index.name === "processedAt_1"))
+			await db.inboxDeliveries.dropIndex("processedAt_1");
+		const current = new Date();
+		const old = new Date(current.getTime() - 8 * 24 * 60 * 60_000);
+		const body = JSON.stringify({ installation: { id: 47 }, repository: { id: 1701 }, action: "edited" });
+		const receipts = [
+			{ deliveryId: "sisko", status: "done", processedAt: old },
+			{ deliveryId: "kira", status: "ignored", processedAt: old },
+			{ deliveryId: "odo", status: "pending", processedAt: old, payload: body },
+			{
+				deliveryId: "dax",
+				status: "pending_verification",
+				processedAt: old,
+				payload: body,
+				error: "processing failed",
+			},
+			{ deliveryId: "quark", status: "rejected", processedAt: old, payload: body, error: "processing failed" },
+			{ deliveryId: "bashir", status: "done", processedAt: current },
+			{ deliveryId: "obrien", status: "ignored", processedAt: current },
+			{ deliveryId: "worf", status: "done" },
+			{ deliveryId: "rom", status: "ignored", processedAt: old.toISOString() },
+		].map((receipt) => ({
+			_id: `github:${receipt.deliveryId}`,
+			provider: "github",
+			eventName: "pull_request",
+			attempts: 0,
+			receivedAt: old,
+			...receipt,
+		}));
+		// Fixture schema deliberately includes a legacy non-date timestamp.
+		await db.mongo.collection<(typeof receipts)[number]>("inbox_deliveries").insertMany(receipts);
+		expect(await acceptGitHubDelivery(db, "sisko", "pull_request", body)).toEqual({ kind: "duplicate" });
+		await initializeDatabase(db);
+		await databaseReady(db);
+		const indexes = await db.inboxDeliveries.listIndexes().toArray();
+		expect(indexes.find((index) => index.name === "processedAt_1")).toMatchObject({
+			key: { processedAt: 1 },
+			expireAfterSeconds: 604800,
+			partialFilterExpression: { status: { $in: ["done", "ignored"] } },
+		});
+		expect(indexes.map((index) => index.key)).toEqual(
+			expect.arrayContaining([{ _id: 1 }, { status: 1, nextAttemptAt: 1 }, { receivedAt: 1 }]),
+		);
+		await acceptGitHubDelivery(db, "garak", "pull_request", body);
+		await db.inboxDeliveries.updateOne(
+			{ _id: "github:garak" },
+			{ $set: { status: "done", processedAt: old }, $unset: { payload: "" } },
+		);
+		// Allow a native TTL pass (normally 60 seconds); never emulate expiry with deleteMany.
+		await expect
+			.poll(() => db.inboxDeliveries.countDocuments({ deliveryId: { $in: ["sisko", "kira", "garak"] } }), {
+				timeout: 75_000,
+				interval: 250,
+			})
+			.toBe(0);
+		const retained = receipts.filter((receipt) => !["sisko", "kira"].includes(receipt.deliveryId));
+		expect(await db.inboxDeliveries.find().sort({ _id: 1 }).toArray()).toEqual(
+			retained.sort((left, right) => left._id.localeCompare(right._id)),
+		);
+		for (const receipt of retained)
+			expect(await acceptGitHubDelivery(db, receipt.deliveryId, "pull_request", body)).toEqual({ kind: "duplicate" });
+		expect(await acceptGitHubDelivery(db, "sisko", "pull_request", body)).toEqual({ kind: "accepted" });
+		expect(await db.inboxDeliveries.findOne({ _id: "github:sisko" })).toMatchObject({
+			status: "pending_verification",
+			attempts: 0,
+			payload: body,
+		});
+	});
+}, 90_000);
 
 test("inbox drain can use index ordering while preserving eligibility", async () => {
 	await withDatabase(async (db) => {
