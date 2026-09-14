@@ -39,6 +39,12 @@ test("exact SHA deployment correlation works in either event order", () =>
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
 		await acceptGitHubDelivery(db, "deployment-first", "deployment_status", JSON.stringify(deployment(7)));
+		await acceptGitHubDelivery(
+			db,
+			"merge-deployment-first",
+			"deployment_status",
+			JSON.stringify(deployment(10, sha("b"))),
+		);
 		await acceptGitHubDelivery(db, "merge-after-deployment", "pull_request", JSON.stringify(mergedPullRequest(42)));
 		await acceptGitHubDelivery(
 			db,
@@ -84,6 +90,9 @@ test("exact SHA deployment correlation works in either event order", () =>
 			pull_request_url: "https://github.com/ds9/ops/pull/42",
 		});
 		expect(rows.find((item) => item.id === "8")).toMatchObject({
+			pull_request_number: 42,
+		});
+		expect(rows.find((item) => item.id === "10")).toMatchObject({
 			pull_request_number: 42,
 		});
 		expect(rows.find((item) => item.id === "9")).toMatchObject({

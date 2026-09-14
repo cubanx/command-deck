@@ -43,6 +43,17 @@ test("startup finishes interrupted effects and an expired receipt can replay wit
 			payload: body,
 			nextAttemptAt: expect.any(Date),
 		});
+		const refreshed: string[] = [];
+		await drainInbox(
+			db,
+			undefined,
+			undefined,
+			undefined,
+			() => new Date(Date.now() + 120_000),
+			undefined,
+			(userId) => refreshed.push(userId),
+		);
+		expect(refreshed).toEqual(["1701"]);
 		const app = createApp(db, testConfig, undefined, { reconcilePullRequest: async () => ({ kind: "unchanged" }) });
 		const startupDrain = app.drain(); // The same drain invoked by the server entrypoint on startup.
 		try {

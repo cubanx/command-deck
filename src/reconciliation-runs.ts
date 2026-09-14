@@ -28,7 +28,7 @@ export async function beginReconciliationRun(
 		trigger: input.trigger,
 		startedAt: now,
 		status: "running",
-	} as ReconciliationRunDocument);
+	});
 	return _id;
 }
 

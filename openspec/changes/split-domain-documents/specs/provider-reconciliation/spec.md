@@ -56,6 +56,12 @@ The system SHALL preserve last-known evidence and expose stale/error state on re
 ### Requirement: Clean-store reconstruction
 Canonical reconciliation SHALL rebuild authorized repositories, open PRs, recent deployments, and merged PRs with incomplete post-merge OpenSpec obligations from GitHub without legacy stored state. It SHALL establish exact PR ownership and source provenance before exposing OpenSpec evidence, and SHALL expose incomplete discovery as stale/error rather than claiming a complete dashboard.
 
+#### Scenario: Recent deployment discovery and unfinished work
+- **WHEN** a repository has deployments older than the 48-hour discovery window
+- **THEN** reconciliation does not fetch status history for old deployments solely because they appear in historical list pages
+- **AND** known unfinished deployments continue to be checked until a terminal status is observed
+- **AND** more than twenty deployments inside the window are not silently truncated
+
 #### Scenario: Fresh connection
 - **WHEN** a user connects an approved installation in an empty store
 - **THEN** reconciliation discovers the agreed dashboard state using installation tokens.

@@ -45,6 +45,7 @@
 - [x] 7.3 Repeat the local baseline and verify query plans, scoped reads, response size, absence of unrelated document rewrites, and webhook-to-card timing; document measured gains and remaining bottlenecks without claiming unmeasured production improvement.
 - [x] 7.4 Deliver an exact-target clean-start runbook covering writer/intake quiescence, reset, exact-revision deployment, initialization, reconnect/reconcile, intake-gap recovery and failure handling; verify it requires applicable production authorization and contains no migration or mixed-schema operation.
 - [x] 7.5 Exercise the complete clean-start sequence in an isolated environment and record evidence for rebuilt older obligations, preferences and automatic live updates; verify all pre-merge requirements are complete before readiness.
+- [x] 7.6 Close the seven approved PR #27 review clusters with regression coverage, focused and full validation, and one independent local cluster review; record exact-head thread classification and publication status in review-closure.md.
 
 ## 8. Execute clean start [post-merge]
 

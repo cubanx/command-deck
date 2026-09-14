@@ -441,6 +441,7 @@ export async function reconcileSerial(
 	return results;
 }
 type PullRequestOpenSpecs = {
+	incomplete?: boolean;
 	number: number;
 	tasks: OpenSpecTask[];
 	/** Evidence read at the immutable merge commit. Never replace this with default-branch progress. */
@@ -631,6 +632,7 @@ const fetchMergedOpenSpecTasks = async (input: {
 	return {
 		number: input.number,
 		tasks,
+		incomplete: unresolved,
 		declaration: declaration.state,
 		detected: [],
 		...(input.includeRetention !== false && (retentionNeeded || unresolved)
@@ -1068,7 +1070,8 @@ const readMergedOpenSpecs = async (
 		});
 		return {
 			...defaultEvidence,
-			mergedTasks: mergedEvidence.tasks,
+			incomplete: mergedEvidence.incomplete || defaultEvidence.incomplete,
+			...(mergedEvidence.incomplete ? {} : { mergedTasks: mergedEvidence.tasks }),
 			mergedSourceCommit: mergeCommit,
 			mergedSourceRef: optionalString(pullRequest.baseRefName) ?? branchEvidence.ref,
 		};
@@ -1327,6 +1330,7 @@ const pullRequestProjection = (repository: Repository, number: number, read: Pul
 };
 
 const canExcludeMergedPullRequest = (evidence: PullRequestOpenSpecs) => {
+	if (evidence.incomplete) return false;
 	const retention = evidence.retention;
 	return (
 		!retention ||
@@ -1373,6 +1377,7 @@ const applyOpenPullRequest = async (
 	}
 	if (previous?.updated_at && next.updated_at && String(previous.updated_at) > String(next.updated_at))
 		return { kind: "unchanged" };
+	if (previous?.merged === true && merged !== true) return { kind: "unchanged" };
 	const openSpecFields = openSpecProjection(
 		openSpecEvidence,
 		openSpecEvidence.retention?.sourceRef ?? (read.pullRequest as { headRefName?: unknown }).headRefName,
@@ -1403,6 +1408,11 @@ const applyOpenPullRequest = async (
 					: ["merged_open_specs", "merged_source_commit", "merged_source_ref"]),
 			].filter((key) => key in patch),
 		);
+		if (openSpecEvidence.mergedTasks === undefined && previous?.merged_open_specs !== undefined) {
+			projectedOpenSpecKeys.add("merged_open_specs");
+			projectedOpenSpecKeys.add("merged_source_commit");
+			projectedOpenSpecKeys.add("merged_source_ref");
+		}
 		const unset = Object.keys(previous).filter(
 			(key) =>
 				[
@@ -1652,7 +1662,16 @@ const persistBootstrapSnapshot = async (
 			continue;
 		const { number: _number, ...fields } = item;
 		const patch = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
-		const changed = await upsertPullRequest(db, { repositoryId: snapshot.repositoryId, number, ...patch });
+		const changed = await upsertPullRequest(
+			db,
+			{ repositoryId: snapshot.repositoryId, number, ...patch },
+			expected
+				? {
+						revision: typeof expected.revision === "number" ? expected.revision : undefined,
+						head_sha: expected.head_sha,
+					}
+				: { absent: true },
+		);
 		counts.prCount++;
 		if (changed) counts.changedPrCount++;
 		else counts.unchangedPrCount++;
@@ -1923,6 +1942,7 @@ export async function bootstrapDeployments(
 	token: string,
 	fetcher: FetchLike = fetch,
 	repository?: string,
+	now = new Date(),
 ): Promise<ReadResult> {
 	const request: FetchLike = (url, init) =>
 		fetcher(url, {
@@ -1935,13 +1955,35 @@ export async function bootstrapDeployments(
 	const list = await pagedGet(
 		db,
 		`installation:${installationId}:repo:${repositoryId}:deployments`,
-		`https://api.github.com/repositories/${repositoryId}/deployments?per_page=20`,
+		`https://api.github.com/repositories/${repositoryId}/deployments?per_page=100`,
 		request,
 		{ operation: "deployments", repository },
 	);
 	if (list.kind !== "changed" || !Array.isArray(list.body)) return list;
+	const pendingStates = new Set(["pending", "in_progress", "queued", "requested", "waiting", "expected"]);
+	const knownPending = new Map(
+		(await db.deployments.find({ repositoryId, state: { $in: [...pendingStates] } }).toArray()).map((item) => [
+			String(item.deploymentId ?? item.id ?? ""),
+			item,
+		]),
+	);
+	const cutoff = now.getTime() - 48 * 60 * 60_000;
+	const recent = (item: Record<string, unknown>) => {
+		const timestamp = Date.parse(String(item.created_at ?? item.updated_at ?? ""));
+		return !Number.isFinite(timestamp) || timestamp >= cutoff;
+	};
+	const rows = new Map(
+		list.body
+			.map((item) => item as Record<string, unknown>)
+			.filter((item) => {
+				const key = String(item.id ?? "");
+				return key && (recent(item) || knownPending.has(key));
+			})
+			.map((item) => [String(item.id), item]),
+	);
+	for (const [id, item] of knownPending) if (!rows.has(id)) rows.set(id, { ...item, id });
 	const deployments: Record<string, unknown>[] = [];
-	for (const item of list.body) {
+	for (const item of rows.values()) {
 		const deployment = item as Record<string, unknown>;
 		const status = await pagedGet(
 			db,
@@ -1997,7 +2039,7 @@ export async function reconcileInstallations(
 			trigger: "manual",
 			startedAt,
 			status: "running",
-		} as ReconciliationRunDocument);
+		});
 		return { id, startedAt };
 	};
 	const finishStandaloneRun = async (run: { id: string; startedAt: Date }, result: ReadResult) => {

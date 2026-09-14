@@ -313,6 +313,7 @@ test("finite failure details reject hostile payloads and invalid codes", () => {
 		[{ name: "MongoServerSelectionError" }, "server_selection"],
 		[{ name: "MongoServerError" }, "database"],
 		[{ name: "BSONError" }, "serialization"],
+		[{ name: "DomainDocumentSizeError", message: "secret payload" }, "domain_size"],
 		[null, "unknown"],
 		["Garak secret", "unknown"],
 		[{ name: "Garak secret", diagnostic: "Garak secret" }, "unknown"],

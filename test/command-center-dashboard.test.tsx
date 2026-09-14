@@ -534,7 +534,11 @@ test("presents only authoritative OpenSpec tasks on cards and status details", a
 	expect([...viewers].some((viewer) => viewer.textContent?.includes("All tasks complete."))).toBe(true);
 });
 
-test("filters, orders, clears, and persists the operational card view", async () => {
+test("filters, orders, and clears the operational card view", async () => {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (_url, init) => Response.json(JSON.parse(init.body))),
+	);
 	const store = new Map<string, string>();
 	vi.stubGlobal("localStorage", {
 		getItem: (key: string) => store.get(key) ?? null,

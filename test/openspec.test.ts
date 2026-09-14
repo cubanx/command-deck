@@ -105,6 +105,57 @@ test("projects installation-scoped OpenSpec progress", () =>
 		expect((await db.pullRequests.findOne({ _id: "r:7" }))?.open_specs).toHaveLength(0);
 	}));
 
+test("prefers an exact commit owner and preserves archived task paths", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await bindInstallation(db, "sisko", "1", "cubanx");
+		await seedPr(db);
+		await upsertPullRequest(db, {
+			repositoryId: "r",
+			number: 8,
+			state: "open",
+			author_login: "sisko",
+			head_sha: "b".repeat(40),
+			head_ref: "main",
+		});
+		await upsertPullRequest(db, {
+			repositoryId: "r",
+			number: 7,
+			open_specs: [{ change_name: "unrelated", source_commit: "b".repeat(40) }],
+		});
+		await projectOpenSpec(db, {
+			installationId: "1",
+			accountLogin: "cubanx",
+			repositoryId: "r",
+			path: "openspec/changes/archive/2030-01-01-defiant/tasks.md",
+			changeName: "defiant",
+			content: "- [x] Archived",
+			sha: "b".repeat(40),
+			sourceRef: "main",
+		});
+		const owner = await db.pullRequests.findOne({ _id: "r:8" });
+		expect(owner?.open_specs).toMatchObject([
+			{
+				change_name: "defiant",
+				source_commit: "b".repeat(40),
+				source_url:
+					"https://github.com/ds9/ops/blob/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/openspec/changes/archive/2030-01-01-defiant/tasks.md",
+			},
+		]);
+		expect(
+			await projectOpenSpec(db, {
+				installationId: "1",
+				accountLogin: "cubanx",
+				repositoryId: "r",
+				path: "openspec/changes/defiant/tasks.md",
+				changeName: "defiant",
+				content: "- [x] Branch",
+				sha: "c".repeat(40),
+				sourceRef: "main",
+			}),
+		).toEqual({ changed: false, completed: false });
+	}));
+
 test("keeps total progress while ignoring only exact post-merge groups for readiness", () => {
 	const progress = parseTasks(`## Build
 - [x] Implement

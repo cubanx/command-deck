@@ -494,6 +494,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 			const runs = await db.reconciliationRuns.find({ trigger: "manual" }).sort({ installationId: 1 }).toArray();
 			expect(runs).toHaveLength(2);
 			for (const run of runs) {
+				if (run.status !== "completed") throw new Error("reconciliation run did not complete");
 				expect(run).toMatchObject({
 					prCount: 2,
 					changedPrCount: 1,
@@ -501,7 +502,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 					unresolvedDeliveryCount: 1,
 				});
 				expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
-				expect(run.changedPrCount + run.unchangedPrCount).toBe(run.prCount);
+				expect(run.changedPrCount! + run.unchangedPrCount!).toBe(run.prCount);
 			}
 		} finally {
 			await app.stop();
@@ -546,7 +547,10 @@ test("broad reconciliation records each installation's own elapsed duration", as
 			const first = runs.find((run) => run.installationId === "9");
 			const second = runs.find((run) => run.installationId === "10");
 			if (!first || !second) throw new Error("reconciliation runs missing");
-			for (const run of runs) expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
+			for (const run of runs) {
+				if (run.status !== "completed") throw new Error("reconciliation run did not complete");
+				expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
+			}
 			expect(second.durationMs).toBeGreaterThan(0);
 			expect(first.durationMs).toBeGreaterThan(0);
 		} finally {
@@ -640,6 +644,41 @@ test("targeted persistence reports safe details once through the real server rep
 			write.mockRestore();
 			fetcher.mockRestore();
 			log.mockRestore();
+			await app.stop();
+		}
+	}));
+
+test("broad reconciliation reserves its slot before run bookkeeping awaits", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await bindInstallation(db, "sisko", "9", "cubanx");
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fictional" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async () => [],
+			},
+		);
+		await app.drain();
+		await app.stop();
+		let release!: () => void, entered!: () => void;
+		const gate = new Promise<void>((r) => (release = r)),
+			started = new Promise<void>((r) => (entered = r));
+		const insert = db.reconciliationRuns.insertOne.bind(db.reconciliationRuns);
+		const spy = vi.spyOn(db.reconciliationRuns, "insertOne").mockImplementationOnce(async (...args) => {
+			entered();
+			await gate;
+			return insert(...args);
+		});
+		const first = app.reconcile();
+		try {
+			await started;
+			expect(await app.reconcile()).toBe("running");
+		} finally {
+			release();
+			await first;
+			spy.mockRestore();
 			await app.stop();
 		}
 	}));

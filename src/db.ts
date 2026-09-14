@@ -148,26 +148,29 @@ export type ReconciliationRun = {
 	repairedDeliveryCount: number;
 	outcome: "success" | "partial_failure" | "failure";
 };
-export type ReconciliationRunDocument = {
+type RunningReconciliationRun = Pick<ReconciliationRun, "installationId" | "trigger" | "startedAt"> & {
 	_id?: string;
-	installationId: string;
-	trigger: ReconciliationRun["trigger"];
-	startedAt: Date;
-	status?: "running" | "completed";
-	completedAt: Date;
-	durationMs: number;
-	prCount: number;
-	providerRequestCount: number;
-	changedPrCount: number;
-	unchangedPrCount: number;
-	changedFieldCategories: string[];
-	failureCount: number;
-	unresolvedDeliveryCount: number;
-	repairedDeliveryCount: number;
-	outcome: ReconciliationRun["outcome"];
-	operation?: string;
-	summary?: string;
+	status: "running";
+	completedAt?: never;
+	durationMs?: never;
+	prCount?: never;
+	providerRequestCount?: never;
+	changedPrCount?: never;
+	unchangedPrCount?: never;
+	changedFieldCategories?: never;
+	failureCount?: never;
+	unresolvedDeliveryCount?: never;
+	repairedDeliveryCount?: never;
+	outcome?: never;
+	operation?: never;
+	summary?: never;
 };
+export type ReconciliationRunDocument =
+	| RunningReconciliationRun
+	| (Pick<ReconciliationRun, "installationId" | "trigger" | "startedAt" | "completedAt" | "durationMs" | "outcome"> &
+			Partial<
+				Omit<ReconciliationRun, "installationId" | "trigger" | "startedAt" | "completedAt" | "durationMs" | "outcome">
+			> & { _id?: string; status: "completed"; operation?: string; summary?: string });
 export type Db = {
 	mongo: MongoDb;
 	users: Collection<UserDocument>;
@@ -274,11 +277,23 @@ export async function closeDatabase(db: Db) {
 }
 
 const MAX_DOMAIN_BSON_BYTES = 12 * 1024 * 1024;
-export async function upsertPullRequest(db: Db, input: PullRequest & { repositoryId: string; number: number }) {
+export async function upsertPullRequest(
+	db: Db,
+	input: PullRequest & { repositoryId: string; number: number },
+	expected?: { revision?: number; head_sha?: unknown; absent?: boolean },
+) {
 	const { _id: ignoredId, updatedAt: ignoredTime, revision: ignoredRevision, ...patch } = input;
 	const _id = `${input.repositoryId}:${input.number}`;
 	for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
 		const existing = await db.pullRequests.findOne({ _id });
+		if (
+			expected &&
+			(expected.absent
+				? existing
+				: !existing || expected.revision !== existing.revision || expected.head_sha !== existing.head_sha)
+		)
+			return false;
+		if (existing?.merged === true && (input.state === "open" || input.merged === false)) return false;
 		const incomingTime = Date.parse(String(input.updated_at ?? ""));
 		const existingTime = Date.parse(String(existing?.updated_at ?? ""));
 		if (existing && Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime < existingTime)

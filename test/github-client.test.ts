@@ -1012,6 +1012,75 @@ test("targeted repair removes a closed PR and preserves prior evidence on partia
 		});
 	}));
 
+test.each(["2030-01-02T00:00:00Z", "2030-01-03T00:00:00Z"])(
+	"targeted reconciliation never downgrades a merged PR at an equal or newer timestamp (%s)",
+	(updatedAt) =>
+		withDatabase(async (db) => {
+			await upsertIdentity(db, "u", "sisko");
+			await bindInstallation(db, "u", "9", "cubanx");
+			await seedRepositories(db, "u", {
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{
+						number: 7,
+						state: "closed",
+						merged: true,
+						title: "Retain the merge",
+						updated_at: "2030-01-02T00:00:00Z",
+						head_sha: "a".repeat(40),
+					},
+				],
+				deployments: [],
+			});
+			const result = await reconcilePullRequest(db, {
+				installationId: "9",
+				repositoryId: "2",
+				number: 7,
+				token: "token",
+				fetcher: async (url) => {
+					const value = String(url);
+					if (value.endsWith("/graphql"))
+						return Response.json({
+							data: {
+								repository: {
+									pullRequest: {
+										state: "OPEN",
+										merged: false,
+										isDraft: false,
+										createdAt: "2030-01-01T00:00:00Z",
+										updatedAt,
+										title: "Provider says open",
+										body: "",
+										url: "https://github.com/ds9/ops/pull/7",
+										headRefName: "feature/retain-merge",
+										headRefOid: "a".repeat(40),
+										baseRefName: "main",
+										mergeable: "MERGEABLE",
+										reviewDecision: null,
+										reviewRequests: { totalCount: 0 },
+										labels: { nodes: [], pageInfo: { hasNextPage: false } },
+										reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+										reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+										statusCheckRollup: { contexts: { nodes: [], pageInfo: { hasNextPage: false } } },
+									},
+								},
+							},
+						});
+					if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
+					if (value.includes("/pulls/7/files")) return Response.json([]);
+					throw new Error(`unexpected downgrade request ${value}`);
+				},
+			});
+			expect(result.kind).toBe("unchanged");
+			expect(await db.pullRequests.findOne({ _id: "2:7" })).toMatchObject({
+				state: "closed",
+				merged: true,
+				title: "Retain the merge",
+			});
+		}),
+);
+
 test("unconditional reads retry a 304 and reject a second bodyless response", () =>
 	withDatabase(async (db) => {
 		let headers: Headers | undefined;
@@ -1403,7 +1472,7 @@ test("installation bootstrap preserves concurrent PR fields without double count
 		if (result.kind !== "changed") throw new Error("expected bootstrap result");
 		expect(Number(result.changedPrCount) + Number(result.unchangedPrCount)).toBe(2);
 		expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toMatchObject([
-			{ number: 7, title: "Changed", review_state: "approved" },
+			{ number: 7, title: "Prior", review_state: "approved" },
 			{ number: 8, title: "Same" },
 		]);
 	}));
@@ -1489,6 +1558,54 @@ test("bootstrap retains recent deployments beyond the old twenty-row cap", () =>
 		expect(statuses).toBe(21);
 		if (result.kind !== "changed") throw new Error("expected changed result");
 		expect(result.body).toHaveLength(21);
+	}));
+
+test("bootstrap skips old deployments, keeps recent rows, and tracks known pending rows", () =>
+	withDatabase(async (db) => {
+		await upsertDeployment(db, {
+			repositoryId: "2",
+			deploymentId: "known-pending",
+			id: "known-pending",
+			state: "pending",
+			created_at: "2029-12-31T00:00:00Z",
+		});
+		const statusCalls: string[] = [];
+		const result = await bootstrapDeployments(
+			db,
+			"9",
+			"2",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/statuses")) {
+					statusCalls.push(value);
+					return Response.json([]);
+				}
+				return Response.json([
+					...Array.from({ length: 100 }, (_, index) => ({
+						id: index + 1,
+						created_at: "2029-12-31T00:00:00Z",
+					})),
+					...Array.from({ length: 21 }, (_, index) => ({
+						id: index + 101,
+						created_at: "2030-01-02T00:00:00Z",
+					})),
+				]);
+			},
+			undefined,
+			new Date("2030-01-03T00:00:00Z"),
+		);
+		expect(result.kind).toBe("changed");
+		expect(statusCalls).toHaveLength(22);
+		expect(statusCalls.some((value) => value.includes("/deployments/1/statuses"))).toBe(false);
+		expect(statusCalls.some((value) => value.includes("/deployments/101/statuses"))).toBe(true);
+		expect(statusCalls.some((value) => value.includes("/deployments/known-pending/statuses"))).toBe(true);
+		if (result.kind !== "changed") throw new Error("expected changed result");
+		const body = result.body as Array<Record<string, unknown>>;
+		expect(body).toHaveLength(22);
+		expect(body.some((item) => item.id === "1")).toBe(false);
+		expect(body.some((item) => item.id === "121")).toBe(true);
+		expect(body.some((item) => item.id === "known-pending")).toBe(true);
 	}));
 
 test("deployment status retries a 304 to obtain authoritative state", () =>

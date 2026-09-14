@@ -4,7 +4,7 @@ import { reconcilePullRequest } from "#/github";
 import { projectOpenSpec } from "#/openspec";
 import { withDatabase } from "./mongo-support";
 
-test("merged PRs retain merge-commit OpenSpec evidence beside default-branch progress", () =>
+test.each([false, true])("merged PRs retain merge evidence when later fetch fails=%s", (failLater) =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
@@ -18,53 +18,60 @@ test("merged PRs retain merge-commit OpenSpec evidence beside default-branch pro
 		const mergeSha = "c".repeat(40);
 		const defaultSha = "d".repeat(40);
 		const connection = { nodes: [], pageInfo: { hasNextPage: false } };
-		const result = await reconcilePullRequest(db, {
-			installationId: "9",
-			repositoryId: "2",
-			number: 143,
-			token: "fictional",
-			fetcher: async (url) => {
-				const value = String(url);
-				if (value.endsWith("/graphql"))
-					return Response.json({
-						data: {
-							repository: {
-								pullRequest: {
-									state: "MERGED",
-									merged: true,
-									isDraft: false,
-									createdAt: "2026-08-20T12:00:00Z",
-									updatedAt: "2026-08-24T12:00:00Z",
-									title: "Retain the follow-up",
-									body: "## OpenSpecs\n- retain-follow-up",
-									url: "https://github.com/ds9/ops/pull/143",
-									headRefName: "feature/retain-follow-up",
-									headRefOid: "a".repeat(40),
-									baseRefName: "main",
-									mergeCommit: { oid: mergeSha },
-									mergedAt: "2026-08-25T12:00:00Z",
-									author: { login: "sisko" },
-									mergeable: "MERGEABLE",
-									reviewDecision: null,
-									labels: connection,
-									reviewRequests: { totalCount: 0 },
-									reviews: connection,
-									reviewThreads: connection,
-									statusCheckRollup: { contexts: connection },
+		let failMerge = false,
+			finishDefault = false;
+		const reconcile = () =>
+			reconcilePullRequest(db, {
+				installationId: "9",
+				repositoryId: "2",
+				number: 143,
+				token: "fictional",
+				fetcher: async (url) => {
+					const value = String(url);
+					if (value.endsWith("/graphql"))
+						return Response.json({
+							data: {
+								repository: {
+									pullRequest: {
+										state: "MERGED",
+										merged: true,
+										isDraft: false,
+										createdAt: "2026-08-20T12:00:00Z",
+										updatedAt: "2026-08-24T12:00:00Z",
+										title: "Retain the follow-up",
+										body: "## OpenSpecs\n- retain-follow-up",
+										url: "https://github.com/ds9/ops/pull/143",
+										headRefName: "feature/retain-follow-up",
+										headRefOid: "a".repeat(40),
+										baseRefName: "main",
+										mergeCommit: { oid: mergeSha },
+										mergedAt: "2026-08-25T12:00:00Z",
+										author: { login: "sisko" },
+										mergeable: "MERGEABLE",
+										reviewDecision: null,
+										labels: connection,
+										reviewRequests: { totalCount: 0 },
+										reviews: connection,
+										reviewThreads: connection,
+										statusCheckRollup: { contexts: connection },
+									},
 								},
 							},
-						},
-					});
-				if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
-				if (value.endsWith("/repos/ds9/ops")) return Response.json({ default_branch: "main" });
-				if (value.includes("/commits/main")) return Response.json({ sha: defaultSha });
-				throw new Error(`unexpected evidence request ${value}`);
-			},
-			fetchTasks: async ({ sha }) =>
-				sha === mergeSha
-					? "## Merge evidence [post-merge]\n- [ ] Original obligation"
-					: "## Current progress [post-merge]\n- [x] Original obligation\n- [ ] Follow-up obligation",
-		});
+						});
+					if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
+					if (value.endsWith("/repos/ds9/ops")) return Response.json({ default_branch: "main" });
+					if (value.includes("/commits/main")) return Response.json({ sha: defaultSha });
+					throw new Error(`unexpected evidence request ${value}`);
+				},
+				fetchTasks: async ({ sha }) => {
+					if (failMerge && sha === mergeSha) throw new Error("Defiant evidence unavailable");
+					if (finishDefault && sha !== mergeSha) return "## Current progress [post-merge]\n- [x] Original obligation";
+					return sha === mergeSha
+						? "## Merge evidence [post-merge]\n- [ ] Original obligation"
+						: "## Current progress [post-merge]\n- [x] Original obligation\n- [ ] Follow-up obligation";
+				},
+			});
+		const result = await reconcile();
 		expect(result.kind).toBe("changed");
 		const stored = await db.pullRequests.findOne({ repositoryId: "2", number: 143 });
 		expect(stored).toMatchObject({
@@ -73,6 +80,12 @@ test("merged PRs retain merge-commit OpenSpec evidence beside default-branch pro
 		});
 		expect(stored?.merged_open_specs).toMatchObject([{ source_commit: mergeSha, completed: 0, total: 1 }]);
 		expect(stored?.open_specs).toMatchObject([{ source_commit: defaultSha, completed: 1, total: 2 }]);
+		if (failLater) {
+			failMerge = true;
+			finishDefault = true;
+			await reconcile();
+			expect((await db.pullRequests.findOne({ _id: "2:143" }))?.merged_open_specs).toEqual(stored?.merged_open_specs);
+		}
 		await projectOpenSpec(db, {
 			installationId: "9",
 			accountLogin: "cubanx",
@@ -85,4 +98,5 @@ test("merged PRs retain merge-commit OpenSpec evidence beside default-branch pro
 		const refreshed = await db.pullRequests.findOne({ repositoryId: "2", number: 143 });
 		expect(refreshed?.merged_open_specs).toMatchObject([{ source_commit: mergeSha, completed: 0, total: 1 }]);
 		expect(refreshed).toMatchObject({ post_merge_source_commit: "e".repeat(40) });
-	}));
+	}),
+);

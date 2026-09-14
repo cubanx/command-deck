@@ -70,6 +70,23 @@ const initialDashboardView = (
 	};
 };
 
+const saveDashboardPreferences = async (body: object) => {
+	const response = await fetch("/api/preferences", {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	});
+	if (!response.ok) throw new Error("Unable to save preferences. Try again.");
+	try {
+		const saved = await response.json();
+		if (!saved || typeof saved !== "object" || Array.isArray(saved))
+			throw new TypeError("Invalid preferences response");
+		return saved as DashboardPreferences;
+	} catch {
+		throw new Error("Unable to save preferences. Try again.");
+	}
+};
+
 export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 	const queryClient = useQueryClient();
 	const repositoryRows = useMemo(
@@ -81,19 +98,12 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 	const [view, setView] = useState<Partial<ViewState>>(() => initialDashboardView(snapshot, repositoryRows));
 	const preferences = useMutation({
 		scope: { id: "dashboard-preferences" },
-		onSuccess: (_result, body) => {
+		onSuccess: (saved) => {
 			queryClient.setQueryData(snapshotQueryOptions.queryKey, (current) =>
-				current ? { ...current, preferences: body as DashboardPreferences } : current,
+				current ? { ...current, preferences: saved } : current,
 			);
 		},
-		mutationFn: async (body: object) => {
-			const response = await fetch("/api/preferences", {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-			});
-			if (!response.ok) throw new Error("Unable to save preferences. Try again.");
-		},
+		mutationFn: saveDashboardPreferences,
 	});
 	const save = preferences.mutate;
 	useEffect(() => {

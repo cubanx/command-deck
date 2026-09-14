@@ -28,23 +28,27 @@ test("reconciliation records an unfinished run, completes once, and scopes reads
 		expect(await reconciliationRunsForUser(db, "1701")).toEqual([]);
 	}));
 
-test("run summaries discard unknown payload fields and native TTL preserves unfinished runs", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "1701", "sisko");
-		await bindInstallation(db, "1701", "42", "cubanx");
-		const old = new Date(Date.now() - 73 * 60 * 60_000);
-		const activeId = await beginReconciliationRun(db, { installationId: "42", trigger: "startup" }, old);
-		const doneId = await beginReconciliationRun(db, { installationId: "42", trigger: "startup" }, old);
-		const summary = {
-			outcome: "failure" as const,
-			failureCount: 1,
-			payload: "fictional-secret-must-not-persist",
-			message: "fictional-secret-must-not-persist",
-		};
-		await finishReconciliationRun(db, doneId, summary, old);
-		expect(JSON.stringify(await reconciliationRunsForUser(db, "1701"))).not.toContain("fictional-secret");
-		await expect
-			.poll(async () => db.reconciliationRuns.countDocuments({ completedAt: { $exists: true } }), { timeout: 10000 })
-			.toBe(0);
-		expect(await reconciliationRunsForUser(db, "1701")).toMatchObject([{ _id: activeId, status: "running" }]);
-	}));
+test(
+	"run summaries discard unknown payload fields and native TTL preserves unfinished runs",
+	() =>
+		withDatabase(async (db) => {
+			await upsertIdentity(db, "1701", "sisko");
+			await bindInstallation(db, "1701", "42", "cubanx");
+			const old = new Date(Date.now() - 73 * 60 * 60_000);
+			const activeId = await beginReconciliationRun(db, { installationId: "42", trigger: "startup" }, old);
+			const doneId = await beginReconciliationRun(db, { installationId: "42", trigger: "startup" }, old);
+			const summary = {
+				outcome: "failure" as const,
+				failureCount: 1,
+				payload: "fictional-secret-must-not-persist",
+				message: "fictional-secret-must-not-persist",
+			};
+			await finishReconciliationRun(db, doneId, summary, old);
+			expect(JSON.stringify(await reconciliationRunsForUser(db, "1701"))).not.toContain("fictional-secret");
+			await expect
+				.poll(async () => db.reconciliationRuns.countDocuments({ completedAt: { $exists: true } }), { timeout: 75_000 })
+				.toBe(0);
+			expect(await reconciliationRunsForUser(db, "1701")).toMatchObject([{ _id: activeId, status: "running" }]);
+		}),
+	90_000,
+);

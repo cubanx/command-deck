@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
+
+import { QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { OperationalDashboard } from "#/features/command-center/dashboard";
+import { snapshotQueryOptions } from "#/features/command-center/snapshot";
 import { renderFrontend } from "#/web/test-harness";
 
 afterEach(() => {
@@ -26,15 +29,26 @@ const snapshot = {
 	},
 };
 test("restores server preferences without saving defaults, saves stable IDs, and restores another session", async () => {
-	const fetch = vi.fn(async (_url: string, _options?: RequestInit) => Response.json({}));
+	const fetch = vi.fn(async (_url: string, _options?: RequestInit) =>
+		Response.json({ repositoryIds: ["302"], sort: { mode: "opened", direction: "asc" }, filters: { query: "saved" } }),
+	);
 	vi.stubGlobal("fetch", fetch);
-	const first = renderFrontend(<OperationalDashboard snapshot={snapshot} />);
+	const queryClient = new QueryClient();
+	queryClient.setQueryData(snapshotQueryOptions.queryKey, snapshot);
+	const first = renderFrontend(<OperationalDashboard snapshot={snapshot} />, queryClient);
 	expect((first.getByLabelText("Sort pull requests") as HTMLSelectElement).value).toBe("updated:desc");
 	expect((first.getByLabelText("Search pull requests") as HTMLInputElement).value).toBe("shields");
 	expect(first.getByRole("button", { name: /ds9\/prometheus/ }).getAttribute("aria-pressed")).toBe("false");
 	expect(fetch).not.toHaveBeenCalled();
 	fireEvent.click(first.getByRole("button", { name: /ds9\/prometheus/ }));
 	await waitFor(() => expect(fetch).toHaveBeenCalled());
+	await waitFor(() =>
+		expect(queryClient.getQueryData(snapshotQueryOptions.queryKey)?.preferences).toEqual({
+			repositoryIds: ["302"],
+			sort: { mode: "opened", direction: "asc" },
+			filters: { query: "saved" },
+		}),
+	);
 	const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
 	expect(body.repositoryIds).toBeNull();
 	expect(body.sort).toEqual({ mode: "updated", direction: "desc" });

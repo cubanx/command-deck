@@ -509,7 +509,7 @@ const projectPullRequestEvent = async (context: GitHubProjectionContext) => {
 	const pr = data.pull_request;
 	const number = Number(pr?.number);
 	if (event !== "pull_request" || !pr || !Number.isSafeInteger(number) || number <= 0) return false;
-	const previous = await db.pullRequests.findOne({ _id: `${repositoryId}:${number}` });
+	const previous = repository.pullRequests.find((item) => item.number === number);
 	const before = previous ? { ...previous } : undefined;
 	projectPullRequest(repository, data, pr.user?.login);
 	const next = repository.pullRequests.find((item) => item.number === number) as Record<string, unknown> | undefined;
@@ -517,7 +517,7 @@ const projectPullRequestEvent = async (context: GitHubProjectionContext) => {
 	if (!next) {
 		if (previous)
 			changed = await deletePullRequest(db, `${repositoryId}:${number}`, {
-				revision: previous.revision,
+				revision: previous.revision as number | undefined,
 				updated_at: previous.updated_at,
 			});
 	} else {
@@ -528,7 +528,7 @@ const projectPullRequestEvent = async (context: GitHubProjectionContext) => {
 			previous && Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime < existingTime;
 		if (!stale && previous)
 			changed = await patchPullRequest(db, `${repositoryId}:${number}`, patch, unset, {
-				revision: previous.revision,
+				revision: previous.revision as number | undefined,
 				head_sha: previous.head_sha,
 				source_commit: previous.source_commit,
 			});
@@ -644,6 +644,22 @@ const supportedGitHubEvents = new Set([
 	"push",
 ]);
 
+const scopedDeploymentFilter = (repositoryId: string, event: string, data: GitHubPayload) => {
+	const deploymentId = id(data.deployment?.id);
+	const deploymentShas = [
+		event === "pull_request" && data.action === "closed" ? data.pull_request?.head?.sha : undefined,
+		event === "pull_request" && data.action === "closed" ? data.pull_request?.merge_commit_sha : undefined,
+		event === "deployment" || event === "deployment_status" ? data.deployment?.sha : undefined,
+	]
+		.map(exactHeadSha)
+		.filter((sha): sha is string => Boolean(sha));
+	return deploymentId
+		? { _id: `${repositoryId}:${deploymentId}` }
+		: deploymentShas.length
+			? { repositoryId, sha: { $in: [...new Set(deploymentShas)] } }
+			: undefined;
+};
+
 const loadGitHubProjectionContext = async (
 	db: Db,
 	event: string,
@@ -677,15 +693,7 @@ const loadGitHubProjectionContext = async (
 	);
 	const pullRequestFilter = scopedPullRequestFilter(repositoryId, event, data);
 	const pullRequests = pullRequestFilter ? await db.pullRequests.find(pullRequestFilter).toArray() : [];
-	const deploymentId = id(data.deployment?.id);
-	const deploymentSha =
-		(event === "pull_request" && data.action === "closed" ? data.pull_request?.head?.sha : undefined) ??
-		(event === "deployment" || event === "deployment_status" ? data.deployment?.sha : undefined);
-	const deploymentFilter = deploymentId
-		? { _id: `${repositoryId}:${deploymentId}` }
-		: exactHeadSha(deploymentSha)
-			? { repositoryId, sha: deploymentSha }
-			: undefined;
+	const deploymentFilter = scopedDeploymentFilter(repositoryId, event, data);
 	const recentMergedPullRequests = pullRequests
 		.filter(
 			(pr) =>
@@ -874,7 +882,7 @@ export async function drainInbox(
 				})
 				.sort({ receivedAt: 1 })
 				.toArray();
-		for (const row of rows)
+		for (const row of rows) {
 			try {
 				if (row.provider !== "github") {
 					await db.inboxDeliveries.updateOne(
@@ -887,6 +895,7 @@ export async function drainInbox(
 					continue;
 				}
 				const processingStartedAt = row.processingStartedAt ?? now();
+				const replay = Boolean(row.processingStartedAt);
 				await db.inboxDeliveries.updateOne(
 					{ _id: row._id, processingStartedAt: { $exists: false } },
 					{ $set: { processingStartedAt } },
@@ -921,7 +930,7 @@ export async function drainInbox(
 				);
 				const installationId = verification.installationId;
 				const changedUsers =
-					projection.changed && installationId
+					(projection.changed || replay) && installationId
 						? (await db.bindings.find({ installationId }, { projection: { userId: 1 } }).toArray()).map(
 								(binding) => binding.userId,
 							)
@@ -987,6 +996,7 @@ export async function drainInbox(
 					},
 				);
 			}
+		}
 		const next = await db.inboxDeliveries
 			.find({
 				status: { $in: ["pending", "pending_verification"] },

@@ -1,6 +1,6 @@
 # Aggregate boundaries discussion
 
-Status: design decisions recorded on 2026-09-13 and incorporated into [split-domain-documents](changes/split-domain-documents/proposal.md). Proposal, design, delta specs and implementation tasks now exist; runtime behavior is not implemented. The proposal chooses 72 hours for completed reconciliation-run retention as an initial diagnostic default, distinct from the explicitly agreed webhook retention.
+Status: design decisions recorded on 2026-09-13 and incorporated into [split-domain-documents](changes/split-domain-documents/proposal.md). Runtime implementation, review corrections, and local validation are complete and recorded in the change evidence. Production reset, deployment, and acceptance remain pending. Completed reconciliation runs and completed webhook receipts both use 72-hour retention.
 
 ## Agreed boundaries
 
@@ -15,7 +15,7 @@ Status: design decisions recorded on 2026-09-13 and incorporated into [split-dom
 
 ## Authentication and action records
 
-- **Reconciliation run:** one document per run, owning installation/repository scope, status, start/finish times, progress, counts, and sanitized failures. Reference affected domain records without copying their data. Completed runs may expire after a short diagnostic window; the duration remains to be chosen.
+- **Reconciliation run:** one document per run, owning installation/repository scope, status, start/finish times, progress, counts, and sanitized failures. Reference affected domain records without copying their data. Completed runs expire after 72 hours; unfinished runs remain.
 
 - **Session:** retain a separate document per browser/device session, with hashed token identity, user ID, and expiration. Authentication rejects expired sessions immediately, independently of TTL cleanup.
 - **OAuth state:** retain separate short-lived, single-use authorization state with hashed random identity, expiration, and only the context required to complete the flow.
@@ -25,17 +25,17 @@ Status: design decisions recorded on 2026-09-13 and incorporated into [split-dom
 
 Store each ETag alongside the data it validates in the owning domain document. Preserve endpoint, request, and authorization scope; a PR may need separate validators for separate resources. Save corresponding data and its validator together. A 304 preserves that data; it must not turn into an empty result.
 
-Remove the standalone generic provider cache wherever domain state supplies the required data. Do not retain duplicate raw responses without a demonstrated consumer need. Paginated endpoints need special care: current `pagedGet` reconstructs results from cached page bodies and continuation links on 304 responses. An endpoint/page validator cannot validate an entire assembled collection. The redesign must either retain sufficient scoped page data with its owner or fetch that endpoint without conditional caching; do not blindly migrate ETags alone.
+Remove the standalone generic provider cache wherever domain state supplies the required data. Do not retain duplicate raw responses without a demonstrated consumer need. The former `pagedGet` reconstructed results from cached page bodies and continuation links. The implementation now fetches pages unconditionally and retries bodyless 304 responses without interpreting them as empty data. An endpoint/page validator cannot validate an entire assembled collection; future conditional reads must retain the corresponding scoped data.
 
-Implement this with the new aggregate roots, not by adding cache bodies to the existing oversized user aggregate. Runtime cache behavior remains unchanged during this discussion.
+The generic provider cache has been removed from runtime; no cache bodies are added to the user document.
 
 ## Notification decision
 
-PR cards are sufficient; do not build an in-app notification inbox. Remove existing notification producers, storage integration, snapshot notification reads, and notification UI/delivery code in the redesign. Preserve live card refresh independently. The existing Enable Notifications control requests browser notification permission; stored notification records feed browser notifications while the app is running. This is not an existing in-app inbox. The user reports browser notifications have never worked, but would welcome working browser notifications later. Defer that feature; do not retain unused notification infrastructure for it. Production data deletion requires the separately authorized rollout procedure.
+PR cards are sufficient; do not build an in-app notification inbox. The redesign removes notification producers, storage integration, snapshot notification reads, and notification UI/delivery code while preserving live card refresh independently. The former Enable Notifications control requested browser notification permission; stored notification records fed browser notifications while the app was running. That was not an in-app inbox. The user reports browser notifications have never worked, but would welcome working browser notifications later. Defer that feature; do not retain unused notification infrastructure for it. Production data deletion requires the separately authorized rollout procedure.
 
 ## Retention follow-through
 
-The committed `expire-completed-deliveries` implementation and its proposal, design, specs, and tests still use seven days (604800 seconds). Before publication of the revised retention behavior, update those consistently to three days (259200 seconds) and validate. This discussion records the new decision; it does not change production retention or authorize deployment. GitHub reference: https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks.
+The `expire-completed-deliveries` implementation, proposal, design, specs, and tests now use three days (259200 seconds), with local native-TTL validation recorded in the change evidence. Production retention verification remains pending; this discussion does not authorize deployment. GitHub reference: https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks.
 
 ## Shared data and access
 
@@ -51,13 +51,14 @@ Where an event genuinely requires multiple updates, allow a brief intermediate s
 
 Do not migrate or backfill the existing Mongo documents, and do not implement dual reads or dual writes. Start with an empty application database using the new document model. Users sign in, reconnect installations, and reconcile to rebuild GitHub and associated OpenSpec data. Existing sessions, preferences, and operational history are not carried forward. Reconciliation must rebuild the agreed dashboard state, including merged PRs with incomplete post-merge obligations; incoming webhooks supply subsequent changes.
 
-This is the agreed rollout design, not evidence of an executed reset. The exact production target and reset/cutover procedure must be established before live operations under the applicable production access rules.
+This is the agreed rollout design, not evidence of an executed reset. The [clean-start runbook](changes/split-domain-documents/clean-start-runbook.md) records the target and procedure; both require fresh verification and applicable authorization before live operations.
 
-## Remaining discussion
+## Remaining work
 
-- Concrete clean-start rollout and verification are pre-merge runbook and post-merge execution tasks in the proposal.
-- Narrow authentication and dashboard reads are part of implementation, with measurements to distinguish UI latency from processing delays.
+- Publish review corrections and complete GitHub review closure.
+- Execute and verify the clean-start rollout after merge and production authorization.
+- Measure production UI and processing latency; local measurements do not establish a production speedup.
 
 ## Evidence motivating the redesign
 
-The application repeatedly loads the user aggregate containing installations, repositories, PRs, OpenSpec evidence, and deployments. Snapshot authentication and dashboard assembly each fetch the full user document; webhook verification/projection also reads aggregate state. The inbox drain is globally sequential. Production snapshot requests were about 8.8 seconds. The user's Atlas lookup returned one document through the ID index with reported execution time of zero milliseconds, while full-document Find took about five seconds and a projection of ID/login appeared instant. This implicates full-document retrieval but does not isolate transfer, Atlas rendering, throttling, or application processing time. Do not claim the precise production bottleneck has been measured.
+The pre-refactor application repeatedly loaded the user aggregate containing installations, repositories, PRs, OpenSpec evidence, and deployments. Snapshot authentication and dashboard assembly each fetched the full user document; webhook verification/projection also read aggregate state. The inbox drain remains globally sequential. Production snapshot requests were about 8.8 seconds. The user's Atlas lookup returned one document through the ID index with reported execution time of zero milliseconds, while full-document Find took about five seconds and a projection of ID/login appeared instant. This implicates full-document retrieval but does not isolate transfer, Atlas rendering, throttling, or application processing time. Do not claim the precise production bottleneck has been measured.

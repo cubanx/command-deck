@@ -1182,74 +1182,77 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			if (trigger === "startup" && !userId && !scopedInstallationIds) startupPending = true;
 			return "running";
 		}
-		const runInstallationIds =
-			installationIds ??
-			(
-				await db.installations
-					.find(
-						{ active: { $ne: false }, suspended: { $ne: true } },
-						{ projection: { installationId: 1, accountLogin: 1 } },
-					)
-					.toArray()
-			)
-				.filter((installation) => approvedInstallationAccount(installation.accountLogin))
-				.map((installation) => installation.installationId);
 		const runIds = new Map<string, string>();
-		for (const installationId of runInstallationIds)
-			runIds.set(installationId, await beginReconciliationRun(db, { installationId, trigger }));
-		const requestCounts = new Map<string, number>();
-		let activeInstallationId: string | undefined;
-		const countingFetch = (...input: Parameters<typeof fetch>) => {
-			if (activeInstallationId)
-				requestCounts.set(activeInstallationId, (requestCounts.get(activeInstallationId) ?? 0) + 1);
-			return fetch(...input);
-		};
-		const work = reconcileAll(
-			db,
-			async (id) => {
-				activeInstallationId = id;
-				const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
-				return {
-					token: await installationToken(appJwt, id, countingFetch),
-					appJwt,
+		const work = Promise.resolve()
+			.then(async () => {
+				const runInstallationIds =
+					installationIds ??
+					(
+						await db.installations
+							.find(
+								{ active: { $ne: false }, suspended: { $ne: true } },
+								{ projection: { installationId: 1, accountLogin: 1 } },
+							)
+							.toArray()
+					)
+						.filter((installation) => approvedInstallationAccount(installation.accountLogin))
+						.map((installation) => installation.installationId);
+				for (const installationId of runInstallationIds)
+					runIds.set(installationId, await beginReconciliationRun(db, { installationId, trigger }));
+				const requestCounts = new Map<string, number>();
+				let activeInstallationId: string | undefined;
+				const countingFetch = (...input: Parameters<typeof fetch>) => {
+					if (activeInstallationId)
+						requestCounts.set(activeInstallationId, (requestCounts.get(activeInstallationId) ?? 0) + 1);
+					return fetch(...input);
 				};
-			},
-			countingFetch,
-			installationIds,
-			undefined,
-			undefined,
-			async ({ installationId, startedAt, result }) => {
-				const counts = directReconciliationCounts(result);
-				if (result.kind === "changed") for (const userId of await boundUserIds(db, installationId)) refresh(userId);
-				const completedAt = new Date();
-				const repairedDeliveryCount =
-					result.kind !== "changed" || !Array.isArray(result.body)
-						? 0
-						: await markDeliveriesRepairedByReconciliation(
-								db,
-								installationId,
-								result.body.map((repository: { id?: unknown }) => String(repository.id ?? "")),
-							);
-				const unresolvedDeliveryCount = (
-					await db.inboxDeliveries
-						.find({ provider: "github", status: "pending_verification" }, { projection: { payload: 1 } })
-						.toArray()
-				).filter((delivery) => githubPayloadInstallationId(delivery.payload) === installationId).length;
-				const runId = runIds.get(installationId);
-				if (runId)
-					await finishReconciliationRunSafely(db, runId, {
-						prCount: counts.prCount,
-						providerRequestCount: requestCounts.get(installationId) ?? 0,
-						changedPrCount: counts.changedPrCount,
-						unchangedPrCount: counts.unchangedPrCount,
-						failureCount: result.kind === "error" ? 1 : 0,
-						unresolvedDeliveryCount,
-						repairedDeliveryCount,
-						outcome: result.kind === "error" ? "failure" : "success",
-					});
-				runIds.delete(installationId);
-			},
-		)
+				return reconcileAll(
+					db,
+					async (id) => {
+						activeInstallationId = id;
+						const appJwt = githubAppJwt(appId, privateKey.replace(/\\n/g, "\n"));
+						return {
+							token: await installationToken(appJwt, id, countingFetch),
+							appJwt,
+						};
+					},
+					countingFetch,
+					installationIds,
+					undefined,
+					undefined,
+					async ({ installationId, startedAt, result }) => {
+						const counts = directReconciliationCounts(result);
+						if (result.kind === "changed") for (const userId of await boundUserIds(db, installationId)) refresh(userId);
+						const completedAt = new Date();
+						const repairedDeliveryCount =
+							result.kind !== "changed" || !Array.isArray(result.body)
+								? 0
+								: await markDeliveriesRepairedByReconciliation(
+										db,
+										installationId,
+										result.body.map((repository: { id?: unknown }) => String(repository.id ?? "")),
+									);
+						const unresolvedDeliveryCount = (
+							await db.inboxDeliveries
+								.find({ provider: "github", status: "pending_verification" }, { projection: { payload: 1 } })
+								.toArray()
+						).filter((delivery) => githubPayloadInstallationId(delivery.payload) === installationId).length;
+						const runId = runIds.get(installationId);
+						if (runId)
+							await finishReconciliationRunSafely(db, runId, {
+								prCount: counts.prCount,
+								providerRequestCount: requestCounts.get(installationId) ?? 0,
+								changedPrCount: counts.changedPrCount,
+								unchangedPrCount: counts.unchangedPrCount,
+								failureCount: result.kind === "error" ? 1 : 0,
+								unresolvedDeliveryCount,
+								repairedDeliveryCount,
+								outcome: result.kind === "error" ? "failure" : "success",
+							});
+						runIds.delete(installationId);
+					},
+				);
+			})
 			.then(async () => {
 				for (const [installationId, runId] of runIds) {
 					await finishReconciliationRunSafely(db, runId, { outcome: "success" });

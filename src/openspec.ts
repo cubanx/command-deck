@@ -84,7 +84,7 @@ export function parseTasks(content: string) {
 const openSpecProjection = (
 	changeName: string,
 	progress: ReturnType<typeof parseTasks>,
-	input: { content?: string; sha: string; sourceRef?: string },
+	input: { content?: string; sha: string; sourceRef?: string; path: string },
 	fullName?: string,
 ) => ({
 	change_name: changeName,
@@ -93,9 +93,7 @@ const openSpecProjection = (
 	pre_merge_ready: progress.preMergeReady,
 	source_commit: input.sha,
 	...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
-	...(fullName
-		? { source_url: `https://github.com/${fullName}/blob/${input.sha}/openspec/changes/${changeName}/tasks.md` }
-		: {}),
+	...(fullName ? { source_url: `https://github.com/${fullName}/blob/${input.sha}/${input.path}` } : {}),
 	active_group: progress.activeGroup,
 	active_groups: progress.activeGroups,
 	incomplete_groups: progress.incompleteGroups,
@@ -181,6 +179,16 @@ const findOpenSpecOwner = async (db: Db, input: OpenSpecProjectionInput, changeN
 		);
 	});
 	const unique = [...new Map(candidates.map((item) => [item._id, item])).values()];
+	const exact = unique.filter(
+		(candidate) =>
+			candidate.head_sha === input.sha ||
+			(Array.isArray(candidate.open_specs) &&
+				candidate.open_specs.some((item) => {
+					const evidence = item as Record<string, unknown>;
+					return evidence.change_name === changeName && evidence.source_commit === input.sha;
+				})),
+	);
+	if (exact.length) return exact.length === 1 ? exact[0] : undefined;
 	return unique.length === 1 ? unique[0] : undefined;
 };
 

@@ -79,3 +79,33 @@ test("deployment replay preserves newer terminal evidence", () =>
 		).toBe(false);
 		expect(await db.deployments.findOne({ _id: "1701:9" })).toMatchObject({ state: "success", status_id: "20" });
 	}));
+
+test("an expected bootstrap revision remains binding after a CAS retry", () =>
+	withDatabase(async (db) => {
+		await upsertPullRequest(db, { repositoryId: "1701", number: 7, title: "Defiant", head_sha: "a".repeat(40) });
+		const before = await db.pullRequests.findOne({ _id: "1701:7" });
+		const replace = db.pullRequests.replaceOne.bind(db.pullRequests);
+		vi.spyOn(db.pullRequests, "replaceOne").mockImplementationOnce(async (...args) => {
+			await upsertPullRequest(db, { repositoryId: "1701", number: 7, title: "New head", head_sha: "b".repeat(40) });
+			return replace(...args);
+		});
+		expect(
+			await upsertPullRequest(
+				db,
+				{ repositoryId: "1701", number: 7, title: "Old snapshot", head_sha: before!.head_sha },
+				{ revision: before!.revision, head_sha: before!.head_sha },
+			),
+		).toBe(false);
+		expect(await db.pullRequests.findOne({ _id: "1701:7" })).toMatchObject({
+			title: "New head",
+			head_sha: "b".repeat(40),
+		});
+	}));
+
+test.each([{ state: "open" }, { merged: false }])("domain upserts preserve terminal merge evidence (%j)", (patch) =>
+	withDatabase(async (db) => {
+		await upsertPullRequest(db, { repositoryId: "1701", number: 7, state: "closed", merged: true });
+		expect(await upsertPullRequest(db, { repositoryId: "1701", number: 7, ...patch })).toBe(false);
+		expect(await db.pullRequests.findOne({ _id: "1701:7" })).toMatchObject({ state: "closed", merged: true });
+	}),
+);

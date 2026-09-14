@@ -74,15 +74,9 @@ Local `bun run validate:all` first rejects credential-bearing MongoDB URIs in tr
 
 Keep values in the environment or a secret manager. Never commit `.env`, App private keys, webhook secrets, or provider tokens.
 
-## Existing binding handoff
+## Clean-start connection
 
-The post-merge cutover may seed only existing installation bindings, never SQLite data or provider projections:
-
-```bash
-bun run seed:bindings <github-user-id> <installation-id:account-login> [...]
-```
-
-Only the exact account logins `cubanx`, `Crisp-Inc`, and `hudson-law` are accepted. Run it with the approved production Environment only during the separate cutover OpenSpec.
+The domain-document cutover starts with an empty application database. Users sign in, reconnect approved installations through the verified GitHub flow, and reconcile to rebuild projections. Manual binding seeds and legacy data imports are unsupported. Follow the [clean-start runbook](openspec/changes/split-domain-documents/clean-start-runbook.md) only after merge and the required production authorization.
 
 ## Production rollout contract
 
