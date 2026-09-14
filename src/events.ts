@@ -1,7 +1,14 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { ReviewBotConfig } from "#/config";
 import type { Db } from "#/db";
-import { correlateDeploymentPullRequest, mutateUser, retainRecentMergedPullRequests } from "#/db";
+import {
+	correlateDeploymentPullRequest,
+	deletePullRequest,
+	patchPullRequest,
+	retainRecentMergedPullRequests,
+	upsertDeployment,
+	upsertPullRequest,
+} from "#/db";
 import { shouldApplyDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, normalizedLogin, sameLogin } from "#/installations";
 import { changedTaskPaths, projectOpenSpec } from "#/openspec";
@@ -34,50 +41,6 @@ export async function acceptGitHubDelivery(db: Db, deliveryId: string, eventName
 		if ((error as { code?: number }).code === 11000) return { kind: "duplicate" } as const;
 		throw error;
 	}
-}
-export async function notifyUser(
-	db: Db,
-	userId: string,
-	transitionKey: string,
-	title: string,
-	body: string,
-	link?: string,
-) {
-	try {
-		await db.notifications.insertOne({
-			_id: randomUUID(),
-			userId,
-			transitionKey,
-			title,
-			body,
-			link,
-			createdAt: new Date(),
-		});
-	} catch (error) {
-		if ((error as { code?: number }).code !== 11000) throw error;
-	}
-}
-export async function notifyBoundUsers(
-	db: Db,
-	installationId: string,
-	accountLogin: string,
-	key: string,
-	title: string,
-	body: string,
-) {
-	const users = await db.users.find({ "installations.installationId": installationId }).toArray();
-	await Promise.all(
-		users
-			.filter((user) =>
-				user.installations.some(
-					(item) =>
-						item.installationId === installationId &&
-						approvedInstallationAccount(item.accountLogin) &&
-						sameLogin(item.accountLogin, accountLogin),
-				),
-			)
-			.map((user) => notifyUser(db, user._id, key, title, body)),
-	);
 }
 const id = (value: unknown) => (typeof value === "number" || typeof value === "string" ? String(value) : null);
 const safeUrl = (value: unknown) =>
@@ -175,21 +138,6 @@ type TaskFetcher = (input: {
 	sha: string;
 }) => Promise<string | null | { finalTreeAbsent: true }>;
 
-const ensureRepository = (installation: import("./db").Installation, repositoryId: string, fullName: unknown) => {
-	let repository = installation.repositories.find((item) => item.repositoryId === repositoryId);
-	if (!repository) {
-		repository = {
-			repositoryId,
-			full_name: typeof fullName === "string" ? fullName : repositoryId,
-			pullRequests: [],
-			openSpecs: [],
-			deployments: [],
-		};
-		installation.repositories.push(repository);
-	}
-	return repository;
-};
-
 const retainMergedPullRequest = (
 	repository: import("./db").Repository,
 	pr: NonNullable<GitHubPayload["pull_request"]>,
@@ -245,6 +193,7 @@ const projectClosedPullRequest = (
 			retention_candidate: true,
 			merge_sha: exactHeadSha(pr.merge_commit_sha) ?? previous?.merge_sha,
 			merged_at: typeof pr.merged_at === "string" ? pr.merged_at : previous?.merged_at,
+			head_ref: branch(pr.head?.ref) ?? previous?.head_ref,
 			base_ref: branch(pr.base?.ref) ?? previous?.base_ref,
 			head_sha: exactHeadSha(pr.head?.sha) ?? previous?.head_sha,
 			updated_at: pr.updated_at ?? previous?.updated_at ?? new Date().toISOString(),
@@ -261,9 +210,9 @@ const projectClosedPullRequest = (
 		if (recent.length) repository.recentMergedPullRequests = recent;
 		else delete repository.recentMergedPullRequests;
 	}
-	repository.deployments = repository.deployments.map((deployment) =>
-		correlateDeploymentPullRequest(deployment, repository.pullRequests, repository.recentMergedPullRequests),
-	);
+	repository.deployments = repository.deployments.map((deployment) => {
+		return correlateDeploymentPullRequest(deployment, repository.pullRequests, repository.recentMergedPullRequests);
+	});
 	return false;
 };
 
@@ -396,6 +345,46 @@ const projectBotReview = (repository: import("./db").Repository, data: GitHubPay
 	}
 };
 
+const scopedPullRequestFilter = (repositoryId: string, event: string, data: GitHubPayload) => {
+	const numbers =
+		event === "pull_request" ||
+		["pull_request_review", "pull_request_review_comment", "pull_request_review_thread", "issue_comment"].includes(
+			event,
+		)
+			? [Number(data.pull_request?.number ?? data.issue?.number)].filter(
+					(number) => Number.isSafeInteger(number) && number > 0,
+				)
+			: event === "check_run"
+				? (data.check_run?.pull_requests ?? [])
+						.map((item) => Number(item.number))
+						.filter((number) => Number.isSafeInteger(number) && number > 0)
+				: event === "check_suite"
+					? (data.check_suite?.pull_requests ?? [])
+							.map((item) => Number(item.number))
+							.filter((number) => Number.isSafeInteger(number) && number > 0)
+					: event === "workflow_run"
+						? (data.workflow_run?.pull_requests ?? [])
+								.map((item) => Number(item.number))
+								.filter((number) => Number.isSafeInteger(number) && number > 0)
+						: [];
+	if (numbers.length) return { repositoryId, number: { $in: [...new Set(numbers)] } };
+	const sha =
+		event === "check_run"
+			? data.check_run?.head_sha
+			: event === "check_suite"
+				? data.check_suite?.head_sha
+				: event === "workflow_run"
+					? data.workflow_run?.head_sha
+					: event === "status"
+						? data.sha
+						: event === "deployment" || event === "deployment_status"
+							? data.deployment?.sha
+							: undefined;
+	if (exactHeadSha(sha)) return { repositoryId, $or: [{ head_sha: sha }, { merge_sha: sha }] };
+	if (event === "push") return { repositoryId, retention_candidate: true };
+	return undefined;
+};
+
 const projectDeployment = (repository: import("./db").Repository, event: string, data: GitHubPayload) => {
 	if (!data.deployment) return false;
 	const deploymentId = id(data.deployment.id);
@@ -431,49 +420,6 @@ const projectDeployment = (repository: import("./db").Repository, event: string,
 	repository.deployments.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
 	repository.deployments = repository.deployments.slice(0, 20);
 	return ["success", "failure", "error"].includes(nextState) && prior.state !== nextState;
-};
-
-const applyGitHubEvent = (
-	aggregate: import("./db").UserAggregate,
-	installationId: string,
-	repositoryId: string,
-	account: string,
-	event: string,
-	data: GitHubPayload,
-	reviewBot: ReviewBotConfig | undefined,
-) => {
-	const installation = aggregate.installations.find((item) => item.installationId === installationId);
-	if (
-		!installation ||
-		!approvedInstallationAccount(installation.accountLogin) ||
-		!sameLogin(installation.accountLogin, account)
-	)
-		return { mergeabilityChanged: false, terminalTransition: false };
-	const repository =
-		event === "pull_request" || event === "deployment" || event === "deployment_status"
-			? ensureRepository(installation, repositoryId, data.repository?.full_name)
-			: installation.repositories.find((item) => item.repositoryId === repositoryId);
-	if (!repository) return { mergeabilityChanged: false, terminalTransition: false };
-	if (event === "pull_request")
-		return {
-			mergeabilityChanged: projectPullRequest(repository, data, aggregate.github.login),
-			terminalTransition: false,
-		};
-	if (
-		[
-			"pull_request_review",
-			"pull_request_review_comment",
-			"pull_request_review_thread",
-			"check_run",
-			"check_suite",
-			"workflow_run",
-		].includes(event)
-	)
-		projectPullRequestSignal(repository, event, data);
-	if (event === "issue_comment") projectBotReview(repository, data, reviewBot);
-	const terminalTransition =
-		event === "deployment" || event === "deployment_status" ? projectDeployment(repository, event, data) : false;
-	return { mergeabilityChanged: false, terminalTransition };
 };
 
 const projectPush = async (
@@ -531,114 +477,251 @@ const projectPush = async (
 			sourceRef,
 		});
 		changed ||= result.changed;
-		if (result.completed)
-			await notifyBoundUsers(
-				db,
-				installationId,
-				account,
-				`openspec-complete:${repositoryId}:${path}:${data.after}`,
-				"OpenSpec complete",
-				changeName,
-			);
 	}
 	return changed;
 };
 
-const notifyReviewRequest = async (
-	db: Db,
-	data: GitHubPayload,
-	installationId: string,
-	repositoryId: string,
-	account: string,
-) => {
-	if (data.action !== "review_requested" || !data.requested_reviewer?.id) return;
-	const target = await db.users.findOne({
-		_id: String(data.requested_reviewer.id),
-	});
-	if (
-		!target?.installations.some(
-			(item) =>
-				item.installationId === installationId &&
-				approvedInstallationAccount(item.accountLogin) &&
-				sameLogin(item.accountLogin, account),
-		)
-	)
-		return;
-	await notifyUser(
-		db,
-		target._id,
-		`review-request:${repositoryId}:${data.pull_request?.number}:${target._id}`,
-		"Review requested",
-		data.pull_request?.title ?? "Pull request",
-	);
-};
-
-const notifyCheckFailure = async (
-	db: Db,
-	event: string,
-	data: GitHubPayload,
-	installationId: string,
-	repositoryId: string,
-	account: string,
-) => {
-	if (
-		!["check_run", "check_suite"].includes(event) ||
-		!["failure", "timed_out", "cancelled"].includes(String(data.check_run?.conclusion ?? data.check_suite?.conclusion))
-	)
-		return;
-	const number = signalPullRequestNumber(data);
-	const candidates = await db.users.find({ "installations.installationId": installationId }).toArray();
-	for (const candidate of candidates) {
-		const ownsPullRequest = candidate.installations.some(
-			(item) =>
-				item.installationId === installationId &&
-				approvedInstallationAccount(item.accountLogin) &&
-				sameLogin(item.accountLogin, account) &&
-				item.repositories
-					.find((repository) => repository.repositoryId === repositoryId)
-					?.pullRequests.some((pr) => pr.number === number),
-		);
-		if (ownsPullRequest)
-			await notifyUser(
-				db,
-				candidate._id,
-				`check-failed:${repositoryId}:${number}`,
-				"Checks failed",
-				data.repository?.full_name ?? "Repository",
-			);
+const domainPatch = (before: Record<string, unknown> | undefined, after: Record<string, unknown>) => {
+	const patch: Record<string, unknown> = {};
+	const unset: string[] = [];
+	for (const key of new Set([...Object.keys(before ?? {}), ...Object.keys(after)])) {
+		if (["_id", "repositoryId", "number", "revision", "updatedAt"].includes(key)) continue;
+		const next = after[key];
+		if (next === undefined) {
+			if (before?.[key] !== undefined) unset.push(key);
+		} else if (JSON.stringify(before?.[key]) !== JSON.stringify(next)) patch[key] = next;
 	}
+	return { patch, unset };
 };
 
-const notifyProjectionChanges = async (
+type GitHubProjectionContext = {
+	db: Db;
+	data: GitHubPayload;
+	event: string;
+	installationId: string;
+	repositoryId: string;
+	repository: import("./db").Repository;
+	targets: Map<string, ReconciliationTarget>;
+};
+
+const projectPullRequestEvent = async (context: GitHubProjectionContext) => {
+	const { db, data, event, installationId, repositoryId, repository, targets } = context;
+	const pr = data.pull_request;
+	const number = Number(pr?.number);
+	if (event !== "pull_request" || !pr || !Number.isSafeInteger(number) || number <= 0) return false;
+	const previous = await db.pullRequests.findOne({ _id: `${repositoryId}:${number}` });
+	const before = previous ? { ...previous } : undefined;
+	projectPullRequest(repository, data, pr.user?.login);
+	const next = repository.pullRequests.find((item) => item.number === number) as Record<string, unknown> | undefined;
+	let changed = false;
+	if (!next) {
+		if (previous)
+			changed = await deletePullRequest(db, `${repositoryId}:${number}`, {
+				revision: previous.revision,
+				updated_at: previous.updated_at,
+			});
+	} else {
+		const { patch, unset } = domainPatch(before, next);
+		const incomingTime = Date.parse(String(next.updated_at ?? ""));
+		const existingTime = Date.parse(String(previous?.updated_at ?? ""));
+		const stale =
+			previous && Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime < existingTime;
+		if (!stale && previous)
+			changed = await patchPullRequest(db, `${repositoryId}:${number}`, patch, unset, {
+				revision: previous.revision,
+				head_sha: previous.head_sha,
+				source_commit: previous.source_commit,
+			});
+		else if (!stale) changed = await upsertPullRequest(db, { repositoryId, number, ...patch });
+	}
+	if (next) targets.set(`${repositoryId}:${number}`, { installationId, repositoryId, number });
+	return changed;
+};
+
+const projectLifecycleEvents = async (context: GitHubProjectionContext) => {
+	const { db, data, event, installationId, repositoryId, repository, targets } = context;
+	if (
+		![
+			"pull_request_review",
+			"pull_request_review_comment",
+			"pull_request_review_thread",
+			"check_run",
+			"check_suite",
+			"workflow_run",
+			"status",
+		].includes(event)
+	)
+		return false;
+	let changed = false;
+	for (const target of lifecycleTargets(installationId, repository, event, data)) {
+		const before = repository.pullRequests.find((item) => item.number === target.number) as
+			| Record<string, unknown>
+			| undefined;
+		if (!before) continue;
+		const facade = { ...repository, pullRequests: [{ ...before }] };
+		projectPullRequestSignal(facade, event, {
+			...data,
+			pull_request: { ...(data.pull_request ?? {}), number: target.number },
+		});
+		const after = facade.pullRequests[0] as Record<string, unknown>;
+		const { patch, unset } = domainPatch(before, after);
+		changed =
+			(await patchPullRequest(db, `${repositoryId}:${target.number}`, patch, unset, {
+				revision: before.revision as number | undefined,
+				head_sha: before.head_sha,
+				source_commit: before.source_commit,
+			})) || changed;
+		targets.set(`${repositoryId}:${target.number}`, target);
+	}
+	return changed;
+};
+
+const projectIssueCommentEvent = async (context: GitHubProjectionContext, reviewBot?: ReviewBotConfig) => {
+	const { db, data, installationId, repositoryId, repository, targets } = context;
+	if (context.event !== "issue_comment") return false;
+	const targetNumber = Number(data.issue?.number);
+	const before = repository.pullRequests.find((item) => item.number === targetNumber) as
+		| Record<string, unknown>
+		| undefined;
+	if (!before) return false;
+	const facade = { ...repository, pullRequests: [{ ...before }] };
+	projectBotReview(facade, data, reviewBot);
+	const after = facade.pullRequests[0] as Record<string, unknown>;
+	const { patch, unset } = domainPatch(before, after);
+	const changed = await patchPullRequest(db, `${repositoryId}:${targetNumber}`, patch, unset, {
+		revision: before.revision as number | undefined,
+		head_sha: before.head_sha,
+		source_commit: before.source_commit,
+	});
+	targets.set(`${repositoryId}:${targetNumber}`, { installationId, repositoryId, number: targetNumber });
+	return changed;
+};
+
+const projectDeploymentEvent = async (context: GitHubProjectionContext) => {
+	const { db, data, event, repositoryId, repository } = context;
+	if (!["deployment", "deployment_status"].includes(event) || data.deployment?.id == null) return false;
+	const deploymentId = id(data.deployment.id);
+	if (!deploymentId) return false;
+	const before = repository.deployments.find((item) => String(item.id ?? item.deploymentId) === deploymentId) as
+		| Record<string, unknown>
+		| undefined;
+	projectDeployment(repository, event, data);
+	const after = repository.deployments.find((item) => String(item.id ?? item.deploymentId) === deploymentId) as
+		| Record<string, unknown>
+		| undefined;
+	if (!after) return false;
+	const { patch } = domainPatch(before, after);
+	return upsertDeployment(db, { repositoryId, deploymentId, ...patch });
+};
+
+const projectClosedDeploymentCorrelation = async (context: GitHubProjectionContext) => {
+	const { db, data, event, repositoryId, repository } = context;
+	if (event !== "pull_request" || data.action !== "closed") return false;
+	let changed = false;
+	for (const deployment of repository.deployments) {
+		const deploymentId = id(deployment.id ?? deployment.deploymentId);
+		if (!deploymentId) continue;
+		const before = await db.deployments.findOne({ _id: `${repositoryId}:${deploymentId}` });
+		const { patch } = domainPatch(before ?? undefined, deployment);
+		if (Object.keys(patch).length)
+			changed = (await upsertDeployment(db, { repositoryId, deploymentId, ...patch })) || changed;
+	}
+	return changed;
+};
+
+const supportedGitHubEvents = new Set([
+	"pull_request",
+	"pull_request_review",
+	"pull_request_review_comment",
+	"pull_request_review_thread",
+	"check_run",
+	"check_suite",
+	"workflow_run",
+	"status",
+	"issue_comment",
+	"deployment",
+	"deployment_status",
+	"push",
+]);
+
+const loadGitHubProjectionContext = async (
 	db: Db,
 	event: string,
 	data: GitHubPayload,
-	installationId: string,
-	repositoryId: string,
-	account: string,
-	terminalTransition: boolean,
-	mergeabilityUsers: Set<string>,
-) => {
-	if (event === "deployment_status" && terminalTransition && data.deployment && data.deployment_status)
-		await notifyBoundUsers(
-			db,
-			installationId,
-			account,
-			`github-deployment:${repositoryId}:${data.deployment?.id}:${String(data.deployment_status.state).toLowerCase()}`,
-			`Deployment ${String(data.deployment_status.state).toLowerCase()}`,
-			data.repository?.full_name ?? "Repository",
-		);
-	if (data.pull_request)
-		for (const userId of mergeabilityUsers)
-			await notifyUser(
-				db,
-				userId,
-				`mergeability:${repositoryId}:${data.pull_request.number}:${data.pull_request.mergeable}`,
-				"Mergeability changed",
-				data.pull_request.title ?? "Pull request",
-			);
-	if (event === "pull_request") await notifyReviewRequest(db, data, installationId, repositoryId, account);
-	await notifyCheckFailure(db, event, data, installationId, repositoryId, account);
+	resolvedAccount?: string,
+): Promise<{ context: GitHubProjectionContext; account: string } | undefined> => {
+	if (!supportedGitHubEvents.has(event)) return;
+	const installationId = id(data.installation?.id);
+	const repositoryId = id(data.repository?.id);
+	const account = data.installation?.account?.login ?? resolvedAccount;
+	if (!installationId || !repositoryId || !approvedInstallationAccount(account)) return;
+	const installation = await db.installations.findOne(
+		{ _id: installationId },
+		{ projection: { accountLogin: 1, active: 1, suspended: 1 } },
+	);
+	if (
+		!installation ||
+		!approvedInstallationAccount(installation.accountLogin) ||
+		!sameLogin(installation.accountLogin, account) ||
+		installation.active === false ||
+		installation.suspended === true
+	)
+		return;
+	await db.repositories.updateOne(
+		{ _id: repositoryId },
+		{
+			$set: { repositoryId, full_name: String(data.repository?.full_name ?? repositoryId) },
+			$addToSet: { installationIds: installationId },
+		},
+		{ upsert: true },
+	);
+	const pullRequestFilter = scopedPullRequestFilter(repositoryId, event, data);
+	const pullRequests = pullRequestFilter ? await db.pullRequests.find(pullRequestFilter).toArray() : [];
+	const deploymentId = id(data.deployment?.id);
+	const deploymentSha =
+		(event === "pull_request" && data.action === "closed" ? data.pull_request?.head?.sha : undefined) ??
+		(event === "deployment" || event === "deployment_status" ? data.deployment?.sha : undefined);
+	const deploymentFilter = deploymentId
+		? { _id: `${repositoryId}:${deploymentId}` }
+		: exactHeadSha(deploymentSha)
+			? { repositoryId, sha: deploymentSha }
+			: undefined;
+	const recentMergedPullRequests = pullRequests
+		.filter(
+			(pr) =>
+				pr.retention_candidate === true &&
+				Number.isSafeInteger(Number(pr.number)) &&
+				Number(pr.number) > 0 &&
+				typeof pr.title === "string" &&
+				typeof pr.url === "string" &&
+				exactHeadSha(pr.head_sha) &&
+				exactHeadSha(pr.merge_sha) &&
+				typeof pr.merged_at === "string" &&
+				Number.isFinite(Date.parse(pr.merged_at)),
+		)
+		.map((pr) => ({
+			number: Number(pr.number),
+			title: String(pr.title),
+			url: String(pr.url),
+			head_sha: String(pr.head_sha),
+			merge_sha: String(pr.merge_sha),
+			merged_at: String(pr.merged_at),
+		}));
+	const repository = {
+		repositoryId,
+		full_name: String(data.repository?.full_name ?? repositoryId),
+		pullRequests: pullRequests as import("#/db").PullRequest[],
+		openSpecs: [],
+		deployments: (deploymentFilter ? await db.deployments.find(deploymentFilter).toArray() : []) as Record<
+			string,
+			unknown
+		>[],
+		recentMergedPullRequests,
+	};
+	return {
+		account,
+		context: { db, data, event, installationId, repositoryId, repository, targets: new Map() },
+	};
 };
 
 async function projectGitHub(
@@ -650,68 +733,24 @@ async function projectGitHub(
 	reviewBot?: ReviewBotConfig,
 ) {
 	const data = JSON.parse(raw) as GitHubPayload;
-	if (
-		![
-			"pull_request",
-			"pull_request_review",
-			"pull_request_review_comment",
-			"pull_request_review_thread",
-			"check_run",
-			"check_suite",
-			"workflow_run",
-			"status",
-			"issue_comment",
-			"deployment",
-			"deployment_status",
-			"push",
-		].includes(event)
-	)
-		return { status: "ignored" as const, targets: [] };
-	const installationId = id(data.installation?.id);
-	const repositoryId = id(data.repository?.id);
-	const account = data.installation?.account?.login ?? resolvedAccount;
-	if (!installationId || !repositoryId || !approvedInstallationAccount(account))
-		return { status: "ignored" as const, targets: [] };
-	let terminalTransition = false;
-	let changed = false;
-	const mergeabilityUsers = new Set<string>();
-	const targets = new Map<string, ReconciliationTarget>();
-	const users = await db.users
-		.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
-		.toArray();
-	for (const user of users) {
-		let userTerminalTransition = false;
-		let userMergeabilityChanged = false;
-		let userChanged = false;
-		let userTargets: ReconciliationTarget[] = [];
-		await mutateUser(db, user._id, (aggregate) => {
-			const before = JSON.stringify(aggregate);
-			const result = applyGitHubEvent(aggregate, installationId, repositoryId, account, event, data, reviewBot);
-			userTerminalTransition = result.terminalTransition;
-			userMergeabilityChanged = result.mergeabilityChanged;
-			userChanged = before !== JSON.stringify(aggregate);
-			const repository = aggregate.installations
-				.find((item) => item.installationId === installationId)
-				?.repositories.find((item) => item.repositoryId === repositoryId);
-			userTargets = repository ? lifecycleTargets(installationId, repository, event, data) : [];
-		});
-		terminalTransition ||= userTerminalTransition;
-		if (userMergeabilityChanged) mergeabilityUsers.add(user._id);
-		changed ||= userChanged;
-		for (const target of userTargets) targets.set(`${target.repositoryId}:${target.number}`, target);
-	}
-	if (event === "push" && fetchTasks)
-		changed ||= await projectPush(db, data, installationId, repositoryId, account, fetchTasks);
-	await notifyProjectionChanges(
-		db,
-		event,
-		data,
-		installationId,
-		repositoryId,
-		account,
-		terminalTransition,
-		mergeabilityUsers,
-	);
+	const loaded = await loadGitHubProjectionContext(db, event, data, resolvedAccount);
+	if (!loaded) return { status: "ignored" as const, targets: [] };
+	const { context, account } = loaded;
+	const { installationId, repositoryId, repository, targets } = context;
+	const changedValues = [
+		await projectPullRequestEvent(context),
+		await projectLifecycleEvents(context),
+		await projectIssueCommentEvent(context, reviewBot),
+		await projectDeploymentEvent(context),
+		await projectClosedDeploymentCorrelation(context),
+		...(event === "push" && fetchTasks
+			? [await projectPush(db, data, installationId, repositoryId, account, fetchTasks)]
+			: []),
+	];
+	const changed = changedValues.some(Boolean);
+	if (event === "push")
+		for (const target of lifecycleTargets(installationId, repository, event, data))
+			targets.set(`${repositoryId}:${target.number}`, target);
 	const lifecycleHint = [
 		"pull_request_review",
 		"pull_request_review_comment",
@@ -751,19 +790,11 @@ const verifyGitHubDelivery = async (db: Db, raw: string): Promise<Verification> 
 	const repositoryId = id(data.repository?.id);
 	if (!installationId || !repositoryId) return { kind: "pending", reason: "missing_binding" };
 	try {
-		const users = await db.users
-			.find({ "installations.installationId": installationId }, { projection: { installations: 1 } })
-			.toArray();
-		const accounts = [
-			...new Set(
-				users.flatMap((user) =>
-					user.installations
-						.filter((item) => item.installationId === installationId && approvedInstallationAccount(item.accountLogin))
-						.map((item) => normalizedLogin(item.accountLogin))
-						.filter((account): account is string => Boolean(account)),
-				),
-			),
-		];
+		const installation = await db.installations.findOne({ _id: installationId }, { projection: { accountLogin: 1 } });
+		const accounts =
+			installation && approvedInstallationAccount(installation.accountLogin)
+				? [normalizedLogin(installation.accountLogin)].filter((account): account is string => Boolean(account))
+				: [];
 		if (!accounts.length) return { kind: "pending", reason: "missing_binding" };
 		if (accounts.length !== 1) return { kind: "pending", reason: "ambiguous_binding" };
 		const account = data.installation?.account?.login;
@@ -831,6 +862,7 @@ export async function drainInbox(
 	sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
 	now = () => new Date(),
 	enqueueTarget?: (target: ReconciliationTarget) => void,
+	onChangedUser?: (userId: string) => void,
 ) {
 	const affected = new Set<string>();
 	while (true) {
@@ -854,6 +886,11 @@ export async function drainInbox(
 					);
 					continue;
 				}
+				const processingStartedAt = row.processingStartedAt ?? now();
+				await db.inboxDeliveries.updateOne(
+					{ _id: row._id, processingStartedAt: { $exists: false } },
+					{ $set: { processingStartedAt } },
+				);
 				const verification = await verifyGitHubDelivery(db, row.payload ?? "");
 				if (verification.kind === "pending") {
 					const attemptedAt = now();
@@ -883,14 +920,13 @@ export async function drainInbox(
 					reviewBot,
 				);
 				const installationId = verification.installationId;
-				if (projection.changed && installationId)
-					(
-						await db.users
-							.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
-							.toArray()
-					).forEach((user) => {
-						affected.add(user._id);
-					});
+				const changedUsers =
+					projection.changed && installationId
+						? (await db.bindings.find({ installationId }, { projection: { userId: 1 } }).toArray()).map(
+								(binding) => binding.userId,
+							)
+						: [];
+				for (const userId of changedUsers) affected.add(userId);
 				await db.inboxDeliveries.updateOne(
 					{ _id: row._id },
 					{
@@ -903,6 +939,7 @@ export async function drainInbox(
 						$unset: { payload: "", error: "", nextAttemptAt: "" },
 					},
 				);
+				for (const userId of changedUsers) onChangedUser?.(userId);
 				for (const target of projection.targets)
 					try {
 						enqueueTarget?.(target);

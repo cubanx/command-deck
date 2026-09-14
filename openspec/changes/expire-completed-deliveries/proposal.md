@@ -1,10 +1,10 @@
 ## Why
 
-Completed webhook delivery receipts currently accumulate indefinitely. Retain seven days of completed history while preserving unresolved work and failed-delivery evidence; this bounds completed history without claiming to fix webhook processing latency.
+Completed webhook delivery receipts currently accumulate indefinitely. Retain 72 hours of completed history while preserving unresolved work and failed-delivery evidence; this bounds completed history without claiming to fix webhook processing latency.
 
 ## What Changes
 
-- Expire `done` and `ignored` inbox deliveries seven days after `processedAt`, using MongoDB's asynchronous TTL cleanup.
+- Expire `done` and `ignored` inbox deliveries 72 hours after `processedAt`, using MongoDB's asynchronous TTL cleanup.
 - Apply the same policy to existing completed records without a backfill or application cleanup job.
 - Preserve `pending`, `pending_verification`, and `rejected` records, and records without a valid processing timestamp.
 - **BREAKING**: Delivery-ID deduplication lasts while the receipt exists. An expired receipt no longer prevents a manually replayed delivery from being accepted again.

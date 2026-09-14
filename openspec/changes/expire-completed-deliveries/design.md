@@ -10,15 +10,15 @@ See proposal.md for motivation. `initializeDatabase` already manages TTL indexes
 
 ## Decisions
 
-- Add one single-field TTL index on `processedAt`, `expireAfterSeconds: 604800`, with `partialFilterExpression: { status: { $in: ["done", "ignored"] } }`. Using `receivedAt` would erase old work immediately after eventual processing. An unconditional `processedAt` index could delete rejected deliveries. A new expiry field would require changes to every completion path and a backfill; neither is necessary.
-- MongoDB performs asynchronous deletion, not an exact seven-day timer. Missing/non-date timestamps do not expire. See [MongoDB TTL documentation](https://www.mongodb.com/docs/manual/core/index-ttl/).
-- Receipt deletion ends delivery-ID deduplication. Document this explicit seven-day minimum retention window; while MongoDB still retains an eligible receipt, duplicates remain suppressed. After deletion, a valid replay is accepted again through normal intake. Do not introduce another indefinitely growing tombstone collection.
+- Add one single-field TTL index on `processedAt`, `expireAfterSeconds: 259200`, with `partialFilterExpression: { status: { $in: ["done", "ignored"] } }`. Using `receivedAt` would erase old work immediately after eventual processing. An unconditional `processedAt` index could delete rejected deliveries. A new expiry field would require changes to every completion path and a backfill; neither is necessary.
+- MongoDB performs asynchronous deletion, not an exact 72-hour timer. Missing/non-date timestamps do not expire. See [MongoDB TTL documentation](https://www.mongodb.com/docs/manual/core/index-ttl/).
+- Receipt deletion ends delivery-ID deduplication. Document this explicit 72-hour minimum retention window; while MongoDB still retains an eligible receipt, duplicates remain suppressed. After deletion, a valid replay is accepted again through normal intake. Do not introduce another indefinitely growing tombstone collection.
 - Test the real MongoDB TTL monitor, retaining all protected statuses even with old `processedAt` values. Seed eligible records before installing the new index to cover existing data, then verify repeated initialization and duplicate behavior before and after expiry.
 
 ## Risks / Trade-offs
 
 - Old manual replays can reapply stale event data after their receipts expire; this change does not add chronological guards to all projections. Avoid replaying expired deliveries; recover current state with reconciliation instead.
-- Seven-day-old completed diagnostic evidence is deleted irreversibly. Unresolved and rejected evidence remains available.
+- 72-hour-old completed diagnostic evidence is deleted irreversibly. Unresolved and rejected evidence remains available.
 - Creating the index makes all existing eligible records available for asynchronous deletion, which can temporarily add database load. Inspect aggregate eligibility and status counts during authorized rollout; do not claim retention fixes the observed processing delay.
 
 ## Migration Plan

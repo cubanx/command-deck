@@ -25,7 +25,6 @@ export function Configuration() {
 	const pullRequests = useMutation(reconcilePullRequestsMutationOptions(queryClient));
 	const [busy, setBusy] = useState<string | null>(null);
 	const [announcement, setAnnouncement] = useState<{ alert: boolean; text: string } | null>(null);
-	const [notifications, setNotifications] = useState<string | null>(null);
 	const run = async (key: string, button: HTMLButtonElement, action: () => Promise<{ status: string }>) => {
 		setBusy(key);
 		try {
@@ -42,16 +41,6 @@ export function Configuration() {
 		} finally {
 			setBusy(null);
 			button.focus();
-		}
-	};
-	const enableNotifications = async () => {
-		if (!("Notification" in globalThis)) return setNotifications("Notifications are not supported.");
-		try {
-			const permission = await Notification.requestPermission();
-			setNotifications(permission === "granted" ? "Notifications enabled." : "Notifications were not enabled.");
-		} catch (error) {
-			console.error("Notification permission request failed", error instanceof Error ? error.name : "unknown error");
-			setNotifications("Notification permission request failed.");
 		}
 	};
 	return (
@@ -77,7 +66,6 @@ export function Configuration() {
 					>
 						Reconcile all PRs
 					</Button>
-					<Button onClick={() => void enableNotifications()}>Enable notifications</Button>
 				</Group>
 				{announcement?.alert ? (
 					<Alert role="alert" color="red">
@@ -86,7 +74,6 @@ export function Configuration() {
 				) : announcement ? (
 					<Text role="status">{announcement.text}</Text>
 				) : null}
-				{notifications && <Text role="status">{notifications}</Text>}
 				<AppearanceControls />
 				<Alert color="blue">Detected OpenSpec candidates are local and informational.</Alert>
 				<CheckoutControls repositories={repositories} />

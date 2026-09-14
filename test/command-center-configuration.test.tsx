@@ -100,7 +100,7 @@ test("renders responsive avatar navigation and preserves local checkout evidence
 	}
 });
 
-test("presents operational configuration controls and announces sanitized reconciliation and notification results", async () => {
+test("presents operational configuration controls and announces sanitized reconciliation results without notification controls", async () => {
 	const queryClient = client();
 	const currentSnapshot = queryClient.getQueryData(["snapshot"]);
 	const fetch = vi.fn(
@@ -120,8 +120,8 @@ test("presents operational configuration controls and announces sanitized reconc
 	expect(await screen.findByText("Reconciliation completed.")).toBeTruthy();
 	fireEvent.click(screen.getByRole("button", { name: "Reconcile all PRs" }));
 	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/reconcile/pull-requests", { method: "POST" }));
-	fireEvent.click(screen.getByRole("button", { name: "Enable notifications" }));
-	expect(await screen.findByText("Notifications enabled.")).toBeTruthy();
+	expect(screen.queryByRole("button", { name: "Enable notifications" })).toBeNull();
+	expect(Notification.requestPermission).not.toHaveBeenCalled();
 });
 
 test("uses the shared sign-in affordance when Configuration cannot load an authenticated snapshot", () => {

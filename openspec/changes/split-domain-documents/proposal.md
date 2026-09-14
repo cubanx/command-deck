@@ -30,4 +30,4 @@ None.
 
 ## Impact
 
-Affects Mongo schemas/indexes, authentication and installation binding, webhook projection, GitHub reconciliation/cache consumers, snapshot assembly, frontend preferences and live events, demo fixtures, and tests. No new service or dependency is planned. Production reset and deployment are separately gated post-merge operations. The existing `expire-completed-deliveries` change overlaps receipt retention; implementation must resolve that overlap on current main rather than publish unrelated branch history or assume stacked-PR approval.
+Affects Mongo schemas/indexes, authentication and installation binding, webhook projection, GitHub reconciliation/cache consumers, snapshot assembly, frontend preferences and live events, demo fixtures, and tests. No new service or dependency is planned. Production reset and deployment are separately gated post-merge operations. The existing `expire-completed-deliveries` change overlaps receipt retention; PR #27 now contains both task-owned changes, so implementation resolves that overlap in the same batch without a stacked PR or unrelated branch history.

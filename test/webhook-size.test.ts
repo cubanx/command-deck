@@ -64,7 +64,5 @@ test("webhook HMAC uses exact UTF-8 bytes across stream chunks", () =>
 		).toBe(202);
 		expect((await db.inboxDeliveries.findOne({ _id: "github:utf8" }))?.payload).toBe(payload);
 		await app.drain();
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]?.title).toBe(
-			"Café",
-		);
+		expect((await db.pullRequests.findOne({ _id: "2:7" }))?.title).toBe("Café");
 	}));

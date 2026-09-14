@@ -2,20 +2,20 @@
 
 ### Requirement: Completed webhook receipt retention
 
-The system SHALL make inbox deliveries in `done` or `ignored` status eligible for asynchronous deletion seven days after their valid processing timestamp. Retention SHALL apply to existing and newly completed deliveries. Pending, pending-verification, and rejected deliveries SHALL NOT expire under this policy, regardless of their age or any processing timestamp. Completed records without a date-valued processing timestamp SHALL remain intact. Receipt expiry SHALL NOT delete user projections.
+The system SHALL make inbox deliveries in `done` or `ignored` status eligible for asynchronous deletion 72 hours after their valid processing timestamp. Retention SHALL apply to existing and newly completed deliveries. Pending, pending-verification, and rejected deliveries SHALL NOT expire under this policy, regardless of their age or any processing timestamp. Completed records without a date-valued processing timestamp SHALL remain intact. Receipt expiry SHALL NOT delete user projections.
 
 #### Scenario: Old completed receipts
-- **WHEN** a done or ignored delivery was processed more than seven days ago
+- **WHEN** a done or ignored delivery was processed more than 72 hours ago
 - **THEN** asynchronous database cleanup removes its receipt
 - **AND** the same rule applies to receipts that predate activation of the policy
 
 #### Scenario: Recently completed old delivery
-- **WHEN** a delivery was received more than seven days ago but processed less than seven days ago
+- **WHEN** a delivery was received more than 72 hours ago but processed less than 72 hours ago
 - **THEN** its receipt remains retained
 
 #### Scenario: Recoverable or failed delivery
 - **WHEN** a delivery is pending, pending-verification, or rejected
-- **THEN** retention preserves it and its available payload and diagnostic fields even if its processing timestamp is older than seven days
+- **THEN** retention preserves it and its available payload and diagnostic fields even if its processing timestamp is older than 72 hours
 
 #### Scenario: Completion timestamp absent or invalid
 - **WHEN** a completed delivery has no processing timestamp or its timestamp is not a date
@@ -23,7 +23,7 @@ The system SHALL make inbox deliveries in `done` or `ignored` status eligible fo
 
 #### Scenario: Repeated storage initialization
 - **WHEN** initialization runs again after the retention policy is installed
-- **THEN** it succeeds and preserves the seven-day policy, receipt uniqueness, and existing inbox ordering and retry indexes
+- **THEN** it succeeds and preserves the 72-hour policy, receipt uniqueness, and existing inbox ordering and retry indexes
 
 ## MODIFIED Requirements
 

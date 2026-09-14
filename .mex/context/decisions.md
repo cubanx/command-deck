@@ -8,18 +8,18 @@ edges:
   - target: context/stack.md
     condition: a decision affects technology
 grounds_to: []
-last_updated: 2026-08-13
+last_updated: 2026-09-13
 ---
 
 # Decisions
 
 ## Webhook-first projections
 
-Authenticated GitHub webhooks are the incremental source. Provider API calls are limited to bootstrap, repair, targeted OpenSpec reads, and conditional reconciliation. This bounds provider traffic and makes delivery replay explicit.
+Authenticated GitHub webhooks are the incremental source. Provider API calls are limited to bootstrap, repair, targeted OpenSpec reads, and reconciliation. This bounds provider traffic and makes delivery replay explicit.
 
-## User-rooted MongoDB aggregates
+## Domain-owned MongoDB documents
 
-User-visible GitHub identities, installations, repositories, pull requests, and notifications live in a size-guarded user aggregate. Sessions, OAuth state, and global delivery deduplication remain separate because their lifecycle and scope differ.
+Users contain identity and UI preferences. Shared installations, user-installation bindings, repositories, pull requests and deployments have independent documents. OpenSpec evidence is embedded only in its associated PR. Sessions, OAuth state, merge intents, webhook receipts and reconciliation runs retain their independent lifecycles. No data migration or dual writes: deployment requires the reviewed clean-start procedure.
 
 ## Railway stays outside dashboard reads
 

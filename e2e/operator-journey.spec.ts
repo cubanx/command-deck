@@ -35,7 +35,7 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 	await blockedActions.click();
 	const actionMenu = page.getByRole("menu");
 	await expect(actionMenu.getByRole("menuitem", { name: "Merge" })).toHaveCount(0);
-	await expect(actionMenu.getByRole("menuitem").allTextContents()).resolves.toEqual(["Reconcile PR", "Open PR ↗"]);
+	await expect(actionMenu.getByRole("menuitem")).toHaveText(["Reconcile PR", "Open PR ↗"]);
 	const openPr = actionMenu.getByRole("menuitem").filter({ hasText: "Open PR" });
 	await expect(openPr).toHaveAttribute("href", "https://github.com/starfleet/defiant/pull/201");
 	await expect(openPr).toHaveAttribute("target", "_blank");
@@ -86,4 +86,24 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 	await expect(page.getByText("Fixture merge completed")).toBeVisible();
 	await page.getByRole("link", { name: "Return to dashboard" }).click();
 
+});
+
+test("saved repository and sort preferences restore in another browser session", async ({ page, browser }) => {
+ await page.goto("/");
+ const saving = page.waitForResponse((response) => response.url().endsWith("/api/preferences") && response.request().method() === "PATCH");
+ await page.getByRole("button", { name: /starfleet\/defiant-sensor-array/ }).click();
+ await page.getByRole("combobox", { name: "Sort pull requests" }).selectOption("updated:desc");
+ expect((await saving).ok()).toBe(true);
+ await page.reload();
+ await expect(page.getByRole("combobox", { name: "Sort pull requests" })).toHaveValue("updated:desc");
+ await expect(page.getByRole("button", { name: /starfleet\/defiant-sensor-array/ })).toHaveAttribute("aria-pressed", "false");
+ const context = await browser.newContext();
+ try {
+  const second = await context.newPage();
+  await second.goto("http://127.0.0.1:4174/");
+  await expect(second.getByRole("combobox", { name: "Sort pull requests" })).toHaveValue("updated:desc");
+  await expect(second.getByRole("button", { name: /starfleet\/defiant-sensor-array/ })).toHaveAttribute("aria-pressed", "false");
+  await second.goto("http://127.0.0.1:4174/configuration");
+  await expect(second.getByRole("button", { name: "Enable notifications" })).toHaveCount(0);
+ } finally { await context.close(); }
 });

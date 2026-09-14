@@ -1,14 +1,24 @@
-import { createSign } from "node:crypto";
-import type { Db, MergedPullRequestEvidence, PullRequest, ReconciliationEvidence, Repository } from "#/db";
+import { createSign, randomUUID } from "node:crypto";
+import type {
+	Db,
+	MergedPullRequestEvidence,
+	PullRequest,
+	ReconciliationEvidence,
+	ReconciliationRunDocument,
+	Repository,
+	RepositoryDocument,
+} from "#/db";
 import {
-	appendReconciliationEvidence,
 	correlateDeploymentPullRequest,
-	mutateUser,
+	deletePullRequest,
+	patchPullRequest,
 	retainRecentMergedPullRequests,
+	upsertDeployment,
+	upsertPullRequest,
 } from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
-import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks, projectRepositoryTasks } from "#/openspec";
+import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks } from "#/openspec";
 import {
 	errorField,
 	failureDetails,
@@ -281,8 +291,8 @@ export function githubNextLink(header: string | null, seen: Set<string>) {
 	return next;
 }
 async function pagedGet(
-	db: Db,
-	key: string,
+	_db: Db,
+	_key: string,
 	url: string,
 	fetcher: FetchLike,
 	evidence: Pick<ReconciliationEvidence, "operation" | "repository"> = {
@@ -292,26 +302,22 @@ async function pagedGet(
 ): Promise<ReadResult> {
 	const all: unknown[] = [],
 		seen = new Set([url]);
-	let next: string | undefined = url,
-		pageNumber = 0;
+	let next: string | undefined = url;
 	while (next) {
-		const pageKey = `${key}:page:${pageNumber++}`,
-			cached = await db.providerCache.findOne({ _id: pageKey });
 		let response: Response | undefined;
+		let bodylessNotModified = false;
 		for (let attempt = 0; attempt < 3; attempt++) {
-			response = await githubFetch(fetcher, next, {
-				headers: cached?.etag
-					? {
-							accept: "application/vnd.github+json",
-							"if-none-match": cached.etag,
-						}
-					: { accept: "application/vnd.github+json" },
-			});
+			response = await githubFetch(fetcher, next, { headers: { accept: "application/vnd.github+json" } });
+			if (response.status === 304) {
+				if (bodylessNotModified) break;
+				bodylessNotModified = true;
+				continue;
+			}
 			const delay = retryDelay(response, attempt);
 			if (delay === undefined || attempt === 2) break;
 			await new Promise((resolve) => setTimeout(resolve, delay));
 		}
-		if (!response || (!response.ok && response.status !== 304))
+		if (!response || response.status === 304 || !response.ok)
 			return {
 				kind: "error",
 				message: `GitHub request failed (${response?.status ?? "unknown"})`,
@@ -320,15 +326,18 @@ async function pagedGet(
 				summary: "GitHub request failed",
 				status: response?.status,
 			};
-		const page = response.status === 304 ? cached?.body : await response.json();
-		if (page === undefined)
+		let page: unknown;
+		try {
+			page = await response.json();
+		} catch {
 			return {
 				kind: "error",
-				message: "GitHub cached page is unavailable",
+				message: "GitHub pagination payload was invalid",
 				stale: true,
 				...evidence,
-				summary: "GitHub cached page is unavailable",
+				summary: "GitHub pagination payload was invalid",
 			};
+		}
 		const items = Array.isArray(page)
 			? page
 			: Array.isArray((page as any).repositories)
@@ -346,12 +355,7 @@ async function pagedGet(
 			};
 		let following: string | undefined;
 		try {
-			following =
-				response.status === 304
-					? cached?.nextUrl
-						? githubNextLink(`<${cached.nextUrl}>; rel="next"`, seen)
-						: undefined
-					: githubNextLink(response.headers.get("link"), seen);
+			following = githubNextLink(response.headers.get("link"), seen);
 		} catch (error) {
 			return {
 				kind: "error",
@@ -361,45 +365,27 @@ async function pagedGet(
 				summary: "GitHub pagination failed",
 			};
 		}
-		if (response.status !== 304)
-			await db.providerCache.updateOne(
-				{ _id: pageKey },
-				{
-					$set: {
-						etag: response.headers.get("etag") ?? undefined,
-						body: page,
-						nextUrl: following,
-						updatedAt: new Date(),
-					},
-				},
-				{ upsert: true },
-			);
 		all.push(...items);
 		next = following;
 	}
-	await db.providerCache.updateOne({ _id: key }, { $set: { body: all, updatedAt: new Date() } }, { upsert: true });
 	return { kind: "changed", body: all };
 }
 export async function conditionalGet(
-	db: Db,
-	key: string,
+	_db: Db,
+	_key: string,
 	url: string,
 	fetcher: FetchLike = fetch,
 	evidence: Pick<ReconciliationEvidence, "operation" | "repository"> = {
 		operation: "unknown",
 	},
 ): Promise<ReadResult> {
-	const cached = await db.providerCache.findOne({ _id: key });
 	let response: Response | undefined;
 	for (let attempt = 0; attempt < 3; attempt++) {
-		response = await githubFetch(fetcher, url, {
-			headers: cached?.etag
-				? {
-						"if-none-match": cached.etag,
-						accept: "application/vnd.github+json",
-					}
-				: { accept: "application/vnd.github+json" },
-		});
+		response = await githubFetch(fetcher, url, { headers: { accept: "application/vnd.github+json" } });
+		if (response.status === 304) {
+			if (attempt === 0) continue;
+			break;
+		}
 		const delay = retryDelay(response, attempt);
 		if (delay === undefined || attempt === 2) break;
 		await new Promise((resolve) => setTimeout(resolve, delay));
@@ -412,18 +398,14 @@ export async function conditionalGet(
 			...evidence,
 			summary: "GitHub request failed",
 		};
-	if (response.status === 304) {
-		await db.providerCache.updateOne({ _id: key }, { $set: { updatedAt: new Date() } });
-		return cached?.body === undefined
-			? {
-					kind: "error",
-					message: "GitHub cached response is unavailable",
-					stale: true,
-					...evidence,
-					summary: "GitHub cached response is unavailable",
-				}
-			: { kind: "changed", body: cached.body };
-	}
+	if (response.status === 304)
+		return {
+			kind: "error",
+			message: "GitHub returned an unexpected not-modified response",
+			stale: true,
+			...evidence,
+			summary: "GitHub returned an unexpected not-modified response",
+		};
 	if (!response.ok)
 		return {
 			kind: "error",
@@ -434,17 +416,6 @@ export async function conditionalGet(
 			status: response.status,
 		};
 	const body = await response.json();
-	await db.providerCache.updateOne(
-		{ _id: key },
-		{
-			$set: {
-				etag: response.headers.get("etag") ?? undefined,
-				body,
-				updatedAt: new Date(),
-			},
-		},
-		{ upsert: true },
-	);
 	return { kind: "changed", body };
 }
 export async function reconcileSerial(
@@ -472,6 +443,10 @@ export async function reconcileSerial(
 type PullRequestOpenSpecs = {
 	number: number;
 	tasks: OpenSpecTask[];
+	/** Evidence read at the immutable merge commit. Never replace this with default-branch progress. */
+	mergedTasks?: OpenSpecTask[];
+	mergedSourceCommit?: string;
+	mergedSourceRef?: string;
 	declaration: "absent" | "empty" | "declared" | "invalid";
 	detected: string[];
 	retention?: {
@@ -487,31 +462,41 @@ const openSpecProjection = (
 	sourceRepository?: unknown,
 ) => {
 	const repository = optionalString(sourceRepository);
-	const open_specs = evidence?.tasks.map((task) => {
-		const progress = parseTasks(task.content);
-		return {
-			change_name: task.changeName,
-			...progress,
-			pre_merge_ready: progress.preMergeReady,
-			active_group: progress.activeGroup,
-			active_groups: progress.activeGroups,
-			incomplete_groups: progress.incompleteGroups,
-			source_commit: task.sha,
-			source_ref: optionalString(sourceRef),
-			...(repository
-				? {
-						source_url: safeUrl(
-							`https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${encodeURIComponent(task.sha)}/${task.path.split("/").map(encodeURIComponent).join("/")}`,
-						),
-					}
-				: {}),
-		};
-	});
+	const projectTasks = (tasks: OpenSpecTask[] | undefined, ref?: string) =>
+		tasks?.map((task) => {
+			const progress = parseTasks(task.content);
+			return {
+				change_name: task.changeName,
+				...progress,
+				pre_merge_ready: progress.preMergeReady,
+				active_group: progress.activeGroup,
+				active_groups: progress.activeGroups,
+				incomplete_groups: progress.incompleteGroups,
+				source_commit: task.sha,
+				source_ref: optionalString(ref),
+				...(repository
+					? {
+							source_url: safeUrl(
+								`https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${encodeURIComponent(task.sha)}/${task.path.split("/").map(encodeURIComponent).join("/")}`,
+							),
+						}
+					: {}),
+			};
+		});
+	const open_specs = projectTasks(evidence?.tasks, optionalString(sourceRef));
+	const merged_open_specs = projectTasks(evidence?.mergedTasks, evidence?.mergedSourceRef);
 	return {
 		open_specs,
 		open_spec: open_specs?.[0] ?? null,
 		open_spec_declaration: evidence?.declaration ?? "absent",
 		detected_open_specs: evidence?.detected ?? [],
+		...(evidence?.mergedTasks
+			? {
+					merged_open_specs,
+					merged_source_commit: evidence.mergedSourceCommit,
+					merged_source_ref: evidence.mergedSourceRef,
+				}
+			: {}),
 		...(evidence?.retention
 			? {
 					post_merge_obligations: evidence.retention.obligations,
@@ -572,6 +557,7 @@ const fetchMergedOpenSpecTasks = async (input: {
 	body: unknown;
 	priorObligations: string[];
 	priorUnresolved?: boolean;
+	includeRetention?: boolean;
 }): Promise<PullRequestOpenSpecs> => {
 	const declaration = parseOpenSpecDeclaration(input.body);
 	const declared = declaration.state === "declared" ? declaration.slugs : [];
@@ -582,7 +568,7 @@ const fetchMergedOpenSpecTasks = async (input: {
 			tasks: [],
 			declaration: declaration.state,
 			detected: [],
-			...(declaration.state === "invalid" || input.priorUnresolved
+			...(input.includeRetention !== false && (declaration.state === "invalid" || input.priorUnresolved)
 				? {
 						retention: {
 							obligations: [],
@@ -647,7 +633,7 @@ const fetchMergedOpenSpecTasks = async (input: {
 		tasks,
 		declaration: declaration.state,
 		detected: [],
-		...(retentionNeeded || unresolved
+		...(input.includeRetention !== false && (retentionNeeded || unresolved)
 			? {
 					retention: {
 						obligations,
@@ -959,54 +945,50 @@ type PullRequestRead = {
 };
 
 const loadReconciliationTarget = async (db: Db, input: ReconcilePullRequestInput) => {
-	const users = await db.users
-		.find(
-			{ "installations.installationId": input.installationId },
-			{ projection: { _id: 1, github: 1, installations: 1 } },
-		)
-		.toArray();
-	const installation = users
-		.flatMap((user) => user.installations)
-		.find(
-			(installation) =>
-				installation.installationId === input.installationId && approvedInstallationAccount(installation.accountLogin),
-		);
+	const installation = await db.installations.findOne({ _id: input.installationId });
+	if (!installation || !approvedInstallationAccount(installation.accountLogin))
+		return { users: [], installation: undefined, repository: undefined };
+	const repositoryDocument = await db.repositories.findOne({
+		_id: input.repositoryId,
+		installationIds: input.installationId,
+	});
+	if (!repositoryDocument) return { users: [], installation, repository: undefined };
+	const [pullRequests, deployments] = await Promise.all([
+		db.pullRequests.find({ repositoryId: input.repositoryId }).toArray(),
+		db.deployments.find({ repositoryId: input.repositoryId }).toArray(),
+	]);
+	const repository: Repository = {
+		repositoryId: repositoryDocument.repositoryId,
+		full_name: repositoryDocument.full_name,
+		pullRequests: pullRequests as PullRequest[],
+		openSpecs: [],
+		deployments: deployments as Record<string, unknown>[],
+		...(repositoryDocument.policy ? { policy: repositoryDocument.policy as Repository["policy"] } : {}),
+	};
 	return {
-		users,
+		users: [],
 		installation,
-		repository: installation?.repositories.find((item) => item.repositoryId === input.repositoryId),
+		repository,
 	};
 };
 
 const removeClosedPullRequest = async (
 	db: Db,
-	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
+	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
 	input: ReconcilePullRequestInput,
 ): Promise<ReadResult> => {
-	const results = await Promise.all(
-		users.map(async (user) => {
-			let changed = false;
-			await mutateUser(db, user._id, (aggregate) => {
-				changed = false;
-				const target = aggregate.installations
-					.find((item) => item.installationId === input.installationId)
-					?.repositories.find((item) => item.repositoryId === input.repositoryId);
-				const previous = target?.pullRequests.find((item) => Number(item.number) === input.number);
-				const observed = user.installations
-					.find((item) => item.installationId === input.installationId)
-					?.repositories.find((item) => item.repositoryId === input.repositoryId)
-					?.pullRequests.find((item) => Number(item.number) === input.number);
-				if (previous?.merged === true || JSON.stringify(previous) !== JSON.stringify(observed)) return;
-				if (target) {
-					const before = target.pullRequests.length;
-					target.pullRequests = target.pullRequests.filter((item) => Number(item.number) !== input.number);
-					changed ||= target.pullRequests.length !== before;
-				}
-			});
-			return changed;
-		}),
-	);
-	const changed = results.some(Boolean);
+	const previous = repository.pullRequests.find((item) => Number(item.number) === input.number) as
+		| (PullRequest & { revision?: number })
+		| undefined;
+	const changed =
+		previous?.merged === true
+			? false
+			: previous
+				? await deletePullRequest(db, `${input.repositoryId}:${input.number}`, {
+						revision: previous.revision,
+						updated_at: previous.updated_at,
+					})
+				: false;
 	return { kind: changed ? "changed" : "unchanged", body: null };
 };
 
@@ -1014,21 +996,13 @@ const readMergedOpenSpecs = async (
 	input: ReconcilePullRequestInput,
 	request: FetchLike,
 	repository: Repository,
-	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
 	taskFetcher: TaskFetcher,
 	pullRequest: Record<string, unknown>,
 ): Promise<PullRequestOpenSpecs> => {
-	const priorPullRequests = users.flatMap((user) =>
-		user.installations
-			.filter((item) => item.installationId === input.installationId && approvedInstallationAccount(item.accountLogin))
-			.flatMap((item) => item.repositories)
-			.filter((item) => item.repositoryId === input.repositoryId)
-			.flatMap((item) => item.pullRequests.map((pullRequest) => ({ pullRequest, login: user.github.login }))),
-	);
 	const providerAuthor = optionalString((pullRequest.author as { login?: unknown } | undefined)?.login);
-	const matchingPriorPullRequests = priorPullRequests
-		.filter(({ login }) => sameLogin(login, providerAuthor))
-		.map(({ pullRequest }) => pullRequest);
+	const matchingPriorPullRequests = repository.pullRequests.filter((item) =>
+		sameLogin(item.author_login, providerAuthor),
+	);
 	const priorObligations = [
 		...new Set(
 			matchingPriorPullRequests
@@ -1041,8 +1015,38 @@ const readMergedOpenSpecs = async (
 		),
 	];
 	try {
+		const mergeCommit = optionalString((pullRequest.mergeCommit as { oid?: unknown } | undefined)?.oid);
 		const branchEvidence = await readDefaultBranch(request, repository.full_name);
-		return await fetchMergedOpenSpecTasks({
+		if (!mergeCommit)
+			return await fetchMergedOpenSpecTasks({
+				installationId: input.installationId,
+				repositoryId: input.repositoryId,
+				request,
+				taskFetcher,
+				repository: repository.full_name,
+				ref: branchEvidence.ref,
+				sha: branchEvidence.sha,
+				number: input.number,
+				body: pullRequest.body,
+				priorObligations,
+				priorUnresolved: matchingPriorPullRequests.some(
+					(item) => Number(item.number) === input.number && item.post_merge_unresolved === true,
+				),
+			});
+		const mergedEvidence = await fetchMergedOpenSpecTasks({
+			installationId: input.installationId,
+			repositoryId: input.repositoryId,
+			request,
+			taskFetcher,
+			repository: repository.full_name,
+			ref: optionalString(pullRequest.baseRefName) ?? branchEvidence.ref,
+			sha: mergeCommit,
+			number: input.number,
+			body: pullRequest.body,
+			priorObligations,
+			includeRetention: false,
+		});
+		const defaultEvidence = await fetchMergedOpenSpecTasks({
 			installationId: input.installationId,
 			repositoryId: input.repositoryId,
 			request,
@@ -1052,11 +1056,22 @@ const readMergedOpenSpecs = async (
 			sha: branchEvidence.sha,
 			number: input.number,
 			body: pullRequest.body,
-			priorObligations,
+			priorObligations: [
+				...priorObligations,
+				...mergedEvidence.tasks
+					.filter((task) => parseTasks(task.content).postMergeIncomplete)
+					.map((task) => task.changeName),
+			],
 			priorUnresolved: matchingPriorPullRequests.some(
 				(item) => Number(item.number) === input.number && item.post_merge_unresolved === true,
 			),
 		});
+		return {
+			...defaultEvidence,
+			mergedTasks: mergedEvidence.tasks,
+			mergedSourceCommit: mergeCommit,
+			mergedSourceRef: optionalString(pullRequest.baseRefName) ?? branchEvidence.ref,
+		};
 	} catch {
 		const declaration = parseOpenSpecDeclaration(pullRequest.body);
 		const obligations = [...new Set([...priorObligations, ...declaration.slugs])].sort();
@@ -1123,7 +1138,6 @@ const readOpenPullRequest = async (
 	owner: string,
 	name: string,
 	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
-	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
 	stage: { value: string },
 ): Promise<PullRequestRead | undefined> => {
 	stage.value = "GraphQL lifecycle";
@@ -1194,7 +1208,7 @@ const readOpenPullRequest = async (
 		});
 	stage.value = "changed files";
 	const tasks = merged
-		? await readMergedOpenSpecs(input, request, repository, users, taskFetcher, pullRequest)
+		? await readMergedOpenSpecs(input, request, repository, taskFetcher, pullRequest)
 		: await fetchOpenSpecTasksForPullRequests(
 				db,
 				input.installationId,
@@ -1326,67 +1340,130 @@ const canExcludeMergedPullRequest = (evidence: PullRequestOpenSpecs) => {
 	);
 };
 
+const isRevisionConflict = (error: unknown) => error instanceof Error && error.message.includes("changed concurrently");
+
 const applyOpenPullRequest = async (
 	db: Db,
-	users: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
 	repository: NonNullable<Awaited<ReturnType<typeof loadReconciliationTarget>>["repository"]>,
 	input: ReconcilePullRequestInput,
 	read: PullRequestRead,
 ): Promise<ReadResult> => {
 	const { openSpecEvidence, merged } = read;
 	const next = pullRequestProjection(repository, input.number, read);
-	const results = await Promise.all(
-		users.map(async (user) => {
-			let changed = false;
-			await mutateUser(db, user._id, (aggregate) => {
-				changed = false;
-				const target = aggregate.installations
-					.find((item) => item.installationId === input.installationId)
-					?.repositories.find((item) => item.repositoryId === input.repositoryId);
-				const previous = target?.pullRequests.find((item) => Number(item.number) === input.number);
-				const observed = user.installations
-					.find((item) => item.installationId === input.installationId)
-					?.repositories.find((item) => item.repositoryId === input.repositoryId)
-					?.pullRequests.find((item) => Number(item.number) === input.number);
-				if (
-					!target ||
-					((!previous || merged) && !sameLogin(next.author_login, aggregate.github.login)) ||
-					(!merged && previous?.merged === true) ||
-					JSON.stringify(previous) !== JSON.stringify(observed) ||
-					(previous?.updated_at && String(previous.updated_at) > String(next.updated_at)) ||
-					(previous?.head_sha &&
-						previous.head_sha !== next.head_sha &&
-						String(previous.updated_at ?? "") >= String(next.updated_at ?? ""))
-				)
-					return;
-				for (const task of openSpecEvidence.tasks)
-					changed =
-						projectRepositoryTasks(target, task.changeName ?? task.path.split("/")[2]!, task).changed || changed;
-				if (merged && canExcludeMergedPullRequest(openSpecEvidence)) {
-					if (previous) {
-						target!.pullRequests = target!.pullRequests.filter((item) => Number(item.number) !== input.number);
-						changed = true;
-					}
-					return;
-				}
-				if (
-					previous?.lifecycle_stale === false &&
-					Object.entries(next).every(([key, value]) => JSON.stringify(previous?.[key]) === JSON.stringify(value))
-				)
-					return;
-				changed = true;
-				if (previous) Object.assign(previous, next, { lifecycle_stale: false });
-				else target.pullRequests.push({ ...next, lifecycle_stale: false });
-			});
-			return changed;
-		}),
+	const previous = repository.pullRequests.find((item) => Number(item.number) === input.number) as
+		| (PullRequest & { revision?: number })
+		| undefined;
+	if (merged && canExcludeMergedPullRequest(openSpecEvidence)) {
+		let changed = false;
+		if (previous) {
+			const current = await db.pullRequests.findOne({ _id: `${input.repositoryId}:${input.number}` });
+			if (current?.revision !== previous.revision || current?.head_sha !== previous.head_sha)
+				return { kind: "unchanged" };
+			try {
+				changed = await deletePullRequest(db, `${input.repositoryId}:${input.number}`, {
+					revision: previous.revision,
+					updated_at: previous.updated_at,
+				});
+			} catch (error) {
+				if (!isRevisionConflict(error)) throw error;
+				return { kind: "unchanged" };
+			}
+		}
+		return changed ? { kind: "changed", body: next } : { kind: "unchanged" };
+	}
+	if (previous?.updated_at && next.updated_at && String(previous.updated_at) > String(next.updated_at))
+		return { kind: "unchanged" };
+	const openSpecFields = openSpecProjection(
+		openSpecEvidence,
+		openSpecEvidence.retention?.sourceRef ?? (read.pullRequest as { headRefName?: unknown }).headRefName,
+		repository.full_name,
 	);
-	const changed = results.some(Boolean);
-	return { kind: changed ? "changed" : "unchanged", body: next };
+	const patch = Object.fromEntries(
+		Object.entries({ ...next, ...openSpecFields, lifecycle_stale: false }).filter(([, value]) => value !== undefined),
+	);
+	let changed: boolean;
+	if (previous) {
+		const current = await db.pullRequests.findOne({ _id: `${input.repositoryId}:${input.number}` });
+		if (current?.revision !== previous.revision || current?.head_sha !== previous.head_sha)
+			return { kind: "unchanged" };
+		const projectedKeys = Object.keys(patch);
+		const projectedOpenSpecKeys = new Set(
+			[
+				"open_specs",
+				"open_spec",
+				"detected_open_specs",
+				"post_merge_source_commit",
+				"post_merge_source_ref",
+				"post_merge_obligations",
+				"post_merge_unresolved",
+				"post_merge_state",
+				"lifecycle_stale",
+				...(openSpecEvidence.mergedTasks === undefined
+					? []
+					: ["merged_open_specs", "merged_source_commit", "merged_source_ref"]),
+			].filter((key) => key in patch),
+		);
+		const unset = Object.keys(previous).filter(
+			(key) =>
+				[
+					"title",
+					"url",
+					"state",
+					"author_login",
+					"merged",
+					"retention_candidate",
+					"merge_sha",
+					"merged_at",
+					"draft",
+					"opened_at",
+					"updated_at",
+					"head_ref",
+					"base_ref",
+					"head_sha",
+					"mergeable",
+					"labels",
+					"review_activity",
+					"completed_review_count",
+					"unresolved_review_threads",
+					"changes_requested",
+					"repository_policy_loaded",
+					"required_checks",
+					"workflow_state",
+					"checks_state",
+					"open_specs",
+					"open_spec",
+					"detected_open_specs",
+					"merged_open_specs",
+					"merged_source_commit",
+					"merged_source_ref",
+					"post_merge_source_commit",
+					"post_merge_source_ref",
+					"post_merge_obligations",
+					"post_merge_unresolved",
+					"post_merge_state",
+					"lifecycle_stale",
+				].includes(key) &&
+				!projectedOpenSpecKeys.has(key) &&
+				!projectedKeys.includes(key),
+		);
+		try {
+			changed = await patchPullRequest(db, `${input.repositoryId}:${input.number}`, patch, unset, {
+				revision: previous.revision,
+				head_sha: previous.head_sha,
+				source_commit: previous.source_commit,
+			});
+		} catch (error) {
+			if (!isRevisionConflict(error)) throw error;
+			return { kind: "unchanged" };
+		}
+	} else {
+		changed = await upsertPullRequest(db, { repositoryId: input.repositoryId, number: input.number, ...patch });
+	}
+	return changed ? { kind: "changed", body: next } : { kind: "unchanged" };
 };
 
 export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestInput): Promise<ReadResult> {
-	const { users, repository } = await loadReconciliationTarget(db, input);
+	const { repository } = await loadReconciliationTarget(db, input);
 	if (!repository)
 		return {
 			kind: "error",
@@ -1414,12 +1491,13 @@ export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestIn
 		});
 	const stage = { value: "GraphQL lifecycle" };
 	try {
-		const read = await readOpenPullRequest(db, input, request, owner, name, repository, users, stage);
+		const read = await readOpenPullRequest(db, input, request, owner, name, repository, stage);
 		stage.value = "persistence";
 		return read
-			? await applyOpenPullRequest(db, users, repository, input, read)
-			: await removeClosedPullRequest(db, users, input);
+			? await applyOpenPullRequest(db, repository, input, read)
+			: await removeClosedPullRequest(db, repository, input);
 	} catch (error) {
+		if (isRevisionConflict(error)) return { kind: "unchanged" };
 		const details = failureDetails(error);
 		const diagnostic = errorField(error, "diagnostic") as GitHubRequestFailure["diagnostic"];
 		await input.reportFailure?.({
@@ -1429,17 +1507,7 @@ export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestIn
 			target: `repositories/${input.repositoryId}/pulls/${input.number}`,
 			...(diagnostic ? { diagnostic } : {}),
 		});
-		await Promise.all(
-			users.map((user) =>
-				mutateUser(db, user._id, (aggregate) => {
-					const target = aggregate.installations
-						.find((item) => item.installationId === input.installationId)
-						?.repositories.find((item) => item.repositoryId === input.repositoryId);
-					const previous = target?.pullRequests.find((item) => Number(item.number) === input.number);
-					if (previous) previous.lifecycle_stale = true;
-				}),
-			),
-		);
+		await patchPullRequest(db, `${input.repositoryId}:${input.number}`, { lifecycle_stale: true });
 		return {
 			kind: "error",
 			stale: true,
@@ -1449,67 +1517,188 @@ export async function reconcilePullRequest(db: Db, input: ReconcilePullRequestIn
 		};
 	}
 }
-const mergeRepositorySnapshot = (
-	previous: Repository | undefined,
-	observed: Repository | undefined,
-	snapshot: Repository,
-	openSpecTasks: OpenSpecTask[],
-	login: string | undefined,
-): Repository[] => {
-	// ponytail: retry changed repositories on the next refresh; use per-PR guards if busy repositories starve.
-	if (JSON.stringify(previous) !== JSON.stringify(observed)) return previous ? [previous] : [];
-	const retained = previous?.pullRequests.filter((pr) => pr.retention_candidate === true) ?? [];
-	const next: Repository = {
-		...snapshot,
-		pullRequests: snapshot.pullRequests
-			.filter(
-				(pr) => pr.retention_candidate !== true && !retained.some((item) => Number(item.number) === Number(pr.number)),
-			)
-			.filter((pr) => sameLogin(pr.author_login, login))
-			.map((pr) =>
-				mergePullRequestSnapshot(
-					previous?.pullRequests.find((item) => item.number === pr.number),
-					pr,
-				),
-			)
-			.concat(retained),
-		openSpecs: [],
-		deployments: snapshot.deployments.slice(0, 20),
-	};
-	for (const task of openSpecTasks.filter((item) => item.repositoryId === snapshot.repositoryId))
-		projectRepositoryTasks(next, task.changeName ?? task.path.split("/")[2]!, task);
-	return [next];
-};
-
 const retainedReconciliationTargets = (
-	bound: Awaited<ReturnType<typeof loadReconciliationTarget>>["users"],
+	reconciliationPullRequests: PullRequest[],
 	installationId: string,
 	repositoryId: string,
 	pullRequests: unknown[],
 ) => {
 	const targets: Array<{ installationId: string; repositoryId: string; number: number }> = [];
-	const reconciliationPullRequests = [
-		...new Map(
-			bound
-				.flatMap((user) => user.installations)
-				.filter((item) => item.installationId === installationId)
-				.flatMap((item) => item.repositories)
-				.filter((item) => item.repositoryId === repositoryId)
-				.flatMap((item) => item.pullRequests)
-				.filter((pr) => pr.retention_candidate === true || pr.state === "open")
-				.map((pr) => [Number(pr.number), pr] as const),
-		).values(),
-	];
+	const seen = new Set<number>();
 	for (const pr of reconciliationPullRequests)
 		if (
 			Number.isSafeInteger(Number(pr.number)) &&
 			Number(pr.number) > 0 &&
+			!seen.has(Number(pr.number)) &&
 			(pr.retention_candidate === true ||
 				!pullRequests.some((item) => Number((item as { number?: unknown }).number) === Number(pr.number)))
-		)
+		) {
+			seen.add(Number(pr.number));
 			targets.push({ installationId, repositoryId: repositoryId, number: Number(pr.number) });
+		}
 	return { reconciliationPullRequests, targets };
 };
+
+const mergedPullRequestCandidate = (pullRequest: Record<string, unknown>): PullRequest | undefined => {
+	const mergedAt = optionalString(pullRequest.merged_at);
+	if (pullRequest.merged !== true && !mergedAt) return undefined;
+	const number = Number(pullRequest.number);
+	if (!Number.isSafeInteger(number) || number <= 0) return undefined;
+	const head = (pullRequest.head as { ref?: unknown; sha?: unknown } | undefined) ?? {};
+	const base = (pullRequest.base as { ref?: unknown } | undefined) ?? {};
+	return {
+		number,
+		title: optionalString(pullRequest.title),
+		url: optionalString(pullRequest.html_url),
+		author_login: optionalString((pullRequest.user as { login?: unknown } | undefined)?.login),
+		state: "closed",
+		merged: true,
+		retention_candidate: true,
+		merge_sha: optionalString(pullRequest.merge_commit_sha),
+		merged_at: mergedAt,
+		head_ref: optionalString(head.ref),
+		head_sha: optionalString(head.sha),
+		base_ref: optionalString(base.ref),
+		draft: pullRequest.draft ? 1 : 0,
+		opened_at: optionalString(pullRequest.created_at),
+		updated_at: optionalString(pullRequest.updated_at),
+		body: pullRequest.body,
+	};
+};
+
+const loadBootstrapIdentity = async (db: Db, installationId: string, identityRequest: FetchLike) => {
+	const boundInstallation = await db.installations.findOne({ _id: installationId });
+	if (!boundInstallation || !approvedInstallationAccount(boundInstallation.accountLogin))
+		return {
+			kind: "error" as const,
+			stale: true as const,
+			message: "installation account is not approved",
+			operation: "installation_identity",
+			summary: "Installation account is not approved",
+		};
+	const installation = await conditionalGet(
+		db,
+		`installation:${installationId}:identity`,
+		`https://api.github.com/app/installations/${installationId}`,
+		identityRequest,
+		{ operation: "installation_identity" },
+	);
+	if (installation.kind === "error") return installation;
+	if (installation.kind !== "changed")
+		return {
+			kind: "error" as const,
+			stale: true as const,
+			message: "installation account is not approved",
+			operation: "installation_identity",
+			summary: "Installation account is not approved",
+		};
+	const body = installation.body as { account?: { login?: unknown }; permissions?: { pull_requests?: unknown } };
+	const account = body.account?.login;
+	if (!approvedInstallationAccount(account))
+		return {
+			kind: "error" as const,
+			stale: true as const,
+			message: "installation account is not approved",
+			operation: "installation_identity",
+			summary: "Installation account is not approved",
+		};
+	if (!sameLogin(boundInstallation.accountLogin, account))
+		return {
+			kind: "error" as const,
+			stale: true as const,
+			message: "installation account changed",
+			operation: "installation_identity",
+			summary: "Installation account changed",
+		};
+	return {
+		account,
+		permissions: body.permissions,
+		boundRepositories: await db.repositories.find({ installationIds: installationId }).toArray(),
+	};
+};
+
+const persistBootstrapSnapshot = async (
+	db: Db,
+	installationId: string,
+	snapshot: Repository,
+	expectedBefore: PullRequest[],
+	counts: { prCount: number; changedPrCount: number; unchangedPrCount: number },
+) => {
+	const existing = (await db.pullRequests.find({ repositoryId: snapshot.repositoryId }).toArray()) as PullRequest[];
+	const expectedByNumber = new Map(expectedBefore.map((item) => [Number(item.number), item]));
+	const observedNumbers = new Set<number>();
+	await db.repositories.updateOne(
+		{ _id: snapshot.repositoryId },
+		{
+			$set: {
+				repositoryId: snapshot.repositoryId,
+				full_name: snapshot.full_name,
+				...(snapshot.policy ? { policy: snapshot.policy } : {}),
+			},
+			$addToSet: { installationIds: installationId },
+		},
+		{ upsert: true },
+	);
+	for (const item of snapshot.pullRequests) {
+		const number = Number(item.number);
+		if (!Number.isSafeInteger(number) || number <= 0) continue;
+		observedNumbers.add(number);
+		const expected = expectedByNumber.get(number);
+		const current = await db.pullRequests.findOne({ _id: `${snapshot.repositoryId}:${number}` });
+		if (
+			(expected && (!current || current.revision !== expected.revision || current.head_sha !== expected.head_sha)) ||
+			(!expected && current)
+		)
+			continue;
+		const { number: _number, ...fields } = item;
+		const patch = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+		const changed = await upsertPullRequest(db, { repositoryId: snapshot.repositoryId, number, ...patch });
+		counts.prCount++;
+		if (changed) counts.changedPrCount++;
+		else counts.unchangedPrCount++;
+	}
+	for (const item of existing) {
+		const number = Number(item.number);
+		if (item.state === "open" && item.retention_candidate !== true && !observedNumbers.has(number)) {
+			const expected = expectedByNumber.get(number);
+			if (!expected || item.revision !== expected.revision || item.head_sha !== expected.head_sha) continue;
+			try {
+				await deletePullRequest(db, String(item._id), {
+					revision: typeof expected.revision === "number" ? expected.revision : undefined,
+					updated_at: item.updated_at,
+				});
+			} catch (error) {
+				if (!isRevisionConflict(error)) throw error;
+			}
+		}
+	}
+	for (const deployment of snapshot.deployments) {
+		const deploymentId = String(deployment.id ?? deployment.deploymentId ?? "");
+		if (!deploymentId) continue;
+		const { id: _id, deploymentId: _deploymentId, ...fields } = deployment;
+		await upsertDeployment(db, { repositoryId: snapshot.repositoryId, deploymentId, id: deploymentId, ...fields });
+	}
+};
+
+const mergedCandidatesFrom = (body: unknown) =>
+	(Array.isArray(body) ? body : [])
+		.map((item) => mergedPullRequestCandidate(item as Record<string, unknown>))
+		.filter((item): item is PullRequest => item !== undefined);
+
+const recentMergedEvidence = (existing: PullRequest[], mergedCandidates: PullRequest[]) =>
+	retainRecentMergedPullRequests(
+		existing
+			.concat(mergedCandidates)
+			.filter((item) => (item.retention_candidate === true || item.merged === true) && typeof item.number === "number")
+			.map((item) => ({
+				number: Number(item.number),
+				title: String(item.title ?? "Untitled"),
+				url: String(item.url ?? ""),
+				head_sha: String(item.head_sha ?? ""),
+				merge_sha: String(item.merge_sha ?? ""),
+				merged_at: String(item.merged_at ?? ""),
+			})),
+	);
 
 export async function bootstrapInstallation(
 	db: Db,
@@ -1553,54 +1742,9 @@ export async function bootstrapInstallation(
 			});
 			throw Object.assign(new Error("GitHub OpenSpec artifact fetch failed"), { status: response.status });
 		});
-	const bound = await db.users
-		.find({ "installations.installationId": installationId }, { projection: { _id: 1, github: 1, installations: 1 } })
-		.toArray();
-	if (
-		!bound.some((user) =>
-			user.installations.some(
-				(item) =>
-					item.installationId === installationId &&
-					(!item.accountLogin || approvedInstallationAccount(item.accountLogin)),
-			),
-		)
-	)
-		return {
-			kind: "error",
-			stale: true,
-			message: "installation account is not approved",
-			operation: "installation_identity",
-			summary: "Installation account is not approved",
-		};
-	const installation = await conditionalGet(
-		db,
-		`installation:${installationId}:identity`,
-		`https://api.github.com/app/installations/${installationId}`,
-		identityRequest,
-		{ operation: "installation_identity" },
-	);
-	if (installation.kind === "error") return installation;
-	if (installation.kind !== "changed")
-		return {
-			kind: "error",
-			stale: true,
-			message: "installation account is not approved",
-			operation: "installation_identity",
-			summary: "Installation account is not approved",
-		};
-	const installationBody = installation.body as {
-		account?: { login?: unknown };
-		permissions?: { pull_requests?: unknown };
-	};
-	const account = installationBody.account?.login;
-	if (!approvedInstallationAccount(account))
-		return {
-			kind: "error",
-			stale: true,
-			message: "installation account is not approved",
-			operation: "installation_identity",
-			summary: "Installation account is not approved",
-		};
+	const identity = await loadBootstrapIdentity(db, installationId, identityRequest);
+	if ("kind" in identity) return identity;
+	const { account, permissions, boundRepositories } = identity;
 	const repos = await pagedGet(
 		db,
 		`installation:${installationId}:repos`,
@@ -1611,13 +1755,15 @@ export async function bootstrapInstallation(
 	if (repos.kind !== "changed") return repos;
 	const repositories = repos.body as Array<{ id: number; full_name: string }>;
 	const snapshots: Repository[] = [];
+	const existingPullRequestsByRepository = new Map<string, PullRequest[]>();
 	const openSpecTasks: OpenSpecTask[] = [];
 	const retainedTargets: Array<{ installationId: string; repositoryId: string; number: number }> = [];
 	for (const repo of repositories) {
-		const existingRepository = bound
-			.flatMap((user) => user.installations)
-			.find((item) => item.installationId === installationId)
-			?.repositories.find((item) => item.repositoryId === String(repo.id));
+		const existingRepository = boundRepositories.find((item) => item.repositoryId === String(repo.id));
+		const existingPullRequests = (await db.pullRequests
+			.find({ repositoryId: String(repo.id) })
+			.toArray()) as PullRequest[];
+		existingPullRequestsByRepository.set(String(repo.id), existingPullRequests);
 		const policy = await refreshRepositoryPolicy(
 			db,
 			installationId,
@@ -1636,18 +1782,32 @@ export async function bootstrapInstallation(
 			{ operation: "pull_requests", repository: repo.full_name },
 		);
 		if (prs.kind !== "changed") return prs;
+		const closedPrs = await pagedGet(
+			db,
+			`installation:${installationId}:repo:${repo.id}:closed-prs`,
+			`https://api.github.com/repositories/${repo.id}/pulls?state=closed&per_page=100`,
+			request,
+			{ operation: "pull_requests", repository: repo.full_name },
+		);
+		if (closedPrs.kind !== "changed") return closedPrs;
 		const deployments = await bootstrapDeployments(db, installationId, String(repo.id), token, fetcher, repo.full_name);
 		if (deployments.kind === "error") return deployments;
 		const deploymentRows = deployments.kind === "changed" ? deployments.body : [];
 		const pullRequests = Array.isArray(prs.body) ? prs.body : [];
-		const deploymentPullRequests = pullRequests.map((pr: any) => ({
-			...pr,
-			url: pr.html_url,
-			head_sha: pr.head?.sha,
-		}));
-		const recentMergedPullRequests = retainRecentMergedPullRequests(existingRepository?.recentMergedPullRequests ?? []);
+		const mergedCandidates = mergedCandidatesFrom(closedPrs.body);
+		const deploymentPullRequests = [
+			...pullRequests.map((pr: any) => ({
+				...pr,
+				url: pr.html_url,
+				head_sha: pr.head?.sha,
+			})),
+			...mergedCandidates,
+		];
+		const recentMergedPullRequests = recentMergedEvidence(existingPullRequests, mergedCandidates);
 		const { reconciliationPullRequests, targets } = retainedReconciliationTargets(
-			bound,
+			existingPullRequests
+				.filter((item) => item.retention_candidate === true || item.state === "open")
+				.concat(mergedCandidates),
 			installationId,
 			String(repo.id),
 			pullRequests,
@@ -1718,63 +1878,32 @@ export async function bootstrapInstallation(
 			...(recentMergedPullRequests.length ? { recentMergedPullRequests } : {}),
 		});
 	}
-	const pullRequestsPermission = installationBody.permissions?.pull_requests;
-	const perUserCounts = await Promise.all(
-		bound.map(async (user) => {
-			let attemptCounts = {
-				prCount: 0,
-				changedPrCount: 0,
-				unchangedPrCount: 0,
-			};
-			await mutateUser(db, user._id, (aggregate) => {
-				attemptCounts = {
-					prCount: 0,
-					changedPrCount: 0,
-					unchangedPrCount: 0,
-				};
-				const installation = aggregate.installations.find((item) => item.installationId === installationId);
-				if (
-					!installation ||
-					(installation.accountLogin &&
-						(!approvedInstallationAccount(installation.accountLogin) || !sameLogin(installation.accountLogin, account)))
-				)
-					return;
-				const previousRepositories = installation.repositories;
-				if (!installation.accountLogin) installation.accountLogin = account;
-				installation.permissions = {
-					pull_requests: typeof pullRequestsPermission === "string" ? pullRequestsPermission : undefined,
-				};
-				installation.repositories = snapshots.flatMap((snapshot) => {
-					const previous = previousRepositories.find((item) => item.repositoryId === snapshot.repositoryId);
-					const observed = user.installations
-						.find((item) => item.installationId === installationId)
-						?.repositories.find((item) => item.repositoryId === snapshot.repositoryId);
-					return mergeRepositorySnapshot(previous, observed, snapshot, openSpecTasks, aggregate.github.login);
-				});
-				attemptCounts = projectedPullRequestCounts(
-					previousRepositories,
-					installation.repositories,
-					aggregate.github.login,
-				);
-				installation.lastSuccessfulSyncAt = new Date();
-				delete installation.lastSyncError;
-				appendReconciliationEvidence(installation, {
-					completedAt: new Date(),
-					outcome: "success",
-					operation: "reconciliation",
-					summary: "Reconciliation completed",
-				});
-			});
-			return attemptCounts;
-		}),
-	);
-	const prCounts = perUserCounts.reduce(
-		(total, counts) => ({
-			prCount: total.prCount + counts.prCount,
-			changedPrCount: total.changedPrCount + counts.changedPrCount,
-			unchangedPrCount: total.unchangedPrCount + counts.unchangedPrCount,
-		}),
-		{ prCount: 0, changedPrCount: 0, unchangedPrCount: 0 },
+	const pullRequestsPermission = permissions?.pull_requests;
+	const prCounts = { prCount: 0, changedPrCount: 0, unchangedPrCount: 0 };
+	for (const snapshot of snapshots)
+		await persistBootstrapSnapshot(
+			db,
+			installationId,
+			snapshot,
+			existingPullRequestsByRepository.get(snapshot.repositoryId) ?? [],
+			prCounts,
+		);
+	const observedRepositoryIds = new Set(snapshots.map((snapshot) => snapshot.repositoryId));
+	for (const repository of boundRepositories)
+		if (!observedRepositoryIds.has(repository.repositoryId))
+			await db.repositories.updateOne({ _id: repository.repositoryId }, { $pull: { installationIds: installationId } });
+	await db.installations.updateOne(
+		{ _id: installationId },
+		{
+			$set: {
+				accountLogin: account,
+				active: true,
+				suspended: false,
+				permissions: { pull_requests: typeof pullRequestsPermission === "string" ? pullRequestsPermission : undefined },
+				lastSuccessfulSyncAt: new Date(),
+			},
+			$unset: { lastSyncError: "" },
+		},
 	);
 	for (const target of retainedTargets) {
 		const result = await reconcilePullRequest(db, {
@@ -1812,7 +1941,7 @@ export async function bootstrapDeployments(
 	);
 	if (list.kind !== "changed" || !Array.isArray(list.body)) return list;
 	const deployments: Record<string, unknown>[] = [];
-	for (const item of list.body.slice(0, 20)) {
+	for (const item of list.body) {
 		const deployment = item as Record<string, unknown>;
 		const status = await pagedGet(
 			db,
@@ -1859,20 +1988,57 @@ export async function reconcileInstallations(
 	reportTaskFetchFailure?: GitHubRequestFailureReporter,
 	onResult?: (item: { installationId: string; startedAt: Date; result: ReadResult }) => Promise<void>,
 ) {
+	const beginStandaloneRun = async (installationId: string) => {
+		const startedAt = new Date();
+		const id = randomUUID();
+		await db.reconciliationRuns.insertOne({
+			_id: id,
+			installationId,
+			trigger: "manual",
+			startedAt,
+			status: "running",
+		} as ReconciliationRunDocument);
+		return { id, startedAt };
+	};
+	const finishStandaloneRun = async (run: { id: string; startedAt: Date }, result: ReadResult) => {
+		const completedAt = new Date();
+		const operation = result.kind === "error" ? (result.operation ?? "reconciliation") : "reconciliation";
+		const summary = result.kind === "error" ? (result.summary ?? "Reconciliation failed") : "Reconciliation completed";
+		await db.reconciliationRuns.updateOne(
+			{ _id: run.id, status: "running" },
+			{
+				$set: {
+					status: "completed",
+					outcome: result.kind === "error" ? "failure" : "success",
+					operation,
+					summary,
+					completedAt,
+					durationMs: Math.max(0, completedAt.getTime() - run.startedAt.getTime()),
+					...(result.kind === "error" ? { failureCount: 1 } : {}),
+				},
+			},
+		);
+	};
 	const ids = installationIds
 		? [...new Set(installationIds)].sort()
 		: [
 				...new Set(
-					(await db.users.find({}, { projection: { installations: 1 } }).toArray()).flatMap((user) =>
-						user.installations
-							.filter((item) => !item.accountLogin || approvedInstallationAccount(item.accountLogin))
-							.map((item) => item.installationId),
-					),
+					(
+						await db.installations
+							.find(
+								{ active: { $ne: false }, suspended: { $ne: true } },
+								{ projection: { installationId: 1, accountLogin: 1 } },
+							)
+							.toArray()
+					)
+						.filter((item) => approvedInstallationAccount(item.accountLogin))
+						.map((item) => item.installationId),
 				),
 			].sort();
 	const results: Array<{ installationId: string; result: ReadResult }> = [];
 	for (const installationId of ids) {
 		const startedAt = new Date();
+		const standaloneRun = onResult ? undefined : await beginStandaloneRun(installationId);
 		let result: ReadResult;
 		let operation = "installation_credentials";
 		try {
@@ -1894,6 +2060,7 @@ export async function reconcileInstallations(
 			};
 		}
 		results.push({ installationId, result });
+		if (standaloneRun) await finishStandaloneRun(standaloneRun, result);
 		try {
 			await onResult?.({ installationId, startedAt, result });
 		} catch (error) {
@@ -1964,36 +2131,30 @@ export async function persistReconciliationFailure(
 	installationId: string,
 	result: Extract<ReadResult, { kind: "error" }>,
 ) {
-	const users = await db.users
-		.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
-		.toArray();
-	await Promise.all(
-		users.map((user) =>
-			mutateUser(db, user._id, (aggregate) => {
-				const installation = aggregate.installations.find((item) => item.installationId === installationId);
-				if (installation && (!installation.accountLogin || approvedInstallationAccount(installation.accountLogin))) {
-					installation.lastSyncError = result.message.slice(0, 200);
-					appendReconciliationEvidence(installation, {
-						completedAt: new Date(),
-						outcome: "failure",
-						operation: result.operation ?? "reconciliation",
-						summary: result.summary ?? "Reconciliation failed",
-						repository: result.repository,
-						status: result.status,
-					});
-				}
-			}),
-		),
+	const installation = await db.installations.findOne({ _id: installationId });
+	if (!installation || !approvedInstallationAccount(installation.accountLogin)) return;
+	await db.installations.updateOne(
+		{ _id: installationId },
+		{
+			$set: { lastSyncError: result.message.slice(0, 200) },
+		},
 	);
 }
 
 export async function approvedInstallationIdsForUser(db: Db, userId: string) {
-	const user = await db.users.findOne({ _id: userId }, { projection: { installations: 1 } });
-	return [
-		...new Set(
-			user?.installations
-				.filter((item) => !item.accountLogin || approvedInstallationAccount(item.accountLogin))
-				.map((item) => item.installationId) ?? [],
-		),
-	].sort();
+	const bindings = await db.bindings.find({ userId }, { projection: { installationId: 1 } }).toArray();
+	const installations = await db.installations
+		.find(
+			{
+				_id: { $in: bindings.map((binding) => binding.installationId) },
+				active: { $ne: false },
+				suspended: { $ne: true },
+			},
+			{ projection: { installationId: 1, accountLogin: 1 } },
+		)
+		.toArray();
+	return installations
+		.filter((installation) => approvedInstallationAccount(installation.accountLogin))
+		.map((installation) => installation.installationId)
+		.sort();
 }

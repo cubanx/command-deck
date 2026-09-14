@@ -627,7 +627,7 @@ test("filters, orders, clears, and persists the operational card view", async ()
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 	expect((sort as HTMLSelectElement).value).toBe("progress:desc");
 	expect(status().getAttribute("placeholder")).toBe("All statuses");
-	expect(store.get("dcc-pr-sort")).toBe('{"mode":"progress","direction":"desc"}');
+	expect(store.has("dcc-pr-sort")).toBe(false);
 	expect(screen.getByRole("status").textContent).toBe("5 results");
 });
 

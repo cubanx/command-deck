@@ -80,4 +80,4 @@ On failure, remain in maintenance or roll forward. Restoring an old runtime requ
 
 ## Implementation sequencing
 
-The current branch contains separate retention work. Keep this proposal uncommitted until publication is requested. Start executable work on an aligned branch from current main, resolving retention overlap without publishing unrelated history. If unmerged retention code is a prerequisite, wait for merge unless a stacked workflow is explicitly authorized. Align revised retention implementation and artifacts to 259200 seconds.
+The user published both task-owned changes together in PR #27 and then requested full implementation. Continue on that established PR branch, cd/expire-completed-deliveries, retaining the reported published-name mismatch instead of renaming it without authorization or creating a dependent PR. Its base is current main and both outgoing commits belong to this task. Align revised retention implementation and artifacts to 259200 seconds in this same change batch; no separate prerequisite merge is needed.

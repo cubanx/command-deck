@@ -1,5 +1,5 @@
-import type { Db, Repository } from "#/db";
-import { mutateUser } from "#/db";
+import type { Db } from "#/db";
+import { patchPullRequest } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 import { activeOpenSpecGroups } from "#/openspec-tasks";
 
@@ -81,118 +81,156 @@ export function parseTasks(content: string) {
 		incompleteGroups,
 	};
 }
-export function projectRepositoryTasks(
-	repository: Repository,
+const openSpecProjection = (
 	changeName: string,
+	progress: ReturnType<typeof parseTasks>,
 	input: { content?: string; sha: string; sourceRef?: string },
-) {
-	const progress = parseTasks(input.content ?? "");
-	const index = repository.openSpecs.findIndex((item) => item.change_name === changeName),
-		previous = index >= 0 ? repository.openSpecs[index] : undefined;
-	const completed =
-		progress.total > 0 &&
-		progress.completed === progress.total &&
-		(!previous || Number(previous.completed) < Number(previous.total));
-	const next = {
-		change_name: changeName,
-		completed: progress.completed,
-		total: progress.total,
-		pre_merge_ready: progress.preMergeReady,
-		source_commit: input.sha,
-		...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
-		active_group: progress.activeGroup ? JSON.stringify(progress.activeGroup) : null,
-		active_groups: JSON.stringify(progress.activeGroups),
-		incomplete_groups: JSON.stringify(progress.incompleteGroups),
-		updated_at: new Date().toISOString(),
-	};
-	const changed =
-		!previous ||
-		(
-			[
-				"completed",
-				"total",
-				"pre_merge_ready",
-				"source_commit",
-				"source_ref",
-				"active_group",
-				"active_groups",
-				"incomplete_groups",
-			] as const
-		).some((key) => JSON.stringify(previous[key]) !== JSON.stringify(next[key]));
-	if (index >= 0) repository.openSpecs[index] = next;
-	else repository.openSpecs.push(next);
-	return { changed, completed };
-}
+	fullName?: string,
+) => ({
+	change_name: changeName,
+	completed: progress.completed,
+	total: progress.total,
+	pre_merge_ready: progress.preMergeReady,
+	source_commit: input.sha,
+	...(input.sourceRef ? { source_ref: input.sourceRef } : {}),
+	...(fullName
+		? { source_url: `https://github.com/${fullName}/blob/${input.sha}/openspec/changes/${changeName}/tasks.md` }
+		: {}),
+	active_group: progress.activeGroup,
+	active_groups: progress.activeGroups,
+	incomplete_groups: progress.incompleteGroups,
+	updated_at: new Date().toISOString(),
+});
+type OpenSpecProjectionInput = {
+	installationId: string;
+	accountLogin: string;
+	repositoryId: string;
+	path: string;
+	changeName?: string;
+	content?: string;
+	deleted?: boolean;
+	sha: string;
+	sourceRef?: string;
+};
 
-export async function projectOpenSpec(
-	db: Db,
-	input: {
-		installationId: string;
-		accountLogin: string;
-		repositoryId: string;
-		path: string;
-		changeName?: string;
-		content?: string;
-		deleted?: boolean;
-		sha: string;
-		sourceRef?: string;
-	},
-) {
+const authorizedOpenSpecInstallation = async (db: Db, input: OpenSpecProjectionInput) => {
+	const installation = await db.installations.findOne(
+		{ _id: input.installationId },
+		{ projection: { accountLogin: 1, active: 1, suspended: 1 } },
+	);
+	return Boolean(
+		installation &&
+			approvedInstallationAccount(installation.accountLogin) &&
+			sameLogin(installation.accountLogin, input.accountLogin) &&
+			installation.active !== false &&
+			installation.suspended !== true,
+	);
+};
+
+const removeOpenSpecEvidence = async (db: Db, input: OpenSpecProjectionInput, changeName: string) => {
+	let changed = false;
+	for (const target of await db.pullRequests
+		.find({ repositoryId: input.repositoryId, "open_specs.change_name": changeName })
+		.toArray()) {
+		const owned =
+			Array.isArray(target.open_specs) &&
+			target.open_specs.some((item) => {
+				const evidence = item as Record<string, unknown>;
+				return (
+					evidence.change_name === changeName &&
+					((input.sourceRef && evidence.source_ref === input.sourceRef) || evidence.source_commit === input.sha)
+				);
+			});
+		if (!owned) continue;
+		const specs = Array.isArray(target.open_specs)
+			? target.open_specs.filter((item) => (item as Record<string, unknown>).change_name !== changeName)
+			: [];
+		changed =
+			(await patchPullRequest(db, target._id, { open_specs: specs }, [], {
+				revision: target.revision,
+				head_sha: target.head_sha,
+				source_commit: target.source_commit,
+			})) || changed;
+	}
+	return { changed, completed: false };
+};
+
+const findOpenSpecOwner = async (db: Db, input: OpenSpecProjectionInput, changeName: string) => {
+	const candidates = (
+		await db.pullRequests
+			.find({
+				repositoryId: input.repositoryId,
+				$or: [
+					{ head_sha: input.sha },
+					...(input.sourceRef ? [{ head_ref: input.sourceRef }] : []),
+					{ "open_specs.change_name": changeName },
+				],
+			})
+			.toArray()
+	).filter((candidate) => {
+		if (candidate.head_sha === input.sha || (input.sourceRef && candidate.head_ref === input.sourceRef)) return true;
+		return (
+			Array.isArray(candidate.open_specs) &&
+			candidate.open_specs.some((item) => {
+				const evidence = item as Record<string, unknown>;
+				return (
+					evidence.change_name === changeName &&
+					((input.sourceRef && evidence.source_ref === input.sourceRef) || evidence.source_commit === input.sha)
+				);
+			})
+		);
+	});
+	const unique = [...new Map(candidates.map((item) => [item._id, item])).values()];
+	return unique.length === 1 ? unique[0] : undefined;
+};
+
+export async function projectOpenSpec(db: Db, input: OpenSpecProjectionInput) {
 	const changeName = input.changeName ?? input.path.split("/")[2];
 	if (!changeName) throw new Error("invalid OpenSpec tasks path");
-	if (input.deleted) {
-		const users = await db.users
-			.find({ "installations.installationId": input.installationId }, { projection: { _id: 1 } })
-			.toArray();
-		const changes = await Promise.all(
-			users.map(async (user) => {
-				let changed = false;
-				await mutateUser(db, user._id, (aggregate) => {
-					changed = false;
-					const installation = aggregate.installations.find((item) => item.installationId === input.installationId);
-					if (
-						!installation ||
-						!approvedInstallationAccount(installation.accountLogin) ||
-						!sameLogin(installation.accountLogin, input.accountLogin)
-					)
-						return;
-					const repository = installation.repositories.find((item) => item.repositoryId === input.repositoryId);
-					if (repository) {
-						const before = repository.openSpecs.length;
-						repository.openSpecs = repository.openSpecs.filter((item) => item.change_name !== changeName);
-						changed ||= repository.openSpecs.length !== before;
-					}
-				});
-				return changed;
-			}),
-		);
-		return { changed: changes.some(Boolean), completed: false };
-	}
-	const users = await db.users
-		.find({ "installations.installationId": input.installationId }, { projection: { _id: 1 } })
-		.toArray();
-	const results = await Promise.all(
-		users.map(async (user) => {
-			let changed = false,
-				completed = false;
-			await mutateUser(db, user._id, (aggregate) => {
-				changed = false;
-				completed = false;
-				const installation = aggregate.installations.find((item) => item.installationId === input.installationId);
-				if (
-					!installation ||
-					!approvedInstallationAccount(installation.accountLogin) ||
-					!sameLogin(installation.accountLogin, input.accountLogin)
-				)
-					return;
-				const repository = installation.repositories.find((item) => item.repositoryId === input.repositoryId);
-				if (!repository) return;
-				const result = projectRepositoryTasks(repository, changeName, input);
-				changed = result.changed;
-				completed = result.completed;
-			});
-			return { changed, completed };
-		}),
+	if (!(await authorizedOpenSpecInstallation(db, input))) return { changed: false, completed: false };
+	if (input.deleted) return removeOpenSpecEvidence(db, input, changeName);
+	const progress = parseTasks(input.content ?? "");
+	const repository = await db.repositories.findOne(
+		{ repositoryId: input.repositoryId },
+		{ projection: { full_name: 1 } },
 	);
-	return { changed: results.some((result) => result.changed), completed: results.some((result) => result.completed) };
+	const target = await findOpenSpecOwner(db, input, changeName);
+	if (!target) return { changed: false, completed: false };
+	const previous = Array.isArray(target.open_specs)
+		? (target.open_specs as Record<string, unknown>[]).find((item) => item.change_name === changeName)
+		: undefined;
+	const evidence = {
+		...openSpecProjection(changeName, progress, input, repository?.full_name),
+		updated_at: previous?.updated_at ?? new Date().toISOString(),
+	};
+	const specs = Array.isArray(target.open_specs)
+		? target.open_specs.filter((item) => (item as Record<string, unknown>).change_name !== changeName)
+		: [];
+	specs.push(evidence);
+	const changed = await patchPullRequest(
+		db,
+		target._id,
+		{
+			open_specs: specs,
+			...(target.merged === true || target.retention_candidate === true
+				? {
+						post_merge_source_commit: input.sha,
+						...(input.sourceRef ? { post_merge_source_ref: input.sourceRef } : {}),
+					}
+				: {}),
+		},
+		[],
+		{
+			revision: target.revision,
+			head_sha: target.head_sha,
+			source_commit: target.source_commit,
+		},
+	);
+	return {
+		changed,
+		completed:
+			progress.total > 0 &&
+			progress.completed === progress.total &&
+			(!previous || Number(previous.completed ?? 0) < Number(previous.total ?? 0)),
+	};
 }

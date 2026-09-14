@@ -1,21 +1,35 @@
 import { expect, test, vi } from "vitest";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
+import { type Db, upsertPullRequest } from "#/db";
 import { changedTaskPaths, openSpecGate, parseOpenSpecDeclaration, parseTasks, projectOpenSpec } from "#/openspec";
+import { beginReconciliationRun, finishReconciliationRun } from "#/reconciliation-runs";
 import { withDatabase } from "./mongo-support";
 
-test.each([false, true])("OpenSpec retry reports only its committed transition (deletion=%s)", (deleted) =>
+async function seedPr(db: Db) {
+	await db.repositories.insertOne({
+		_id: "r",
+		repositoryId: "r",
+		full_name: "ds9/ops",
+		installationIds: ["1"],
+		updatedAt: new Date(),
+		policy: { refreshed_at: "2026-08-24T12:00:00.000Z", required_checks: [] },
+	});
+	await upsertPullRequest(db, {
+		repositoryId: "r",
+		number: 7,
+		state: "open",
+		author_login: "sisko",
+		head_sha: "a".repeat(40),
+		head_ref: "main",
+		opened_at: "2026-08-24T12:00:00.000Z",
+	});
+}
+
+test.each([false, true])("OpenSpec conflict replay reports only its committed transition (deletion=%s)", (deleted) =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "sisko", "sisko");
 		await bindInstallation(db, "sisko", "1", "cubanx");
-		const user = await db.users.findOne({ _id: "sisko" });
-		user!.installations[0]!.repositories.push({
-			repositoryId: "r",
-			full_name: "ds9/ops",
-			pullRequests: [],
-			openSpecs: [],
-			deployments: [],
-		});
-		await db.users.replaceOne({ _id: "sisko" }, user!);
+		await seedPr(db);
 		const input = {
 			installationId: "1",
 			accountLogin: "cubanx",
@@ -25,9 +39,9 @@ test.each([false, true])("OpenSpec retry reports only its committed transition (
 			sha: "a".repeat(40),
 		};
 		if (deleted) await projectOpenSpec(db, input);
-		const replace = db.users.replaceOne.bind(db.users);
+		const replace = db.pullRequests.replaceOne.bind(db.pullRequests);
 		let attempts = 0;
-		db.users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
+		db.pullRequests.replaceOne = async (...args: Parameters<typeof db.pullRequests.replaceOne>) => {
 			// Another writer commits the same transition before this writer's first CAS.
 			if (++attempts === 1) await replace(...args);
 			return replace(...args);
@@ -35,11 +49,12 @@ test.each([false, true])("OpenSpec retry reports only its committed transition (
 		// Keep projection timestamps equal across attempts so this exercises an actual no-op.
 		vi.useFakeTimers({ toFake: ["Date"] });
 		try {
+			await expect(projectOpenSpec(db, { ...input, deleted })).rejects.toThrow("changed concurrently");
 			expect(await projectOpenSpec(db, { ...input, deleted })).toEqual({ changed: false, completed: false });
 			expect(attempts).toBe(1);
 		} finally {
 			vi.useRealTimers();
-			db.users.replaceOne = replace;
+			db.pullRequests.replaceOne = replace;
 		}
 	}),
 );
@@ -48,15 +63,7 @@ test("projects installation-scoped OpenSpec progress", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
-			repositoryId: "r",
-			full_name: "ds9/ops",
-			pullRequests: [],
-			openSpecs: [],
-			deployments: [],
-		});
-		await db.users.replaceOne({ _id: "u" }, user!);
+		await seedPr(db);
 		expect(changedTaskPaths(["openspec/changes/defiant/tasks.md", "README.md"])).toEqual([
 			"openspec/changes/defiant/tasks.md",
 		]);
@@ -74,7 +81,7 @@ test("projects installation-scoped OpenSpec progress", () =>
 				sha: "a".repeat(40),
 			}),
 		).toEqual({ changed: true, completed: true });
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(1);
+		expect((await db.pullRequests.findOne({ _id: "r:7" }))?.open_specs).toHaveLength(1);
 		expect(
 			await projectOpenSpec(db, {
 				installationId: "1",
@@ -93,8 +100,9 @@ test("projects installation-scoped OpenSpec progress", () =>
 			path: "openspec/changes/defiant/tasks.md",
 			deleted: true,
 			sha: "b".repeat(40),
+			sourceRef: "main",
 		});
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(0);
+		expect((await db.pullRequests.findOne({ _id: "r:7" }))?.open_specs).toHaveLength(0);
 	}));
 
 test("keeps total progress while ignoring only exact post-merge groups for readiness", () => {
@@ -171,15 +179,7 @@ test("persists bounded active and display OpenSpec groups alongside the legacy g
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
-			repositoryId: "r",
-			full_name: "ds9/ops",
-			pullRequests: [],
-			openSpecs: [],
-			deployments: [],
-		});
-		await db.users.replaceOne({ _id: "u" }, user!);
+		await seedPr(db);
 		await projectOpenSpec(db, {
 			installationId: "1",
 			accountLogin: "cubanx",
@@ -189,10 +189,11 @@ test("persists bounded active and display OpenSpec groups alongside the legacy g
 				"## Current\n- [ ] Reconfigure the deflector\n\n## Next\n- [ ] Test the warp core\n\n## Observe [post-merge]\n- [ ] Observe the wormhole",
 			sha: "a".repeat(40),
 		});
-		const spec = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs[0];
-		expect(JSON.parse(String(spec?.active_group))).toMatchObject({ title: "Current" });
-		expect(JSON.parse(String(spec?.active_groups))).toMatchObject([{ title: "Current" }, { title: "Next" }]);
-		expect(JSON.parse(String(spec?.incomplete_groups))).toMatchObject([{ title: "Current" }, { title: "Next" }]);
+		const specs = (await db.pullRequests.findOne({ _id: "r:7" }))?.open_specs as Record<string, unknown>[] | undefined;
+		const spec = specs?.[0];
+		expect(spec?.active_group).toMatchObject({ title: "Current" });
+		expect(spec?.active_groups).toMatchObject([{ title: "Current" }, { title: "Next" }]);
+		expect(spec?.incomplete_groups).toMatchObject([{ title: "Current" }, { title: "Next" }]);
 	}));
 
 test("parses only one exhaustive OpenSpecs declaration", () => {
@@ -230,45 +231,19 @@ test("applies openspec-not-required only when no OpenSpec is correlated", () => 
 	});
 });
 
-test("persists optional lifecycle projections and private reconciliation runs", () =>
+test("keeps lifecycle projections separate from private reconciliation runs", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
-			repositoryId: "r",
-			full_name: "ds9/ops",
-			pullRequests: [{ number: 7, opened_at: "2026-08-24T12:00:00.000Z" }],
-			openSpecs: [],
-			deployments: [],
-			policy: { refreshed_at: "2026-08-24T12:00:00.000Z", required_checks: [] },
-			recentMergedPullRequests: [
-				{
-					number: 7,
-					title: "Defiant telemetry",
-					url: "https://github.com/ds9/ops/pull/7",
-					head_sha: "a".repeat(40),
-					merge_sha: "b".repeat(40),
-					merged_at: "2026-08-24T12:00:00.000Z",
-				},
-			],
-		});
-		await db.users.replaceOne({ _id: "u" }, user!);
-		await db.reconciliationRuns.insertOne({
-			installationId: "1",
-			trigger: "manual",
-			startedAt: new Date("2026-08-24T12:00:00.000Z"),
-			completedAt: new Date("2026-08-24T12:00:01.000Z"),
-			durationMs: 1_000,
+		await seedPr(db);
+		const runId = await beginReconciliationRun(db, { installationId: "1", trigger: "manual" });
+		await finishReconciliationRun(db, runId, {
+			outcome: "success",
 			prCount: 1,
 			providerRequestCount: 4,
 			changedPrCount: 0,
 			unchangedPrCount: 1,
-			changedFieldCategories: [],
 			failureCount: 0,
-			unresolvedDeliveryCount: 0,
-			repairedDeliveryCount: 0,
-			outcome: "success",
 		});
 		expect(await db.reconciliationRuns.countDocuments()).toBe(1);
 		expect(JSON.stringify(await dashboardForUser(db, "u"))).not.toContain("providerRequestCount");
@@ -276,29 +251,14 @@ test("persists optional lifecycle projections and private reconciliation runs", 
 			expect.arrayContaining([
 				expect.objectContaining({
 					key: { completedAt: 1 },
-					expireAfterSeconds: 1_209_600,
+					expireAfterSeconds: 259_200,
 				}),
 				expect.objectContaining({
-					key: { installationId: 1, completedAt: -1 },
+					key: { installationId: 1, startedAt: -1 },
 				}),
 			]),
 		);
-		expect(await db.users.findOne({ _id: "u" })).toMatchObject({
-			installations: [
-				{
-					repositories: [
-						{
-							pullRequests: [{ opened_at: "2026-08-24T12:00:00.000Z" }],
-							policy: { required_checks: [] },
-							recentMergedPullRequests: [
-								expect.objectContaining({
-									number: 7,
-									merge_sha: "b".repeat(40),
-								}),
-							],
-						},
-					],
-				},
-			],
-		});
+		expect(await db.pullRequests.findOne({ _id: "r:7" })).toMatchObject({ opened_at: "2026-08-24T12:00:00.000Z" });
+		expect(await db.repositories.findOne({ _id: "r" })).toMatchObject({ policy: { required_checks: [] } });
+		expect(await db.users.findOne({ _id: "u" })).not.toHaveProperty("installations");
 	}));

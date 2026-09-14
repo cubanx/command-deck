@@ -8,7 +8,7 @@ edges:
   - target: context/decisions.md
     condition: rationale matters
 grounds_to: []
-last_updated: 2026-08-13
+last_updated: 2026-09-13
 ---
 
 # Architecture
@@ -21,9 +21,9 @@ last_updated: 2026-08-13
 
 - `src/server.ts`: HTTP routes, sessions, static assets, health, readiness, and SSE.
 - `src/events.ts`: verified webhook ingestion, bounded retry, and projection updates.
-- `src/db.ts`: MongoDB collections, indexes, user aggregates, and size guards.
+- `src/db.ts`: MongoDB domain collections, indexes, per-document conflict guards, and size limits.
 - `src/github.ts`: bounded GitHub App API access and reconciliation.
-- `src/access.ts`: identity binding and user-scoped dashboard assembly.
+- `src/access.ts`: narrow identity reads, shared installation bindings, preferences, and authorized dashboard assembly.
 - `src/openspec.ts`: committed OpenSpec task parsing and correlation.
 
 ## Boundaries

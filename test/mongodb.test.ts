@@ -9,7 +9,8 @@ test("inbox TTL expires only completed receipts and bounds delivery deduplicatio
 		if ((await db.inboxDeliveries.listIndexes().toArray()).some((index) => index.name === "processedAt_1"))
 			await db.inboxDeliveries.dropIndex("processedAt_1");
 		const current = new Date();
-		const old = new Date(current.getTime() - 8 * 24 * 60 * 60_000);
+		const old = new Date(current.getTime() - 73 * 60 * 60_000);
+		const recent = new Date(current.getTime() - 71 * 60 * 60_000);
 		const body = JSON.stringify({ installation: { id: 47 }, repository: { id: 1701 }, action: "edited" });
 		const receipts = [
 			{ deliveryId: "sisko", status: "done", processedAt: old },
@@ -23,8 +24,8 @@ test("inbox TTL expires only completed receipts and bounds delivery deduplicatio
 				error: "processing failed",
 			},
 			{ deliveryId: "quark", status: "rejected", processedAt: old, payload: body, error: "processing failed" },
-			{ deliveryId: "bashir", status: "done", processedAt: current },
-			{ deliveryId: "obrien", status: "ignored", processedAt: current },
+			{ deliveryId: "bashir", status: "done", processedAt: recent },
+			{ deliveryId: "obrien", status: "ignored", processedAt: recent },
 			{ deliveryId: "worf", status: "done" },
 			{ deliveryId: "rom", status: "ignored", processedAt: old.toISOString() },
 		].map((receipt) => ({
@@ -43,7 +44,7 @@ test("inbox TTL expires only completed receipts and bounds delivery deduplicatio
 		const indexes = await db.inboxDeliveries.listIndexes().toArray();
 		expect(indexes.find((index) => index.name === "processedAt_1")).toMatchObject({
 			key: { processedAt: 1 },
-			expireAfterSeconds: 604800,
+			expireAfterSeconds: 259200,
 			partialFilterExpression: { status: { $in: ["done", "ignored"] } },
 		});
 		expect(indexes.map((index) => index.key)).toEqual(
@@ -155,9 +156,6 @@ test.skipIf(!process.env.MONGODB_URI_BASE)(
 		try {
 			await initializeDatabase(db);
 			await databaseReady(db);
-			expect(
-				(await db.notifications.listIndexes().toArray()).some((index) => index.name === "userId_1_transitionKey_1"),
-			).toBe(true);
 		} finally {
 			await db.mongo.dropDatabase();
 			await closeDatabase(db);

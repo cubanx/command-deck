@@ -8,6 +8,7 @@ import {
 	LOCAL_DEMO_USER,
 	seedLocalDemo,
 	sessionUser,
+	updateDashboardPreferences,
 	upsertIdentity,
 } from "#/access";
 import type { Config } from "#/config";
@@ -55,6 +56,7 @@ import {
 	failureDetails,
 	logReconciliationError,
 } from "#/reconciliation-coordinator";
+import { beginReconciliationRun, finishReconciliationRun } from "#/reconciliation-runs";
 import { createWeekdayReconciliationScheduler } from "#/reconciliation-scheduler";
 import { frontendAssetLoader } from "#/web/frontend-assets";
 
@@ -63,6 +65,11 @@ type AppDependencies = {
 	reconcileInstallations?: typeof reconcileInstallations;
 	reconcilePullRequest?: typeof reconcilePullRequest;
 };
+
+const boundUserIds = async (db: Db, installationId: string) =>
+	(await db.bindings.find({ installationId }, { projection: { userId: 1 } }).toArray()).map(
+		(binding) => binding.userId,
+	);
 
 const lifecycleChangedFields = (before: Record<string, unknown> | undefined, after: unknown) => {
 	if (!after || typeof after !== "object") return [];
@@ -388,6 +395,27 @@ const sessionRoute = async (context: AppContext, request: Request, path: string)
 			? Response.json(await dashboardForUser(context.db, user.id))
 			: new Response("unauthenticated", { status: 401 });
 	}
+	if (path === "/api/preferences") {
+		const user = await context.authenticated(request);
+		if (!user) return new Response("unauthenticated", { status: 401 });
+		if (request.method === "GET") {
+			const snapshot = await dashboardForUser(context.db, user.id);
+			return Response.json(snapshot.preferences);
+		}
+		if (request.method === "PATCH") {
+			try {
+				const body = await request.json();
+				if (!body || typeof body !== "object" || Array.isArray(body))
+					return new Response("invalid preferences", { status: 400 });
+				await updateDashboardPreferences(context.db, user.id, body as Parameters<typeof updateDashboardPreferences>[2]);
+				return Response.json((await dashboardForUser(context.db, user.id)).preferences);
+			} catch (error) {
+				console.error("dashboard preferences update failed", error instanceof Error ? error.name : "unknown");
+				return new Response("invalid preferences", { status: 400 });
+			}
+		}
+		return new Response("method not allowed", { status: 405 });
+	}
 	if (path !== "/events") return undefined;
 	const user = await context.authenticated(request);
 	if (!user) return new Response("unauthenticated", { status: 401 });
@@ -490,10 +518,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 				logReconciliationFailure("installation bootstrap failed", installationId, result, "broad");
 			} else {
 				if (result.kind === "changed")
-					for (const user of await context.db.users
-						.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
-						.toArray())
-						context.refresh(user._id);
+					for (const userId of await boundUserIds(context.db, installationId)) context.refresh(userId);
 				await context.scheduleDrain();
 			}
 		})();
@@ -697,14 +722,19 @@ const repairRoute = async (context: AppContext, request: Request, path: string) 
 	const installationId = repair[1];
 	const binding =
 		user &&
-		(await context.db.users.findOne({ _id: user.id }, { projection: { installations: 1 } }))?.installations.find(
-			(item) => item.installationId === installationId,
-		);
-	if (!binding || (binding.accountLogin && !approvedInstallationAccount(binding.accountLogin)))
+		(await context.db.bindings.findOne({ userId: user.id, installationId })) &&
+		(await context.db.installations.findOne({ _id: installationId }));
+	if (
+		!binding ||
+		!approvedInstallationAccount(binding.accountLogin) ||
+		binding.active === false ||
+		binding.suspended === true
+	)
 		return new Response("not found", { status: 404 });
 	const { githubAppId, githubAppPrivateKey } = context.config;
 	if (!context.bootstrapInstallation && (!githubAppId || !githubAppPrivateKey))
 		return new Response("GitHub App is not configured", { status: 503 });
+	const runId = await beginReconciliationRun(context.db, { installationId, trigger: "manual" });
 	try {
 		const appJwt = context.bootstrapInstallation
 			? ""
@@ -718,6 +748,7 @@ const repairRoute = async (context: AppContext, request: Request, path: string) 
 			appJwt,
 		);
 		if (result.kind === "error") {
+			await finishReconciliationRunSafely(context.db, runId, { outcome: "failure", failureCount: 1 });
 			try {
 				await persistReconciliationFailure(context.db, installationId, result);
 			} catch {
@@ -725,6 +756,16 @@ const repairRoute = async (context: AppContext, request: Request, path: string) 
 			}
 			logReconciliationFailure("installation repair failed", installationId, result, "targeted");
 		} else {
+			await finishReconciliationRunSafely(context.db, runId, {
+				outcome: "success",
+				...(result.kind === "changed"
+					? {
+							prCount: result.prCount,
+							changedPrCount: result.changedPrCount,
+							unchangedPrCount: result.unchangedPrCount,
+						}
+					: {}),
+			});
 			await markDeliveriesRepairedByReconciliation(
 				context.db,
 				installationId,
@@ -733,15 +774,22 @@ const repairRoute = async (context: AppContext, request: Request, path: string) 
 					: [],
 			);
 			if (result.kind === "changed")
-				for (const affected of await context.db.users
-					.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
-					.toArray())
-					context.refresh(affected._id);
-			void context.scheduleDrain();
+				for (const userId of await boundUserIds(context.db, installationId)) context.refresh(userId);
+			await context.scheduleDrain();
 		}
 		return Response.json(result);
 	} catch (error) {
 		const result = normalizedReconciliationFailure();
+		try {
+			await finishReconciliationRunSafely(context.db, runId, { outcome: "failure", failureCount: 1 });
+		} catch (finishError) {
+			logReconciliationError({
+				installationId,
+				operation: "reconciliation_audit",
+				category: "bookkeeping",
+				...failureDetails(finishError),
+			});
+		}
 		try {
 			await persistReconciliationFailure(context.db, installationId, result);
 		} catch {
@@ -993,10 +1041,21 @@ const stageFromError = (error: unknown) => {
 	const stage = errorField(error, reconciliationStage);
 	return typeof stage === "string" ? stage : undefined;
 };
+const finishReconciliationRunSafely = async (
+	db: Db,
+	id: string,
+	summary: Parameters<typeof finishReconciliationRun>[2],
+) => {
+	try {
+		await finishReconciliationRun(db, id, summary);
+	} catch (error) {
+		logReconciliationError({ operation: "reconciliation_audit", category: "bookkeeping", ...failureDetails(error) });
+	}
+};
 
 export const auditReconciliationRun = async (db: Db, run: ReconciliationRun) => {
 	try {
-		await db.reconciliationRuns.insertOne(run);
+		await db.reconciliationRuns.insertOne(run as never);
 	} catch {
 		logReconciliationError({
 			installationId: run.installationId,
@@ -1006,18 +1065,13 @@ export const auditReconciliationRun = async (db: Db, run: ReconciliationRun) => 
 	}
 };
 
-const reconcileTargetedPullRequest = async (options: ReconciliationOptions, target: PullRequestTarget) => {
+const reconcileTargetedPullRequestBody = async (options: ReconciliationOptions, target: PullRequestTarget) => {
 	const { db, config, dependencies, reconcileTarget, refresh } = options;
 	const counted = countedFetch(fetch);
 	let reportedFailure = false;
-	const before = (
-		await withReconciliationStage("target_lookup", () =>
-			db.users.findOne({ "installations.installationId": target.installationId }, { projection: { installations: 1 } }),
-		)
-	)?.installations
-		.find((item) => item.installationId === target.installationId)
-		?.repositories.find((item) => item.repositoryId === target.repositoryId)
-		?.pullRequests.find((item) => Number(item.number) === target.number);
+	const before = await withReconciliationStage("target_lookup", () =>
+		db.pullRequests.findOne({ _id: `${target.repositoryId}:${target.number}` }),
+	);
 	const result = dependencies.reconcilePullRequest
 		? await withReconciliationStage("targeted_provider", () =>
 				reconcileTarget(db, {
@@ -1064,21 +1118,41 @@ const reconcileTargetedPullRequest = async (options: ReconciliationOptions, targ
 		});
 	if (result.kind === "changed")
 		await withReconciliationStage("refresh", async () => {
-			for (const user of await db.users
-				.find({ "installations.installationId": target.installationId }, { projection: { _id: 1 } })
-				.toArray())
-				refresh(user._id);
+			for (const userId of await boundUserIds(db, target.installationId)) refresh(userId);
 		});
 	return {
 		...result,
 		providerRequestCount: counted.count(),
-		changedFieldCategories: result.kind === "changed" ? lifecycleChangedFields(before, result.body) : [],
+		changedFieldCategories: result.kind === "changed" ? lifecycleChangedFields(before ?? undefined, result.body) : [],
 	};
+};
+
+const reconcileTargetedPullRequest = async (
+	options: ReconciliationOptions,
+	target: PullRequestTarget,
+	trigger: "scheduled" | "webhook" | "startup" | "manual",
+) => {
+	const runId = await beginReconciliationRun(options.db, { installationId: target.installationId, trigger });
+	try {
+		const result = await reconcileTargetedPullRequestBody(options, target);
+		await finishReconciliationRunSafely(options.db, runId, {
+			outcome: result.kind === "error" ? "failure" : "success",
+			prCount: 1,
+			providerRequestCount: result.providerRequestCount ?? 0,
+			changedPrCount: result.kind === "changed" ? 1 : 0,
+			unchangedPrCount: result.kind === "unchanged" ? 1 : 0,
+			failureCount: result.kind === "error" ? 1 : 0,
+		});
+		return result;
+	} catch (error) {
+		await finishReconciliationRunSafely(options.db, runId, { outcome: "failure", failureCount: 1 });
+		throw error;
+	}
 };
 
 const createTargetedCoordinator = (options: ReconciliationOptions) =>
 	createReconciliationCoordinator({
-		reconcilePullRequest: (target) => reconcileTargetedPullRequest(options, target),
+		reconcilePullRequest: (target, trigger) => reconcileTargetedPullRequest(options, target, trigger),
 		reconcileInstallations: async () => {},
 		onError: (error, context) =>
 			logReconciliationError({
@@ -1087,9 +1161,6 @@ const createTargetedCoordinator = (options: ReconciliationOptions) =>
 					failureDetails(error)),
 				operation: stageFromError(error) ?? context.operation,
 			}),
-		recordRun: async (run) => {
-			await auditReconciliationRun(options.db, run);
-		},
 	});
 
 const createBroadReconciler = (options: ReconciliationOptions) => {
@@ -1111,6 +1182,21 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			if (trigger === "startup" && !userId && !scopedInstallationIds) startupPending = true;
 			return "running";
 		}
+		const runInstallationIds =
+			installationIds ??
+			(
+				await db.installations
+					.find(
+						{ active: { $ne: false }, suspended: { $ne: true } },
+						{ projection: { installationId: 1, accountLogin: 1 } },
+					)
+					.toArray()
+			)
+				.filter((installation) => approvedInstallationAccount(installation.accountLogin))
+				.map((installation) => installation.installationId);
+		const runIds = new Map<string, string>();
+		for (const installationId of runInstallationIds)
+			runIds.set(installationId, await beginReconciliationRun(db, { installationId, trigger }));
 		const requestCounts = new Map<string, number>();
 		let activeInstallationId: string | undefined;
 		const countingFetch = (...input: Parameters<typeof fetch>) => {
@@ -1134,11 +1220,7 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			undefined,
 			async ({ installationId, startedAt, result }) => {
 				const counts = directReconciliationCounts(result);
-				if (result.kind === "changed")
-					for (const user of await db.users
-						.find({ "installations.installationId": installationId }, { projection: { _id: 1 } })
-						.toArray())
-						refresh(user._id);
+				if (result.kind === "changed") for (const userId of await boundUserIds(db, installationId)) refresh(userId);
 				const completedAt = new Date();
 				const repairedDeliveryCount =
 					result.kind !== "changed" || !Array.isArray(result.body)
@@ -1153,26 +1235,34 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 						.find({ provider: "github", status: "pending_verification" }, { projection: { payload: 1 } })
 						.toArray()
 				).filter((delivery) => githubPayloadInstallationId(delivery.payload) === installationId).length;
-				await auditReconciliationRun(db, {
-					installationId,
-					trigger,
-					startedAt,
-					completedAt,
-					durationMs: completedAt.getTime() - startedAt.getTime(),
-					prCount: counts.prCount,
-					providerRequestCount: requestCounts.get(installationId) ?? 0,
-					changedPrCount: counts.changedPrCount,
-					unchangedPrCount: counts.unchangedPrCount,
-					changedFieldCategories: result.kind === "changed" ? ["installation"] : [],
-					failureCount: result.kind === "error" ? 1 : 0,
-					unresolvedDeliveryCount,
-					repairedDeliveryCount,
-					outcome: result.kind === "error" ? "failure" : "success",
-				});
+				const runId = runIds.get(installationId);
+				if (runId)
+					await finishReconciliationRunSafely(db, runId, {
+						prCount: counts.prCount,
+						providerRequestCount: requestCounts.get(installationId) ?? 0,
+						changedPrCount: counts.changedPrCount,
+						unchangedPrCount: counts.unchangedPrCount,
+						failureCount: result.kind === "error" ? 1 : 0,
+						unresolvedDeliveryCount,
+						repairedDeliveryCount,
+						outcome: result.kind === "error" ? "failure" : "success",
+					});
+				runIds.delete(installationId);
 			},
 		)
-			.then(() => "success" as const)
-			.catch((error) => {
+			.then(async () => {
+				for (const [installationId, runId] of runIds) {
+					await finishReconciliationRunSafely(db, runId, { outcome: "success" });
+				}
+				runIds.clear();
+				return "success" as const;
+			})
+			.catch(async (error) => {
+				for (const [installationId, runId] of runIds) {
+					await finishReconciliationRunSafely(db, runId, { outcome: "failure", failureCount: 1 });
+					logReconciliationError({ installationId, operation: "reconciliation_audit", category: "bookkeeping" });
+				}
+				runIds.clear();
 				if (!isReportedReconciliationFailure(error))
 					logReconciliationError({ operation: "reconciliation", category: "broad" });
 				return "failed" as const;
@@ -1191,23 +1281,47 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 			}
 		}
 	};
+	(reconcile as typeof reconcile & { waitForIdle(): Promise<void> }).waitForIdle = async () => {
+		while (reconciling) await reconciling;
+	};
 	return reconcile;
 };
 
 const knownOpenPullRequests = async (db: Db, initialized: Promise<unknown>) => {
 	await initialized;
-	return (await db.users.find({}, { projection: { installations: 1 } }).toArray()).flatMap((user) =>
-		user.installations.flatMap((installation) =>
-			approvedInstallationAccount(installation.accountLogin)
-				? installation.repositories.flatMap((repository) =>
-						repository.pullRequests
-							.filter((pullRequest) => pullRequest.state === "open" || pullRequest.retention_candidate === true)
-							.map((pullRequest) => ({
-								installationId: installation.installationId,
-								repositoryId: repository.repositoryId,
-								number: Number(pullRequest.number),
-							})),
-					)
+	const installations = (
+		await db.installations
+			.find(
+				{ active: { $ne: false }, suspended: { $ne: true } },
+				{ projection: { installationId: 1, accountLogin: 1 } },
+			)
+			.toArray()
+	).filter((installation) => approvedInstallationAccount(installation.accountLogin));
+	const repositories = await db.repositories
+		.find(
+			{ installationIds: { $in: installations.map((item) => item.installationId) } },
+			{ projection: { repositoryId: 1, installationIds: 1 } },
+		)
+		.toArray();
+	const rows = await db.pullRequests
+		.find(
+			{
+				repositoryId: { $in: repositories.map((item) => item.repositoryId) },
+				$or: [{ state: "open" }, { retention_candidate: true }],
+			},
+			{ projection: { repositoryId: 1, number: 1, state: 1, retention_candidate: 1 } },
+		)
+		.toArray();
+	return repositories.flatMap((repository) =>
+		repository.installationIds.flatMap((installationId) =>
+			installations.some((installation) => installation.installationId === installationId)
+				? rows
+						.filter((pullRequest) => pullRequest.repositoryId === repository.repositoryId)
+						.map((pullRequest) => ({
+							installationId,
+							repositoryId: repository.repositoryId,
+							number: Number(pullRequest.number),
+						}))
 				: [],
 		),
 	);
@@ -1223,30 +1337,51 @@ const createScheduleDrain = (options: {
 	refresh(userId: string): void;
 }) => {
 	let draining = Promise.resolve();
+	let startupReconciliation: Promise<unknown> | undefined;
 	let startupReconciled = false;
-	return () => {
+	let stopped = false;
+	const schedule = (() => {
 		draining = draining
 			.then(async () => {
+				if (stopped) return;
 				await options.initialized;
-				const users = await drainInbox(
+				await drainInbox(
 					options.db,
 					options.githubTasks,
 					options.reviewBot,
 					undefined,
 					undefined,
 					(target) => options.targetedCoordinator.enqueue(target, "webhook"),
+					options.refresh,
 				);
-				for (const user of users) options.refresh(user);
-				if (!startupReconciled) {
+				if (!startupReconciled && !stopped) {
 					startupReconciled = true;
-					void options.reconcile(undefined, "startup");
+					startupReconciliation = options.reconcile(undefined, "startup");
+					void startupReconciliation.then(
+						() => {
+							startupReconciliation = undefined;
+						},
+						() => {
+							startupReconciliation = undefined;
+						},
+					);
 				}
 			})
 			.catch((error) =>
 				logReconciliationError({ operation: "webhook_drain", category: "bookkeeping", ...failureDetails(error) }),
 			);
 		return draining;
+	}) as (() => Promise<void>) & { stop(): Promise<void>; waitForIdle(): Promise<void> };
+	schedule.stop = async () => {
+		stopped = true;
+		await draining;
+		if (startupReconciliation) await startupReconciliation;
 	};
+	schedule.waitForIdle = async () => {
+		await draining;
+		if (startupReconciliation) await startupReconciliation;
+	};
+	return schedule;
 };
 
 export function createApp(
@@ -1341,7 +1476,7 @@ export function createApp(
 		reconcilePullRequest: (target) => targetedCoordinator.enqueue(target, "manual"),
 		scheduleDrain: async () => {},
 	} satisfies AppContext;
-	context.scheduleDrain = createScheduleDrain({
+	const scheduleDrain = createScheduleDrain({
 		db,
 		initialized,
 		githubTasks,
@@ -1350,6 +1485,7 @@ export function createApp(
 		reconcile,
 		refresh,
 	});
+	context.scheduleDrain = scheduleDrain;
 	const scheduler = createWeekdayReconciliationScheduler({
 		knownOpenPullRequests: () => knownOpenPullRequests(db, initialized),
 		enqueue: targetedCoordinator.enqueue,
@@ -1359,9 +1495,12 @@ export function createApp(
 		drain: context.scheduleDrain,
 		reconcile: () => context.reconcile(),
 		fetch: (request: Request) => handleRequest(context, request),
-		stop() {
+		async stop() {
+			await scheduleDrain.stop();
 			scheduler.stop();
 			targetedCoordinator.stop();
+			await targetedCoordinator.waitForIdle();
+			await (reconcile as typeof reconcile & { waitForIdle(): Promise<void> }).waitForIdle();
 		},
 	};
 }

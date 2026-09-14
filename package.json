@@ -39,8 +39,7 @@
 		"validate:all": "bun scripts/scan-credential-uris.ts && bunx varlock load --agent && bunx varlock scan --path .env.scan && bunx varlock run -- bun scripts/validate-all.ts",
 		"typecheck": "bunx tsc --noEmit",
 		"knowledge:check": "MEX_TELEMETRY=0 npx --yes mex-agent@0.7.0 check --stale-warn-days 75 --stale-error-days 90 --stale-warn-commits 1000000 --stale-error-commits 1000000",
-		"test:mongo": "MONGODB_URI_BASE=${MONGODB_URI_BASE:?MONGODB_URI_BASE is required} MONGODB_DATABASE=command-center-ai-test-$(bun -e 'console.log(crypto.randomUUID())') vitest run test/mongodb.test.ts",
-		"seed:bindings": "bun src/seed-bindings.ts"
+		"test:mongo": "MONGODB_URI_BASE=${MONGODB_URI_BASE:?MONGODB_URI_BASE is required} MONGODB_DATABASE=command-center-ai-test-$(bun -e 'console.log(crypto.randomUUID())') vitest run test/mongodb.test.ts"
 	},
 	"type": "module",
 	"dependencies": {

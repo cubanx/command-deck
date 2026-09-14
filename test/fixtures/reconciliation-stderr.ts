@@ -38,8 +38,17 @@ const bookkeeping = createReconciliationCoordinator({
 });
 assert.equal(await bookkeeping.enqueue(target), "failed");
 
-// No provider or database connection: exercise the real terminal aggregate boundary.
-const db = { users: { find: () => ({ toArray: async () => [] }) } };
+// No provider or database connection: exercise the real terminal domain boundary.
+const db = {
+	installations: {
+		findOne: async () => ({ _id: "9", installationId: "9", accountLogin: "cubanx", active: true, suspended: false }),
+		updateOne: async () => ({}),
+	},
+	reconciliationRuns: {
+		insertOne: async () => ({}),
+		updateOne: async () => ({}),
+	},
+};
 try {
 	await reconcileInstallations(
 		db as never,
@@ -56,13 +65,15 @@ try {
 	assert.ok(isReportedReconciliationFailure(error));
 }
 const providerDb = {
-	users: {
-		find: (_filter: unknown, options: { projection: { installations?: number } }) => ({
-			toArray: async () =>
-				options.projection.installations ? [{ installations: [{ installationId: "9", accountLogin: "cubanx" }] }] : [],
+	installations: {
+		find: () => ({
+			toArray: async () => [{ installationId: "9", accountLogin: "cubanx", active: true, suspended: false }],
 		}),
+		findOne: async () => ({ _id: "9", installationId: "9", accountLogin: "cubanx", active: true, suspended: false }),
+		updateOne: async () => ({}),
 	},
-	providerCache: { findOne: async () => null },
+	repositories: { find: () => ({ toArray: async () => [] }) },
+	reconciliationRuns: { insertOne: async () => ({}), updateOne: async () => ({}) },
 };
 try {
 	await reconcileInstallations(

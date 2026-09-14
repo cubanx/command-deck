@@ -15,6 +15,10 @@ export default defineConfig({
 					name: "unit",
 					include: ["test/**/*.test.{ts,tsx}"],
 					exclude: [
+						"test/domain-*.test.ts",
+						"test/merged-open-spec-evidence.test.ts",
+						"test/preferences-api.test.ts",
+						"test/reconciliation-runs.test.ts",
 						"test/access.test.ts",
 						"test/db.test.ts",
 						"test/github-client.test.ts",
@@ -37,6 +41,10 @@ export default defineConfig({
 				test: {
 					name: "mongo",
 					include: [
+						"test/domain-*.test.ts",
+						"test/merged-open-spec-evidence.test.ts",
+						"test/preferences-api.test.ts",
+						"test/reconciliation-runs.test.ts",
 						"test/access.test.ts",
 						"test/db.test.ts",
 						"test/github-client.test.ts",
