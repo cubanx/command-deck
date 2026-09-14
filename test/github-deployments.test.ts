@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
-import { RECENT_MERGED_PULL_REQUEST_CAP, retainRecentMergedPullRequests } from "#/db";
 import { shouldApplyDeploymentStatus } from "#/deployment-status";
 import { acceptGitHubDelivery, drainInbox } from "#/events";
 import { bootstrapInstallation } from "#/github";
@@ -40,6 +39,12 @@ test("exact SHA deployment correlation works in either event order", () =>
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
 		await acceptGitHubDelivery(db, "deployment-first", "deployment_status", JSON.stringify(deployment(7)));
+		await acceptGitHubDelivery(
+			db,
+			"merge-deployment-first",
+			"deployment_status",
+			JSON.stringify(deployment(10, sha("b"))),
+		);
 		await acceptGitHubDelivery(db, "merge-after-deployment", "pull_request", JSON.stringify(mergedPullRequest(42)));
 		await acceptGitHubDelivery(
 			db,
@@ -78,7 +83,7 @@ test("exact SHA deployment correlation works in either event order", () =>
 			JSON.stringify(deployment(9, sha("f"))),
 		);
 		await drainInbox(db);
-		const rows = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.deployments ?? [];
+		const rows = (await dashboardForUser(db, "u", new Date("2030-01-03"))).deployments;
 		expect(rows.find((item) => item.id === "7")).toMatchObject({
 			pull_request_number: 42,
 			pull_request_title: "Hold the wormhole",
@@ -87,13 +92,16 @@ test("exact SHA deployment correlation works in either event order", () =>
 		expect(rows.find((item) => item.id === "8")).toMatchObject({
 			pull_request_number: 42,
 		});
+		expect(rows.find((item) => item.id === "10")).toMatchObject({
+			pull_request_number: 42,
+		});
 		expect(rows.find((item) => item.id === "9")).toMatchObject({
 			pull_request_number: 44,
 			pull_request_title: "Keep the promenade open",
 		});
 	}));
 
-test("merged evidence fails closed, expires, caps, and leaves uncorrelated deployments blank", () =>
+test("invalid merge evidence leaves uncorrelated deployments blank", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
@@ -112,30 +120,8 @@ test("merged evidence fails closed, expires, caps, and leaves uncorrelated deplo
 		await acceptGitHubDelivery(db, "unmerged", "pull_request", JSON.stringify(unmerged));
 		await acceptGitHubDelivery(db, "uncorrelated", "deployment_status", JSON.stringify(deployment(7, sha("d"))));
 		await drainInbox(db);
-		const repository = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0];
-		expect(repository?.recentMergedPullRequests).toBeUndefined();
-		expect(repository?.deployments[0]).not.toHaveProperty("pull_request_number");
-		const now = Date.parse("2030-01-03T00:00:00Z");
-		const retained = retainRecentMergedPullRequests(
-			Array.from({ length: RECENT_MERGED_PULL_REQUEST_CAP + 1 }, (_, number) => ({
-				number,
-				title: "Defiant",
-				url: "https://github.com/ds9/ops/pull/1",
-				head_sha: sha("a"),
-				merge_sha: sha("b"),
-				merged_at: new Date(now - number * 1_000).toISOString(),
-			})).concat({
-				number: 999,
-				title: "Expired",
-				url: "https://github.com/ds9/ops/pull/999",
-				head_sha: sha("a"),
-				merge_sha: sha("b"),
-				merged_at: "2030-01-01T00:00:00Z",
-			}),
-			now,
-		);
-		expect(retained).toHaveLength(RECENT_MERGED_PULL_REQUEST_CAP);
-		expect(retained.some((item) => item.number === 999)).toBe(false);
+		expect(await db.pullRequests.findOne({ _id: "2:41" })).toBeNull();
+		expect(await db.deployments.findOne({ _id: "2:7" })).not.toHaveProperty("pull_request_number");
 	}));
 
 test.each(["pending", "in_progress"])("terminal deployment status does not regress to newer %s", (state) => {
@@ -268,9 +254,9 @@ test("deployment status is monotonic, bounded, and retains safe links", () =>
 		await delivery("old", 7, "2030-01-01T00:00:00Z", "failure");
 		for (let id = 8; id < 29; id++) await delivery(String(id), id, `2030-01-03T00:00:${String(id).padStart(2, "0")}Z`);
 		await drainInbox(db);
-		const deployments = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.deployments ?? [];
-		expect(deployments).toHaveLength(20);
-		expect(deployments.find((item) => item.id === "7")).toBeUndefined();
+		const deployments = await db.deployments.find({ repositoryId: "2" }).toArray();
+		expect(deployments).toHaveLength(22);
+		expect(deployments.find((item) => item.deploymentId === "7")).toMatchObject({ state: "success" });
 		expect((await dashboardForUser(db, "u", new Date("2030-01-04"))).deployments[0]).toMatchObject({
 			target_url: "https://example.test/deploy",
 			log_url: "https://example.test/log",

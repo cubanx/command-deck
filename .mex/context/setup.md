@@ -8,7 +8,7 @@ edges:
   - target: context/conventions.md
     condition: verification rules are needed
 grounds_to: []
-last_updated: 2026-08-13
+last_updated: 2026-09-14
 ---
 
 # Setup
@@ -28,7 +28,7 @@ last_updated: 2026-08-13
 - `openspec validate <change> --strict`
 - `git diff --check`
 
-`bun run seed:bindings` is an operational command, not ordinary validation; use it only with the required environment and authorization.
+After the authorized clean start, sign in, reconnect installations through the verified GitHub flow, and reconcile. Follow `openspec/changes/split-domain-documents/clean-start-runbook.md`; manual binding seeds are unsupported.
 
 Tests create UUID-named `command-center-ai-test-*` databases and drop them afterward. Never point the test URI at shared or production MongoDB.
 

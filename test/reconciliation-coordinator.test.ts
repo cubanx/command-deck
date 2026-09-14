@@ -306,14 +306,14 @@ test("returns the completed coalesced manual outcome", async () => {
 
 test("finite failure details reject hostile payloads and invalid codes", () => {
 	const cases = [
-		[new Error("user aggregate changed concurrently"), "aggregate_conflict"],
-		[new Error("user aggregate not found"), "aggregate_missing"],
-		[{ name: "UserAggregateSizeError" }, "aggregate_size"],
+		[new Error("pull request r:7 changed concurrently"), "domain_conflict"],
+		[new Error("pull request r:7 not found"), "domain_missing"],
 		[{ name: "MongoNetworkError" }, "network"],
 		[{ name: "MongoNetworkTimeoutError" }, "timeout"],
 		[{ name: "MongoServerSelectionError" }, "server_selection"],
 		[{ name: "MongoServerError" }, "database"],
 		[{ name: "BSONError" }, "serialization"],
+		[{ name: "DomainDocumentSizeError", message: "secret payload" }, "domain_size"],
 		[null, "unknown"],
 		["Garak secret", "unknown"],
 		[{ name: "Garak secret", diagnostic: "Garak secret" }, "unknown"],
@@ -400,18 +400,4 @@ test("logger validates numeric PR targets and forwarded diagnostic fields", () =
 	} finally {
 		log.mockRestore();
 	}
-});
-
-test("aggregate size failures have a fixed diagnostic identity", async () => {
-	const { mutateUser } = await import("#/db");
-	const replaceOne = vi.fn();
-	const db = {
-		users: { findOne: async () => ({ _id: "Quark", revision: 0, installations: [], github: {} }), replaceOne },
-	};
-	await expect(
-		mutateUser(db as never, "Quark", (user) => {
-			user.github.login = "x".repeat(13 * 1024 * 1024);
-		}),
-	).rejects.toMatchObject({ name: "UserAggregateSizeError" });
-	expect(replaceOne).not.toHaveBeenCalled();
 });

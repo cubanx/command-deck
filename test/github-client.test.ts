@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
+import { type Db, upsertDeployment, upsertPullRequest } from "#/db";
 import {
 	bootstrapDeployments,
 	bootstrapInstallation,
@@ -14,7 +15,53 @@ import {
 	retryDelay,
 } from "#/github";
 import { countedFetch } from "#/reconciliation-coordinator";
+import { reconciliationRunsForUser } from "#/reconciliation-runs";
 import { withDatabase } from "./mongo-support";
+
+type FixtureRepository = {
+	repositoryId: string;
+	full_name: string;
+	pullRequests: Record<string, unknown>[];
+
+	deployments: Record<string, unknown>[];
+	policy?: { refreshed_at: string; required_checks: unknown[]; [key: string]: unknown };
+	recentMergedPullRequests?: Record<string, unknown>[];
+};
+async function seedRepositories(db: Db, userId: string, ...repositories: FixtureRepository[]) {
+	const binding = await db.bindings.findOne({ userId });
+	if (!binding) throw new Error("fixture binding missing");
+	for (const repo of repositories) {
+		await db.repositories.updateOne(
+			{ _id: repo.repositoryId },
+			{
+				$set: {
+					repositoryId: repo.repositoryId,
+					full_name: repo.full_name,
+					...(repo.policy ? { policy: repo.policy } : {}),
+					updatedAt: new Date(),
+				},
+				$addToSet: { installationIds: binding.installationId },
+			},
+			{ upsert: true },
+		);
+		for (const pr of repo.pullRequests)
+			await upsertPullRequest(db, { ...pr, repositoryId: repo.repositoryId, number: Number(pr.number) });
+		for (const pr of repo.recentMergedPullRequests ?? [])
+			await upsertPullRequest(db, {
+				...pr,
+				repositoryId: repo.repositoryId,
+				number: Number(pr.number),
+				state: "closed",
+				merged: true,
+			});
+		for (const deployment of repo.deployments)
+			await upsertDeployment(db, {
+				...deployment,
+				repositoryId: repo.repositoryId,
+				deploymentId: String(deployment.id),
+			});
+	}
+}
 
 test("thrown bootstrap failure is not misclassified as credentials", () =>
 	withDatabase(async (db) => {
@@ -60,8 +107,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [
@@ -71,11 +117,10 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 					updated_at: "2026-08-24T12:00:00Z",
 				},
 			],
-			openSpecs: [],
+
 			deployments: [],
 			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const input: Parameters<typeof reconcilePullRequest>[1] = {
 			installationId: "9",
 			repositoryId: "2",
@@ -148,7 +193,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		};
 		const result = await reconcilePullRequest(db, input);
 		expect(result.kind).toBe("changed");
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]).toMatchObject({
+		expect(await db.pullRequests.findOne({ repositoryId: "2" })).toMatchObject({
 			number: 7,
 			opened_at: "2026-08-20T12:00:00Z",
 			unresolved_review_threads: 0,
@@ -166,17 +211,15 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 			{ change_name: "zeta" },
 		]);
 		expect((await dashboardForUser(db, "u")).pullRequests[0]?.detected_open_specs).toEqual(["alpha", "zeta"]);
-		const repaired = await db.users.findOne({ _id: "u" });
-		if (!repaired) throw new Error("test user missing");
-		repaired.installations[0]!.repositories[0]!.openSpecs = [];
-		await db.users.replaceOne({ _id: "u" }, repaired);
+		await db.pullRequests.updateOne({ _id: "2:7" }, { $set: { open_specs: [] } });
 		expect((await reconcilePullRequest(db, input)).kind).toBe("changed");
 		const persistenceFailures: GitHubRequestFailure[] = [];
 		input.reportFailure = (failure) => {
 			persistenceFailures.push(failure);
 		};
+		await db.pullRequests.updateOne({ _id: "2:7" }, { $set: { open_specs: [] } });
 		const write = vi
-			.spyOn(db.users, "replaceOne")
+			.spyOn(db.pullRequests, "replaceOne")
 			.mockRejectedValueOnce(
 				Object.freeze(
 					Object.assign(new Error("Quark persistence secret"), { name: "MongoServerError", code: 112, status: 503 }),
@@ -272,16 +315,14 @@ test("targeted repair recovers an authored merged PR from current default-branch
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [],
-			openSpecs: [],
+
 			deployments: [],
 			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const defaultSha = "b".repeat(40);
 		const result = await reconcilePullRequest(db, {
 			installationId: "9",
@@ -342,7 +383,7 @@ test("targeted repair recovers an authored merged PR from current default-branch
 			},
 		});
 		expect(result.kind).toBe("changed");
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]).toMatchObject({
+		expect(await db.pullRequests.findOne({ repositoryId: "2" })).toMatchObject({
 			number: 143,
 			state: "closed",
 			merged: true,
@@ -352,25 +393,23 @@ test("targeted repair recovers an authored merged PR from current default-branch
 			post_merge_source_ref: "main",
 			post_merge_unresolved: false,
 		});
-		expect(
-			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]?.open_specs,
-		).toMatchObject([{ source_url: expect.stringContaining("archive/2026-08-26-retain-follow-up") }]);
+		expect((await db.pullRequests.findOne({ repositoryId: "2" }))?.open_specs).toMatchObject([
+			{ source_url: expect.stringContaining("archive/2026-08-26-retain-follow-up") },
+		]);
 	}));
 
 test("targeted repair excludes a new merged PR with only pre-merge work", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [],
-			openSpecs: [],
+
 			deployments: [],
 			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
 			const value = String(url);
 			if (value.endsWith("/graphql"))
@@ -416,16 +455,16 @@ test("targeted repair excludes a new merged PR with only pre-merge work", () =>
 			fetcher,
 			fetchTasks: async () => "## 1. Build\n- [ ] Work before merge",
 		});
-		expect(result.kind).toBe("changed");
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toEqual([]);
+		expect(result.kind).toBe("unchanged");
+		expect((await dashboardForUser(db, "u")).pullRequests).toEqual([]);
+		expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toEqual([]);
 	}));
 
 test("merged retention keeps invalid, missing, zero-task and read-failed evidence unresolved", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [
@@ -438,11 +477,10 @@ test("merged retention keeps invalid, missing, zero-task and read-failed evidenc
 					post_merge_obligations: ["complete-evidence"],
 				},
 			],
-			openSpecs: [],
+
 			deployments: [],
 			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const bodies = new Map([
 			[145, "## OpenSpecs\n- malformed!"],
 			[146, "## OpenSpecs\n"],
@@ -525,7 +563,7 @@ test("merged retention keeps invalid, missing, zero-task and read-failed evidenc
 			});
 			expect(result.kind).not.toBe("error");
 		}
-		const pullRequests = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests ?? [];
+		const pullRequests = (await dashboardForUser(db, "u")).pullRequests;
 		expect(pullRequests.map((pullRequest) => Number(pullRequest.number))).toEqual([145, 147, 148, 149, 152, 154, 155]);
 		expect(pullRequests.filter((pullRequest) => pullRequest.post_merge_unresolved === true)).toHaveLength(7);
 		for (const number of [154, 155])
@@ -536,15 +574,13 @@ test("targeted repair requires terminal provider evidence for success", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [],
-			openSpecs: [],
+
 			deployments: [],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		for (const [number, action, context, expected] of [
 			[
 				1,
@@ -622,9 +658,7 @@ test("targeted repair requires terminal provider evidence for success", () =>
 				},
 			});
 			expect(result.kind).toBe("changed");
-			const pullRequest = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests.find(
-				(item) => item.number === number,
-			);
+			const pullRequest = await db.pullRequests.findOne({ repositoryId: "2", number });
 			expect(pullRequest).toMatchObject({
 				workflow_state: expected,
 				checks_state: expected,
@@ -636,12 +670,11 @@ test("targeted repair fails closed when the preserved repository policy is stale
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [{ number: 7, updated_at: "2026-08-24T12:00:00Z" }],
-			openSpecs: [],
+
 			deployments: [],
 			policy: {
 				refreshed_at: "2026-08-24T12:00:00Z",
@@ -649,7 +682,6 @@ test("targeted repair fails closed when the preserved repository policy is stale
 				stale: true,
 			},
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 
 		await reconcilePullRequest(db, {
 			installationId: "9",
@@ -692,7 +724,7 @@ test("targeted repair fails closed when the preserved repository policy is stale
 			},
 		});
 
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]).toMatchObject({
+		expect(await db.pullRequests.findOne({ repositoryId: "2" })).toMatchObject({
 			repository_policy_loaded: false,
 		});
 	}));
@@ -701,19 +733,17 @@ test("targeted repair paginates lifecycle and exact-head Actions evidence", () =
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [],
-			openSpecs: [],
+
 			deployments: [],
 			policy: {
 				refreshed_at: "2026-08-24T12:00:00Z",
 				required_checks: [{ context: "Validate All", integration_id: "42" }],
 			},
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const calls: string[] = [];
 		const result = await reconcilePullRequest(db, {
 			installationId: "9",
@@ -793,7 +823,7 @@ test("targeted repair paginates lifecycle and exact-head Actions evidence", () =
 		});
 		expect(result.kind).toBe("changed");
 		expect(calls.some((value) => value.includes("actions/runs?page=2"))).toBe(true);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]).toMatchObject({
+		expect(await db.pullRequests.findOne({ repositoryId: "2" })).toMatchObject({
 			unresolved_review_threads: 1,
 			required_checks: [{ conclusion: "neutral", head_sha: "a".repeat(40) }],
 		});
@@ -807,15 +837,13 @@ test("installation bootstrap projects ruleset and classic required checks", () =
 		] as const) {
 			await upsertIdentity(db, id, "sisko");
 			await bindInstallation(db, id, "9", "cubanx");
-			const user = await db.users.findOne({ _id: id });
-			user?.installations[0]?.repositories.push({
+			await seedRepositories(db, id, {
 				repositoryId: "2",
 				full_name: "ds9/ops",
 				pullRequests: [{ number: 7, opened_at: openedAt }],
-				openSpecs: [],
+
 				deployments: [],
 			});
-			await db.users.replaceOne({ _id: id }, user!);
 		}
 		const result = await bootstrapInstallation(
 			db,
@@ -876,17 +904,17 @@ test("installation bootstrap projects ruleset and classic required checks", () =
 			"app-jwt",
 		);
 		expect(result.kind).toBe("changed");
-		expect((await db.users.findOne({ _id: "u1" }))?.installations[0]?.repositories[0]?.policy).toMatchObject({
+		expect((await db.repositories.findOne({ _id: "2" }))?.policy).toMatchObject({
 			required_checks: expect.arrayContaining([
 				{ context: "Validate All", integration_id: "42" },
 				{ context: "Docker Build", integration_id: "7" },
 			]),
 		});
 		for (const [id, openedAt] of [
-			["u1", "2026-08-20T12:00:00Z"],
+			["u1", "2026-08-19T12:00:00Z"],
 			["u2", "2026-08-19T12:00:00Z"],
 		] as const) {
-			const pullRequests = (await db.users.findOne({ _id: id }))?.installations[0]?.repositories[0]?.pullRequests ?? [];
+			const pullRequests = await db.pullRequests.find({ repositoryId: "2" }).toArray();
 			expect(pullRequests.find((pr) => pr.number === 7)?.opened_at).toBe(openedAt);
 			expect(pullRequests.find((pr) => pr.number === 8)?.opened_at).toBe("2026-08-21T12:00:00Z");
 		}
@@ -896,19 +924,17 @@ test("failed policy refresh preserves the prior policy as stale", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [],
-			openSpecs: [],
+
 			deployments: [],
 			policy: {
 				refreshed_at: "2026-08-24T12:00:00Z",
 				required_checks: [{ context: "Validate All" }],
 			},
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const result = await bootstrapInstallation(
 			db,
 			"9",
@@ -929,7 +955,7 @@ test("failed policy refresh preserves the prior policy as stale", () =>
 			"app-jwt",
 		);
 		expect(result.kind).toBe("changed");
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.policy).toMatchObject({
+		expect((await db.repositories.findOne({ _id: "2" }))?.policy).toMatchObject({
 			stale: true,
 			required_checks: [{ context: "Validate All" }],
 		});
@@ -939,15 +965,13 @@ test("targeted repair removes a closed PR and preserves prior evidence on partia
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
-			openSpecs: [],
+
 			deployments: [],
 			pullRequests: [{ number: 7, title: "Prior", updated_at: "2026-08-24T12:00:00Z" }],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const base = {
 			installationId: "9",
 			repositoryId: "2",
@@ -967,15 +991,10 @@ test("targeted repair removes a closed PR and preserves prior evidence on partia
 				})
 			).kind,
 		).toBe("changed");
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toEqual([]);
+		expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toEqual([]);
 
 		const restored = await db.users.findOne({ _id: "u" });
-		restored?.installations[0]?.repositories[0]?.pullRequests.push({
-			number: 7,
-			title: "Prior",
-			updated_at: "2026-08-24T12:00:00Z",
-		});
-		await db.users.replaceOne({ _id: "u" }, restored!);
+		await upsertPullRequest(db, { repositoryId: "2", number: 7, title: "Prior", updated_at: "2026-08-24T12:00:00Z" });
 		expect(
 			(
 				await reconcilePullRequest(db, {
@@ -987,15 +1006,85 @@ test("targeted repair removes a closed PR and preserves prior evidence on partia
 				})
 			).kind,
 		).toBe("error");
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]).toMatchObject({
+		expect(await db.pullRequests.findOne({ repositoryId: "2" })).toMatchObject({
 			title: "Prior",
 			lifecycle_stale: true,
 		});
 	}));
 
-test("conditional reads retain ETags and surface 304", () =>
+test.each(["2030-01-02T00:00:00Z", "2030-01-03T00:00:00Z"])(
+	"targeted reconciliation never downgrades a merged PR at an equal or newer timestamp (%s)",
+	(updatedAt) =>
+		withDatabase(async (db) => {
+			await upsertIdentity(db, "u", "sisko");
+			await bindInstallation(db, "u", "9", "cubanx");
+			await seedRepositories(db, "u", {
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [
+					{
+						number: 7,
+						state: "closed",
+						merged: true,
+						title: "Retain the merge",
+						updated_at: "2030-01-02T00:00:00Z",
+						head_sha: "a".repeat(40),
+					},
+				],
+				deployments: [],
+			});
+			const result = await reconcilePullRequest(db, {
+				installationId: "9",
+				repositoryId: "2",
+				number: 7,
+				token: "token",
+				fetcher: async (url) => {
+					const value = String(url);
+					if (value.endsWith("/graphql"))
+						return Response.json({
+							data: {
+								repository: {
+									pullRequest: {
+										state: "OPEN",
+										merged: false,
+										isDraft: false,
+										createdAt: "2030-01-01T00:00:00Z",
+										updatedAt,
+										title: "Provider says open",
+										body: "",
+										url: "https://github.com/ds9/ops/pull/7",
+										headRefName: "feature/retain-merge",
+										headRefOid: "a".repeat(40),
+										baseRefName: "main",
+										mergeable: "MERGEABLE",
+										reviewDecision: null,
+										reviewRequests: { totalCount: 0 },
+										labels: { nodes: [], pageInfo: { hasNextPage: false } },
+										reviews: { nodes: [], pageInfo: { hasNextPage: false } },
+										reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
+										statusCheckRollup: { contexts: { nodes: [], pageInfo: { hasNextPage: false } } },
+									},
+								},
+							},
+						});
+					if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
+					if (value.includes("/pulls/7/files")) return Response.json([]);
+					throw new Error(`unexpected downgrade request ${value}`);
+				},
+			});
+			expect(result.kind).toBe("unchanged");
+			expect(await db.pullRequests.findOne({ _id: "2:7" })).toMatchObject({
+				state: "closed",
+				merged: true,
+				title: "Retain the merge",
+			});
+		}),
+);
+
+test("unconditional reads retry a 304 and reject a second bodyless response", () =>
 	withDatabase(async (db) => {
 		let headers: Headers | undefined;
+		let calls = 0;
 		expect(
 			(
 				await conditionalGet(db, "repos/1", "https://example.test/a", async (_, init) => {
@@ -1008,10 +1097,14 @@ test("conditional reads retain ETags and surface 304", () =>
 		expect(
 			await conditionalGet(db, "repos/1", "https://example.test/a", async (_, init) => {
 				headers = new Headers(init?.headers);
-				return new Response(null, { status: 304 });
+				return calls++ === 0 ? new Response(null, { status: 304 }) : Response.json({ fresh: true });
 			}),
-		).toMatchObject({ kind: "changed", body: {} });
-		expect(headers?.get("if-none-match")).toBe("v1");
+		).toMatchObject({ kind: "changed", body: { fresh: true } });
+		expect(headers?.get("if-none-match")).toBeNull();
+		expect(calls).toBe(2);
+		expect(
+			await conditionalGet(db, "repos/1", "https://example.test/a", async () => new Response(null, { status: 304 })),
+		).toMatchObject({ kind: "error" });
 	}));
 
 test("provider retries honor reset headers and reject ordinary forbidden responses", () => {
@@ -1060,33 +1153,6 @@ test("GitHub pagination rejects unsafe and looping links before credentialed fet
 	const seen = new Set(["https://api.github.com/page"]);
 	expect(() => githubNextLink('<https://api.github.com/page>; rel="next"', seen)).toThrow("loop");
 });
-
-test("legacy bindings backfill only after approved authoritative identity", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "SISKO");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations.push({
-			installationId: "9",
-			boundAt: new Date(),
-			repositories: [],
-		});
-		await db.users.replaceOne({ _id: "u" }, user!);
-		let repos = 0;
-		await bootstrapInstallation(
-			db,
-			"9",
-			"token",
-			async (url) =>
-				String(url).includes("/app/installations/")
-					? Response.json({ account: { login: "Crisp-Inc" } })
-					: String(url).includes("installation/repositories")
-						? (repos++, Response.json({ repositories: [] }))
-						: Response.json([]),
-			"app-jwt",
-		);
-		expect(repos).toBe(1);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.accountLogin).toBe("Crisp-Inc");
-	}));
 
 test("bootstrap uses the App JWT for identity and installation token for repositories", () =>
 	withDatabase(async (db) => {
@@ -1152,7 +1218,7 @@ test("serial reconciliation and complete bootstrap use installation tokens", () 
 			},
 			"app-jwt",
 		);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toHaveLength(1);
+		expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toHaveLength(1);
 	}));
 
 test("multi-page reconciliation replaces only a complete snapshot", () =>
@@ -1160,14 +1226,13 @@ test("multi-page reconciliation replaces only a complete snapshot", () =>
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
 		const prior = await db.users.findOne({ _id: "u" });
-		prior?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "old",
 			full_name: "ds9/old",
 			pullRequests: [],
-			openSpecs: [],
+
 			deployments: [],
 		});
-		await db.users.replaceOne({ _id: "u" }, prior!);
 		const fetcher = async (url: RequestInfo | URL) => {
 			const value = String(url);
 			if (value.includes("/app/installations/")) return Response.json({ account: { login: "cubanx" } });
@@ -1189,9 +1254,10 @@ test("multi-page reconciliation replaces only a complete snapshot", () =>
 			return new Response("missing", { status: 500 });
 		};
 		expect((await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt")).kind).toBe("changed");
-		expect(
-			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories.map((repo) => repo.repositoryId),
-		).toEqual(["1", "2"]);
+		expect((await db.repositories.find({ installationIds: "9" }).toArray()).map((repo) => repo.repositoryId)).toEqual([
+			"1",
+			"2",
+		]);
 		const failed = await bootstrapInstallation(
 			db,
 			"9",
@@ -1200,9 +1266,10 @@ test("multi-page reconciliation replaces only a complete snapshot", () =>
 			"app-jwt",
 		);
 		expect(failed.kind).toBe("error");
-		expect(
-			(await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories.map((repo) => repo.repositoryId),
-		).toEqual(["1", "2"]);
+		expect((await db.repositories.find({ installationIds: "9" }).toArray()).map((repo) => repo.repositoryId)).toEqual([
+			"1",
+			"2",
+		]);
 	}));
 
 test("recent deployments follow Link pagination", () =>
@@ -1231,15 +1298,13 @@ test("complete reconciliation is user-scoped and preserves webhook fields", () =
 		await bindInstallation(db, "a", "9", "cubanx");
 		await bindInstallation(db, "b", "9", "cubanx");
 		for (const userId of ["a", "b"]) {
-			const user = await db.users.findOne({ _id: userId });
-			user?.installations[0]?.repositories.push({
+			await seedRepositories(db, userId, {
 				repositoryId: "old",
 				full_name: "ds9/old",
 				pullRequests: [],
-				openSpecs: [],
+
 				deployments: [],
 			});
-			await db.users.replaceOne({ _id: userId }, user!);
 		}
 		await bootstrapInstallation(
 			db,
@@ -1268,23 +1333,18 @@ test("complete reconciliation is user-scoped and preserves webhook fields", () =
 							: Response.json([]),
 			"app-jwt",
 		);
-		expect(
-			(await db.users.findOne({ _id: "a" }))?.installations[0]?.repositories[0]?.pullRequests.map((pr) => pr.number),
-		).toEqual([1]);
-		expect(
-			(await db.users.findOne({ _id: "b" }))?.installations[0]?.repositories[0]?.pullRequests.map((pr) => pr.number),
-		).toEqual([2]);
+		expect((await dashboardForUser(db, "a")).pullRequests.map((pr) => pr.number)).toEqual([1]);
+		expect((await dashboardForUser(db, "b")).pullRequests.map((pr) => pr.number)).toEqual([2]);
 	}));
 
 test("installation bootstrap reports direct projected PR reconciliation counts", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
-			openSpecs: [],
+
 			deployments: [],
 			pullRequests: [
 				{
@@ -1306,7 +1366,6 @@ test("installation bootstrap reports direct projected PR reconciliation counts",
 				},
 			],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 
 		const result = await bootstrapInstallation(
 			db,
@@ -1342,20 +1401,17 @@ test("installation bootstrap reports direct projected PR reconciliation counts",
 		expect(result).toMatchObject({
 			kind: "changed",
 			prCount: 2,
-			changedPrCount: 1,
-			unchangedPrCount: 1,
 		});
 	}));
 
-test("installation bootstrap does not double count after a user CAS retry", () =>
+test("installation bootstrap preserves concurrent PR fields without double counting", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
-			openSpecs: [],
+
 			deployments: [],
 			pullRequests: [
 				{
@@ -1374,17 +1430,8 @@ test("installation bootstrap does not double count after a user CAS retry", () =
 				},
 			],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
-		const replace = vi.spyOn(db.users, "replaceOne").mockImplementationOnce(async () => {
-			await db.users.updateOne(
-				{ _id: "u" },
-				{
-					$set: {
-						"installations.0.repositories.0.pullRequests.1.title": "Intervening write",
-					},
-					$inc: { revision: 1 },
-				},
-			);
+		const replace = vi.spyOn(db.pullRequests, "replaceOne").mockImplementationOnce(async () => {
+			await upsertPullRequest(db, { repositoryId: "2", number: 7, review_state: "approved" });
 			return { modifiedCount: 0 } as never;
 		});
 		const result = await bootstrapInstallation(
@@ -1417,20 +1464,20 @@ test("installation bootstrap does not double count after a user CAS retry", () =
 			},
 			"app-jwt",
 		);
-		expect(replace).toHaveBeenCalledTimes(2);
+		expect(replace.mock.calls.length).toBeGreaterThanOrEqual(2);
 		expect(result).toMatchObject({
 			kind: "changed",
 			prCount: 2,
-			changedPrCount: 0,
-			unchangedPrCount: 2,
 		});
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toMatchObject([
-			{ number: 7, title: "Prior" },
-			{ number: 8, title: "Intervening write" },
+		if (result.kind !== "changed") throw new Error("expected bootstrap result");
+		expect(Number(result.changedPrCount) + Number(result.unchangedPrCount)).toBe(2);
+		expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toMatchObject([
+			{ number: 7, title: "Prior", review_state: "approved" },
+			{ number: 8, title: "Same" },
 		]);
 	}));
 
-test("cached paginated next link survives a Link-less 304", () =>
+test("pagination follows the fresh response after a bodyless 304 retry", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
@@ -1444,7 +1491,7 @@ test("cached paginated next link survives a Link-less 304", () =>
 				return Response.json({ repositories: [{ id: 2, full_name: "ds9/two" }] }, { headers: { etag: "p2" } });
 			}
 			if (value.includes("installation/repositories"))
-				return phase++
+				return phase++ === 1
 					? new Response(null, { status: 304 })
 					: Response.json(
 							{ repositories: [{ id: 1, full_name: "ds9/one" }] },
@@ -1461,7 +1508,7 @@ test("cached paginated next link survives a Link-less 304", () =>
 		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt");
 		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt");
 		expect(pageTwo).toBeGreaterThan(1);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories).toHaveLength(2);
+		expect(await db.repositories.find({ installationIds: "9" }).toArray()).toHaveLength(2);
 	}));
 
 test("bootstrap rejects unsafe deployment links", () =>
@@ -1500,26 +1547,74 @@ test("bootstrap rejects unsafe deployment links", () =>
 		});
 	}));
 
-test("bootstrap caps deployment status reads and rows at twenty", () =>
+test("bootstrap retains recent deployments beyond the old twenty-row cap", () =>
 	withDatabase(async (db) => {
 		let statuses = 0;
 		const result = await bootstrapDeployments(db, "9", "2", "token", async (url) =>
 			String(url).includes("statuses")
 				? (statuses++, Response.json([]))
-				: Response.json(Array.from({ length: 21 }, (_, id) => ({ id }))),
+				: Response.json(Array.from({ length: 21 }, (_, id) => ({ id, created_at: new Date().toISOString() }))),
 		);
-		expect(statuses).toBe(20);
+		expect(statuses).toBe(21);
 		if (result.kind !== "changed") throw new Error("expected changed result");
-		expect(result.body).toHaveLength(20);
+		expect(result.body).toHaveLength(21);
 	}));
 
-test("deployment status cache preserves authoritative state on 304", () =>
+test("bootstrap skips old deployments, keeps recent rows, and tracks known pending rows", () =>
+	withDatabase(async (db) => {
+		await upsertDeployment(db, {
+			repositoryId: "2",
+			deploymentId: "known-pending",
+			id: "known-pending",
+			state: "pending",
+			created_at: "2029-12-31T00:00:00Z",
+		});
+		const statusCalls: string[] = [];
+		const result = await bootstrapDeployments(
+			db,
+			"9",
+			"2",
+			"token",
+			async (url) => {
+				const value = String(url);
+				if (value.includes("/statuses")) {
+					statusCalls.push(value);
+					return Response.json([]);
+				}
+				return Response.json([
+					...Array.from({ length: 100 }, (_, index) => ({
+						id: index + 1,
+						created_at: "2029-12-31T00:00:00Z",
+					})),
+					...Array.from({ length: 21 }, (_, index) => ({
+						id: index + 101,
+						created_at: "2030-01-02T00:00:00Z",
+					})),
+				]);
+			},
+			undefined,
+			new Date("2030-01-03T00:00:00Z"),
+		);
+		expect(result.kind).toBe("changed");
+		expect(statusCalls).toHaveLength(22);
+		expect(statusCalls.some((value) => value.includes("/deployments/1/statuses"))).toBe(false);
+		expect(statusCalls.some((value) => value.includes("/deployments/101/statuses"))).toBe(true);
+		expect(statusCalls.some((value) => value.includes("/deployments/known-pending/statuses"))).toBe(true);
+		if (result.kind !== "changed") throw new Error("expected changed result");
+		const body = result.body as Array<Record<string, unknown>>;
+		expect(body).toHaveLength(22);
+		expect(body.some((item) => item.id === "1")).toBe(false);
+		expect(body.some((item) => item.id === "121")).toBe(true);
+		expect(body.some((item) => item.id === "known-pending")).toBe(true);
+	}));
+
+test("deployment status retries a 304 to obtain authoritative state", () =>
 	withDatabase(async (db) => {
 		let statusReads = 0;
 		const fetcher = async (url: RequestInfo | URL) => {
 			const value = String(url);
 			if (value.includes("/7/statuses"))
-				return statusReads++
+				return statusReads++ === 1
 					? new Response(null, { status: 304 })
 					: Response.json(
 							[
@@ -1552,12 +1647,11 @@ test("complete bootstrap re-correlates deployments from retained merge evidence"
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [],
-			openSpecs: [],
+
 			deployments: [],
 			recentMergedPullRequests: [
 				{
@@ -1570,7 +1664,6 @@ test("complete bootstrap re-correlates deployments from retained merge evidence"
 				},
 			],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		await bootstrapInstallation(
 			db,
 			"9",
@@ -1603,11 +1696,11 @@ test("complete bootstrap re-correlates deployments from retained merge evidence"
 			},
 			"app-jwt",
 		);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.deployments[0]).toMatchObject({
+		expect(await db.deployments.findOne({ repositoryId: "2", deploymentId: "1" })).toMatchObject({
 			pull_request_number: 7,
 			pull_request_title: "Repair the Defiant",
 		});
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.deployments[1]).toMatchObject({
+		expect(await db.deployments.findOne({ repositoryId: "2", deploymentId: "2" })).toMatchObject({
 			pull_request_number: 8,
 			pull_request_title: "Open a replimat",
 		});
@@ -1617,8 +1710,9 @@ test("broad repair preserves a missing open PR until targeted evidence succeeds"
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push(
+		await seedRepositories(
+			db,
+			"u",
 			{
 				repositoryId: "2",
 				full_name: "ds9/ops",
@@ -1635,18 +1729,17 @@ test("broad repair preserves a missing open PR until targeted evidence succeeds"
 					},
 					{ number: 99, author_login: "sisko", state: "open" },
 				],
-				openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }],
+
 				deployments: [],
 			},
 			{
 				repositoryId: "stale",
 				full_name: "ds9/stale",
 				pullRequests: [],
-				openSpecs: [],
+
 				deployments: [],
 			},
 		);
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const result = await bootstrapInstallation(
 			db,
 			"9",
@@ -1668,12 +1761,13 @@ test("broad repair preserves a missing open PR until targeted evidence succeeds"
 							: Response.json([]),
 			"app-jwt",
 		);
-		const repositories = (await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories ?? [],
+		const repositories = await db.repositories.find({ installationIds: "9" }).toArray(),
 			repo = repositories[0];
 		expect(result.kind).toBe("error");
 		expect(repositories).toHaveLength(1);
-		expect(repo?.pullRequests.map((pullRequest) => Number(pullRequest.number))).toEqual([1, 99]);
-		expect(repo?.pullRequests[0]).toMatchObject({
+		const pullRequests = await db.pullRequests.find({ repositoryId: "2" }).sort({ number: 1 }).toArray();
+		expect(pullRequests.map((pullRequest) => Number(pullRequest.number))).toEqual([1, 99]);
+		expect(pullRequests[0]).toMatchObject({
 			title: "Defiant",
 			review_state: "approved",
 			checks_state: "success",
@@ -1681,7 +1775,7 @@ test("broad repair preserves a missing open PR until targeted evidence succeeds"
 			mergeable: "clean",
 			bot_review_state: "complete",
 		});
-		expect(repo?.openSpecs).toEqual([]);
+		expect(pullRequests[0]?.open_specs ?? []).toEqual([]);
 	}));
 
 test("complete bootstrap refreshes OpenSpecs from current pull request heads", () =>
@@ -1691,15 +1785,13 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 			newerSha = "b".repeat(40);
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await seedRepositories(db, "u", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [],
-			openSpecs: [{ change_name: "stale-change", completed: 0, total: 1 }],
+
 			deployments: [],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		let hasChange = true,
 			listingUnchanged = false;
 		const fetcher = async (url: RequestInfo | URL) => {
@@ -1738,8 +1830,10 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 					},
 				]);
 			if (value.includes("/pulls/8/files"))
-				if (listingUnchanged) return new Response(null, { status: 304 });
-				else
+				if (listingUnchanged) {
+					listingUnchanged = false;
+					return new Response(null, { status: 304 });
+				} else
 					return hasChange
 						? Response.json(
 								[
@@ -1763,7 +1857,7 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 			return input.sha === newerSha ? "- [x] Hold the line" : "- [ ] Resistance is futile";
 		};
 		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", fetchTasks);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toMatchObject([
+		expect((await db.pullRequests.findOne({ repositoryId: "2", number: 8 }))?.open_specs).toMatchObject([
 			{
 				change_name: "capture-wolf-359",
 				completed: 1,
@@ -1789,13 +1883,13 @@ test("complete bootstrap refreshes OpenSpecs from current pull request heads", (
 		expect(await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", fetchTasks)).toMatchObject({
 			kind: "changed",
 		});
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toMatchObject([
+		expect((await db.pullRequests.findOne({ repositoryId: "2", number: 8 }))?.open_specs).toMatchObject([
 			{ change_name: "capture-wolf-359", completed: 1, total: 1 },
 		]);
 		listingUnchanged = false;
 		hasChange = false;
 		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", fetchTasks);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toMatchObject([
+		expect((await db.pullRequests.findOne({ repositoryId: "2", number: 8 }))?.open_specs).toMatchObject([
 			{ change_name: "capture-wolf-359" },
 		]);
 	}));
@@ -2013,14 +2107,10 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 			},
 		]);
 		expect(JSON.stringify(logs)).not.toContain("raw provider diagnostic");
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]).toMatchObject({
+		expect(await db.installations.findOne({ _id: "9" })).toMatchObject({
 			lastSyncError: "reconciliation failed",
 		});
-		const failedUser = await db.users.findOne({ _id: "u" });
-		if (!failedUser) throw new Error("test user missing");
-		const failedInstallation = failedUser.installations[0];
-		if (!failedInstallation) throw new Error("test installation missing");
-		const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
+		const failedEvidence = await db.reconciliationRuns.findOne({ installationId: "9" });
 		expect(failedEvidence).toMatchObject({
 			outcome: "failure",
 			operation: "installation_credentials",
@@ -2037,12 +2127,8 @@ test("installation reconciliation marks stale projections and rejects visibly", 
 						? Response.json({ repositories: [] })
 						: Response.json([]),
 		);
-		expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.lastSyncError).toBeUndefined();
-		const successfulUser = await db.users.findOne({ _id: "u" });
-		if (!successfulUser) throw new Error("test user missing");
-		const successfulInstallation = successfulUser.installations[0];
-		if (!successfulInstallation) throw new Error("test installation missing");
-		const successfulEvidence = successfulInstallation.reconciliationEvidence?.at(-1);
+		expect((await db.installations.findOne({ _id: "9" }))?.lastSyncError).toBeUndefined();
+		const successfulEvidence = await db.reconciliationRuns.findOne({ installationId: "9", outcome: "success" });
 		expect(successfulEvidence).toMatchObject({
 			outcome: "success",
 			operation: "reconciliation",
@@ -2116,17 +2202,15 @@ test("installation reconciliation isolates persistence bookkeeping failures", ()
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
 		await bindInstallation(db, "u", "10", "cubanx");
-		const users = db.users as typeof db.users & { replaceOne: typeof db.users.replaceOne };
-		const originalReplace = users.replaceOne.bind(users),
+		const installations = db.installations;
+		const originalUpdate = installations.updateOne.bind(installations),
 			originalError = console.error,
 			logs: unknown[][] = [],
 			credentials: string[] = [];
-		users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
-			const installations = (args[1] as { installations?: Array<{ installationId: string; lastSyncError?: string }> })
-				.installations;
-			if (installations?.find((item) => item.installationId === "10")?.lastSyncError)
+		installations.updateOne = async (...args: Parameters<typeof installations.updateOne>) => {
+			if (args[0]._id === "10" && !Array.isArray(args[1]) && args[1].$set?.lastSyncError)
 				throw new Error("raw persistence diagnostic");
-			return originalReplace(...args);
+			return originalUpdate(...args);
 		};
 		console.error = (...args: unknown[]) => logs.push(args);
 		try {
@@ -2148,7 +2232,7 @@ test("installation reconciliation isolates persistence bookkeeping failures", ()
 				),
 			).rejects.toThrow("reconciliation failed for installations 10");
 		} finally {
-			users.replaceOne = originalReplace;
+			installations.updateOne = originalUpdate;
 			console.error = originalError;
 		}
 		expect(credentials).toEqual(["10", "9"]);
@@ -2206,13 +2290,12 @@ test("reconciliation evidence retains the newest 20 failures deterministically",
 			category: "broad",
 			status: 500,
 		});
-		const user = await db.users.findOne({ _id: "u" });
-		if (!user) throw new Error("test user missing");
-		const installation = user.installations[0];
-		if (!installation) throw new Error("test installation missing");
-		const evidence = installation.reconciliationEvidence;
+		const evidence = await reconciliationRunsForUser(db, "u");
+		expect(await db.reconciliationRuns.countDocuments({ installationId: "9" })).toBe(21);
 		expect(evidence).toHaveLength(20);
-		expect(evidence?.map((record) => record.status)).toEqual(Array.from({ length: 20 }, (_, index) => index + 481));
+		expect(evidence.map((record) => record.status)).toEqual(Array(20).fill("completed"));
+		expect(evidence.map((record) => record.outcome)).toEqual(Array(20).fill("failure"));
+		expect(evidence[0]!.startedAt.getTime()).toBeGreaterThanOrEqual(evidence[19]!.startedAt.getTime());
 		expect(JSON.stringify(evidence)).not.toContain("raw diagnostic");
 	}));
 
@@ -2220,20 +2303,23 @@ test.each(["OPEN", "CLOSED"])("targeted %s repair reports only the committed CAS
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "odo", "odo");
 		await bindInstallation(db, "odo", "9", "cubanx");
-		const user = await db.users.findOne({ _id: "odo" });
-		user!.installations[0]!.repositories.push({
+		await seedRepositories(db, "odo", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
-			openSpecs: [],
+
 			deployments: [],
 			pullRequests: [{ number: 7, state: "open", author_login: "odo" }],
 		});
-		await db.users.replaceOne({ _id: "odo" }, user!);
-		const replace = db.users.replaceOne.bind(db.users);
+		const replace = db.pullRequests.replaceOne.bind(db.pullRequests);
+		const remove = db.pullRequests.deleteOne.bind(db.pullRequests);
 		let attempts = 0;
-		db.users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
+		db.pullRequests.replaceOne = async (...args: Parameters<typeof db.pullRequests.replaceOne>) => {
 			if (++attempts === 1) await replace(...args);
 			return replace(...args);
+		};
+		db.pullRequests.deleteOne = async (...args: Parameters<typeof db.pullRequests.deleteOne>) => {
+			if (++attempts === 1) await remove(...args);
+			return remove(...args);
 		};
 		try {
 			const connection = { nodes: [], pageInfo: { hasNextPage: false } };
@@ -2273,9 +2359,10 @@ test.each(["OPEN", "CLOSED"])("targeted %s repair reports only the committed CAS
 				},
 			});
 			expect(result.kind).toBe("unchanged");
-			expect(attempts).toBe(2);
+			expect(attempts).toBe(1); // The fresh retry observes the concurrent result and skips replacement.
 		} finally {
-			db.users.replaceOne = replace;
+			db.pullRequests.replaceOne = replace;
+			db.pullRequests.deleteOne = remove;
 		}
 	}),
 );

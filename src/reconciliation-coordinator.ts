@@ -33,9 +33,9 @@ const safeStatus = (value: unknown) =>
 const safeCode = (value: unknown) =>
 	Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 2147483647 ? Number(value) : undefined;
 const failureClasses = new Set([
-	"aggregate_conflict",
-	"aggregate_missing",
-	"aggregate_size",
+	"domain_conflict",
+	"domain_missing",
+	"domain_size",
 	"network",
 	"timeout",
 	"server_selection",
@@ -44,7 +44,7 @@ const failureClasses = new Set([
 	"unknown",
 ]);
 const namedFailures: Record<string, string> = {
-	UserAggregateSizeError: "aggregate_size",
+	DomainDocumentSizeError: "domain_size",
 	MongoNetworkError: "network",
 	MongoNetworkTimeoutError: "timeout",
 	MongoOperationTimeoutError: "timeout",
@@ -67,10 +67,10 @@ export const failureDetails = (error: unknown) => {
 	const name = errorField(error, "name");
 	const message = errorField(error, "message");
 	const failureClass =
-		message === "user aggregate changed concurrently"
-			? "aggregate_conflict"
-			: message === "user aggregate not found"
-				? "aggregate_missing"
+		typeof message === "string" && message.endsWith(" changed concurrently")
+			? "domain_conflict"
+			: typeof message === "string" && message.endsWith(" not found")
+				? "domain_missing"
 				: typeof name === "string" && Object.hasOwn(namedFailures, name)
 					? namedFailures[name]!
 					: "unknown";
@@ -129,7 +129,7 @@ type QueuedTarget = {
 };
 
 type CoordinatorDependencies = {
-	reconcilePullRequest(target: PullRequestTarget): Promise<ReconciliationResult | void>;
+	reconcilePullRequest(target: PullRequestTarget, trigger: ReconciliationTrigger): Promise<ReconciliationResult | void>;
 	reconcileInstallations(): Promise<unknown>;
 	recordRun?: (run: {
 		installationId: string;
@@ -160,6 +160,31 @@ type InstallationWork = {
 
 const targetKey = ({ repositoryId, number }: PullRequestTarget) => `${repositoryId}:${number}`;
 
+const completedRun = (
+	installationId: string,
+	trigger: ReconciliationTrigger,
+	startedAt: Date,
+	result: ReconciliationResult | void,
+): Parameters<NonNullable<CoordinatorDependencies["recordRun"]>>[0] => {
+	const completedAt = new Date();
+	return {
+		installationId,
+		trigger: trigger,
+		startedAt,
+		completedAt,
+		durationMs: completedAt.getTime() - startedAt.getTime(),
+		prCount: 1,
+		providerRequestCount: result?.providerRequestCount ?? 0,
+		changedPrCount: result?.kind === "changed" ? 1 : 0,
+		unchangedPrCount: result?.kind === "unchanged" ? 1 : 0,
+		changedFieldCategories: result?.changedFieldCategories ?? (result?.kind === "changed" ? ["lifecycle"] : []),
+		failureCount: result?.kind === "error" ? 1 : 0,
+		unresolvedDeliveryCount: result?.unresolvedDeliveryCount ?? 0,
+		repairedDeliveryCount: result?.repairedDeliveryCount ?? 0,
+		outcome: result?.kind === "error" ? "failure" : "success",
+	};
+};
+
 export function createReconciliationCoordinator({
 	reconcilePullRequest,
 	reconcileInstallations,
@@ -170,6 +195,8 @@ export function createReconciliationCoordinator({
 	const installations = new Map<string, InstallationWork>();
 	let broadRequested = false;
 	let broadRunning = false;
+	let stopped = false;
+	const activeRuns = new Set<Promise<void>>();
 	const workFor = (installationId: string) => {
 		let work = installations.get(installationId);
 		if (!work) {
@@ -181,7 +208,7 @@ export function createReconciliationCoordinator({
 	const hasTargetWork = () =>
 		[...installations.values()].some((work) => Boolean(work.active || work.timer || work.pending.size));
 	const runBroad = () => {
-		if (!broadRequested || broadRunning || hasTargetWork()) return;
+		if (stopped || !broadRequested || broadRunning || hasTargetWork()) return;
 		broadRequested = false;
 		broadRunning = true;
 		void reconcileInstallations()
@@ -193,6 +220,7 @@ export function createReconciliationCoordinator({
 			});
 	};
 	const run = (installationId: string) => {
+		if (stopped) return;
 		const work = workFor(installationId);
 		if (work.active || broadRunning) return;
 		const next = work.pending.entries().next().value as [string, QueuedTarget] | undefined;
@@ -205,26 +233,10 @@ export function createReconciliationCoordinator({
 		work.active = key;
 		const startedAt = new Date();
 		let targetResolved = false;
-		void reconcilePullRequest(queued.target)
+		const activeRun = reconcilePullRequest(queued.target, queued.trigger)
 			.then(async (result) => {
 				targetResolved = true;
-				const completedAt = new Date();
-				await recordRun?.({
-					installationId,
-					trigger: queued.trigger,
-					startedAt,
-					completedAt,
-					durationMs: completedAt.getTime() - startedAt.getTime(),
-					prCount: 1,
-					providerRequestCount: result?.providerRequestCount ?? 0,
-					changedPrCount: result?.kind === "changed" ? 1 : 0,
-					unchangedPrCount: result?.kind === "unchanged" ? 1 : 0,
-					changedFieldCategories: result?.changedFieldCategories ?? (result?.kind === "changed" ? ["lifecycle"] : []),
-					failureCount: result?.kind === "error" ? 1 : 0,
-					unresolvedDeliveryCount: result?.unresolvedDeliveryCount ?? 0,
-					repairedDeliveryCount: result?.repairedDeliveryCount ?? 0,
-					outcome: result?.kind === "error" ? "failure" : "success",
-				});
+				await recordRun?.(completedRun(installationId, queued.trigger, startedAt, result));
 				queued.waiters.forEach((waiter) => {
 					waiter(result?.kind === "error" ? "failed" : "success");
 				});
@@ -252,17 +264,20 @@ export function createReconciliationCoordinator({
 			})
 			.finally(() => {
 				work.active = undefined;
+				activeRuns.delete(activeRun);
 				const dirty = work.dirty.get(key);
-				if (dirty) {
+				if (!stopped && dirty) {
 					work.pending.set(key, dirty);
 					work.dirty.delete(key);
 				}
 				run(installationId);
 				runBroad();
 			});
+		activeRuns.add(activeRun);
 	};
 	return {
 		enqueue(target: PullRequestTarget, trigger: ReconciliationTrigger = "scheduled") {
+			if (stopped) return Promise.resolve("failed" as ReconciliationOutcome);
 			const work = workFor(target.installationId);
 			const key = targetKey(target);
 			let resolve: (outcome: ReconciliationOutcome) => void;
@@ -286,7 +301,11 @@ export function createReconciliationCoordinator({
 			runBroad();
 		},
 		stop() {
+			stopped = true;
 			for (const work of installations.values()) if (work.timer !== undefined) clearTimeout(work.timer);
+		},
+		async waitForIdle() {
+			while (activeRuns.size) await Promise.all([...activeRuns]);
 		},
 	};
 }

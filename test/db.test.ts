@@ -65,13 +65,18 @@ test("Railway MongoDB configuration accepts only the shared hosted database", ()
 test("initializes required Mongo collections and indexes", () =>
 	withDatabase(async (db) => {
 		expect((await db.mongo.listCollections().toArray()).map((item) => item.name)).toEqual(
-			expect.arrayContaining(["users", "sessions", "oauth_states", "inbox_deliveries", "notifications"]),
+			expect.arrayContaining([
+				"users",
+				"sessions",
+				"oauth_states",
+				"inbox_deliveries",
+				"installations",
+				"user_installation_bindings",
+				"repositories",
+				"pull_requests",
+				"deployments",
+			]),
 		);
-		expect(
-			(await db.notifications.listIndexes().toArray()).some(
-				(index) => index.unique && index.key.userId === 1 && index.key.transitionKey === 1,
-			),
-		).toBe(true);
 		for (const collection of [db.sessions, db.oauthStates])
 			expect(
 				(await collection.listIndexes().toArray()).some(

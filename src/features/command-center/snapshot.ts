@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import type { DashboardPreferences } from "#/db";
 import { avatarUrlFor } from "#/features/command-center/avatar-url";
 import type { PullRequest } from "#/features/command-center/view-model";
 
@@ -11,7 +12,7 @@ export type DashboardSnapshot = {
 	repositories: unknown[];
 	pullRequests: PullRequest[];
 	deployments: unknown[];
-	notifications: unknown[];
+	preferences?: DashboardPreferences;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
@@ -19,7 +20,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 export const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 	if (
 		!isRecord(value) ||
-		!["repositories", "pullRequests", "deployments", "notifications"].every((key) => Array.isArray(value[key])) ||
+		!["repositories", "pullRequests", "deployments"].every((key) => Array.isArray(value[key])) ||
 		(value.error !== undefined && typeof value.error !== "string") ||
 		(value.stale !== undefined && typeof value.stale !== "boolean") ||
 		(value.installationCount !== undefined &&
@@ -51,13 +52,13 @@ export const snapshotFor = (value: unknown): DashboardSnapshot | null => {
 		repositories: value.repositories as unknown[],
 		pullRequests: value.pullRequests as PullRequest[],
 		deployments: value.deployments as unknown[],
-		notifications: value.notifications as unknown[],
+		...(isRecord(value.preferences) ? { preferences: value.preferences as DashboardPreferences } : {}),
 	};
 };
 
 export const snapshotQueryOptions = queryOptions({
 	queryKey: ["snapshot"],
-	queryFn: async () => {
+	queryFn: async (): Promise<DashboardSnapshot> => {
 		const response = await fetch("/api/snapshot");
 		if (response.status === 401)
 			return {
@@ -65,7 +66,6 @@ export const snapshotQueryOptions = queryOptions({
 				repositories: [],
 				pullRequests: [],
 				deployments: [],
-				notifications: [],
 			};
 		if (!response.ok) throw new Error(`Snapshot request failed: ${response.status}`);
 		const snapshot = snapshotFor(await response.json());

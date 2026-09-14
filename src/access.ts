@@ -1,36 +1,56 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { UpdateFilter } from "mongodb";
-import type { Db, PullRequest, UserAggregate } from "#/db";
-import { mutateUser } from "#/db";
+import type {
+	DashboardFilters,
+	DashboardPreferences,
+	DashboardSortPreference,
+	Db,
+	PullRequest,
+	UserDocument,
+} from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
 import { openSpecGate } from "#/openspec-gate";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
-export const LOCAL_DEMO_USER = {
-	id: "local-demo-user",
-	login: "sisko",
-} as const;
+type DashboardPullRequest = PullRequest & {
+	number?: number;
+	title?: string;
+	installation_id?: string;
+	installation_pull_requests?: string;
+	repository_id?: string;
+	full_name?: string;
+	open_specs?: Record<string, unknown>[];
+	open_spec?: Record<string, unknown> | null;
+	needs_attention?: boolean;
+	retention_candidate?: boolean;
+	updated_at?: string;
+	head_sha?: string;
+	labels?: unknown[];
+};
+type DashboardSnapshot = {
+	user: Record<string, unknown>;
+	pullRequests: DashboardPullRequest[];
+	repositories: Array<Record<string, unknown>>;
+	deployments: Array<Record<string, unknown>>;
+	preferences: DashboardPreferences;
+	installationCount: number;
+	stale: boolean;
+};
+export const LOCAL_DEMO_USER = { id: "local-demo-user", login: "sisko" } as const;
 const badPrStates = new Set(["action_required", "cancelled", "canceled", "failure", "failed", "timed_out"]);
 const normalize = (value: unknown) =>
 	String(value ?? "unknown")
 		.toLowerCase()
 		.replaceAll(" ", "_");
 const needsAttention = (pr: Record<string, unknown>) =>
-	Boolean(pr.draft) ||
-	pr.post_merge_unresolved === true ||
-	normalize(pr.review_state) === "changes_requested" ||
-	badPrStates.has(normalize(pr.checks_state)) ||
-	badPrStates.has(normalize(pr.workflow_state)) ||
-	["blocked", "conflict", "conflicting", "dirty", "false", "unmergeable"].includes(normalize(pr.mergeable));
-const emptyUser = (id: string): UserAggregate => ({
-	_id: id,
-	schemaVersion: 1,
-	revision: 0,
-	github: {},
-	installations: [],
-	createdAt: new Date(),
-	updatedAt: new Date(),
-});
+	Boolean(
+		pr.draft ||
+			pr.post_merge_unresolved === true ||
+			normalize(pr.review_state) === "changes_requested" ||
+			badPrStates.has(normalize(pr.checks_state)) ||
+			badPrStates.has(normalize(pr.workflow_state)) ||
+			["blocked", "conflict", "conflicting", "dirty", "false", "unmergeable"].includes(normalize(pr.mergeable)),
+	);
 const localDemoPullRequests = [
 	"Restore the Defiant launch checklist",
 	"Tune the wormhole transit monitor",
@@ -68,21 +88,6 @@ const localDemoPullRequests = [
 	bot_review_state: index % 3 === 0 ? "in_progress" : "approved",
 	...([117, 118].includes(119 - index) ? { labels: ["openspec-not-required"] } : {}),
 }));
-const pullRequestUrl = (fullName: unknown, number: unknown) => {
-	if (fullName == null || number == null) return null;
-	return `https://github.com/${String(fullName)}/pull/${String(number)}`;
-};
-const orderedOpenSpecs = (specs: Record<string, unknown>[]) => {
-	const unique = new Map<string, Record<string, unknown>>();
-	for (const spec of specs)
-		unique.set([spec.change_name, spec.source_commit, spec.source_ref].map(String).join("\u0000"), spec);
-	return [...unique.values()].sort(
-		(a, b) =>
-			["change_name", "source_commit", "source_ref"]
-				.map((key) => String(a[key] ?? "").localeCompare(String(b[key] ?? "")))
-				.find(Boolean) ?? 0,
-	);
-};
 
 export const safeAvatarUrl = (value: unknown) => {
 	if (typeof value !== "string") return undefined;
@@ -94,136 +99,107 @@ export const safeAvatarUrl = (value: unknown) => {
 		return undefined;
 	}
 };
+const emptyUser = (id: string): UserDocument => ({
+	_id: id,
+	schemaVersion: 1,
+	github: {},
+	createdAt: new Date(),
+	updatedAt: new Date(),
+});
+const orderedOpenSpecs = (specs: Record<string, unknown>[]) =>
+	[
+		...new Map(
+			specs.map((spec) => [[spec.change_name, spec.source_commit, spec.source_ref].map(String).join("\0"), spec]),
+		).values(),
+	].sort((a, b) => String(a.change_name ?? "").localeCompare(String(b.change_name ?? "")));
 
 export async function upsertIdentity(db: Db, id: string, login: string, avatarUrl?: string) {
-	const safeAvatar = safeAvatarUrl(avatarUrl);
-	const now = new Date(),
-		update: UpdateFilter<UserAggregate> = {
-			$set: { "github.login": login, updatedAt: now },
-			$setOnInsert: { schemaVersion: 1, installations: [], createdAt: now },
-			$inc: { revision: 1 },
-		};
+	const safeAvatar = safeAvatarUrl(avatarUrl),
+		now = new Date();
+	const update: UpdateFilter<UserDocument> = {
+		$set: { "github.login": login, updatedAt: now },
+		$setOnInsert: { schemaVersion: 1, createdAt: now },
+	};
 	if (safeAvatar) update.$set = { ...update.$set, "github.avatarUrl": safeAvatar };
 	else update.$unset = { "github.avatarUrl": "" };
 	await db.users.updateOne({ _id: id }, update, { upsert: true });
 }
-export async function seedBindings(
-	db: Db,
-	input: {
-		userId: string;
-		bindings: Array<{ installationId: string; accountLogin: string }>;
-	},
-) {
-	if (
-		!/^\d+$/.test(input.userId) ||
-		!input.bindings.length ||
-		new Set(input.bindings.map((item) => item.installationId)).size !== input.bindings.length ||
-		input.bindings.some((item) => !/^\d+$/.test(item.installationId) || !approvedInstallationAccount(item.accountLogin))
-	)
-		throw new Error("invalid binding seed");
-	const existing = await db.users.findOne({ _id: input.userId });
-	if (!existing) {
-		const user = emptyUser(input.userId);
-		user.installations = input.bindings.map((item) => ({
-			...item,
-			boundAt: new Date(),
-			repositories: [],
-		}));
-		await db.users.insertOne(user);
-		return;
-	}
-	await mutateUser(db, input.userId, (user) => {
-		for (const binding of input.bindings) {
-			const prior = user.installations.find((item) => item.installationId === binding.installationId);
-			if (prior?.accountLogin && prior.accountLogin !== binding.accountLogin)
-				throw new Error("conflicting binding seed");
-			if (!prior)
-				user.installations.push({
-					...binding,
-					boundAt: new Date(),
-					repositories: [],
-				});
-			else if (!prior.accountLogin) prior.accountLogin = binding.accountLogin;
-		}
-	});
+
+export async function bindInstallation(db: Db, userId: string, installationId: string, accountLogin?: string) {
+	if (!approvedInstallationAccount(accountLogin)) return false;
+	if (!(await db.users.findOne({ _id: userId }))) await db.users.insertOne(emptyUser(userId));
+	const now = new Date();
+	await db.installations.updateOne(
+		{ _id: installationId },
+		{ $set: { installationId, accountLogin, active: true, suspended: false }, $setOnInsert: { _id: installationId } },
+		{ upsert: true },
+	);
+	await db.bindings.updateOne(
+		{ userId, installationId },
+		{ $setOnInsert: { _id: `${userId}:${installationId}`, userId, installationId, boundAt: now } },
+		{ upsert: true },
+	);
+	return true;
 }
+
 export async function seedLocalDemo(db: Db) {
 	await upsertIdentity(db, LOCAL_DEMO_USER.id, LOCAL_DEMO_USER.login);
 	await bindInstallation(db, LOCAL_DEMO_USER.id, "local-demo-installation", "cubanx");
-	await mutateUser(db, LOCAL_DEMO_USER.id, (user) => {
-		const installation = user.installations.find((item) => item.installationId === "local-demo-installation");
-		if (!installation) throw new Error("local demo installation missing after binding");
-		installation.accountLogin = "cubanx";
-		installation.repositories = [
-			{
-				repositoryId: "local-demo-repository",
-				full_name: "ds9/ops-console",
-				pullRequests: localDemoPullRequests.map((pullRequest, index) =>
-					index
-						? pullRequest
-						: {
-								...pullRequest,
-								open_specs: [
-									{
-										change_name: "restore-defiant-launch-checklist",
-										completed: 26,
-										total: 27,
-										source_commit: "local-demo-119",
-										source_ref: "demo/restore-the-defiant-launch-checklist",
-									},
-								],
-							},
-				),
-				openSpecs: [
-					{
-						change_name: "restore-defiant-launch-checklist",
-						completed: 26,
-						total: 27,
-						source_commit: "local-demo-119",
-						source_ref: "demo/restore-the-defiant-launch-checklist",
-						active_group: JSON.stringify({
-							title: "Tasks",
-							tasks: [{ completed: false, text: "Review the local dashboard" }],
-						}),
-					},
-				],
-				deployments: ["success", "pending", "failure"].map((state, index) => ({
-					id: String(42 + index),
-					state,
-					updated_at: new Date().toISOString(),
-				})),
-			},
-		];
-	});
-	await db.notifications.updateOne(
-		{ userId: LOCAL_DEMO_USER.id, transitionKey: "demo:checks-failed:1701" },
+	const now = new Date();
+	await db.repositories.updateOne(
+		{ _id: "local-demo-repository" },
 		{
 			$set: {
-				title: "Checks failed",
-				body: "Restore the Defiant launch checklist needs attention.",
-			},
-			$setOnInsert: {
-				_id: "local-demo-notification",
-				userId: LOCAL_DEMO_USER.id,
-				transitionKey: "demo:checks-failed:1701",
-				createdAt: new Date(),
+				repositoryId: "local-demo-repository",
+				full_name: "ds9/ops-console",
+				installationIds: ["local-demo-installation"],
+				updatedAt: now,
 			},
 		},
 		{ upsert: true },
 	);
+	await db.pullRequests.deleteMany({ repositoryId: "local-demo-repository" });
+	await db.pullRequests.insertMany(
+		localDemoPullRequests.map((pr, index) => ({
+			...pr,
+			_id: `local-demo-repository:${pr.number}`,
+			repositoryId: "local-demo-repository",
+			updatedAt: now,
+			...(index === 0
+				? {
+						open_specs: [
+							{
+								change_name: "restore-defiant-launch-checklist",
+								completed: 26,
+								total: 27,
+								source_commit: "local-demo-119",
+								source_ref: "demo/restore-the-defiant-launch-checklist",
+							},
+						],
+					}
+				: {}),
+		})),
+	);
+	await db.deployments.deleteMany({ repositoryId: "local-demo-repository" });
+	await db.deployments.insertMany(
+		["success", "pending", "failure"].map((state, index) => ({
+			_id: `local-demo-repository:${42 + index}`,
+			repositoryId: "local-demo-repository",
+			deploymentId: String(42 + index),
+			state,
+			updated_at: now.toISOString(),
+			updatedAt: now,
+		})),
+	);
 }
+
 export async function createOAuthState(db: Db, expiresAt = new Date(Date.now() + 600_000)) {
 	const state = randomUUID();
 	await db.oauthStates.insertOne({ _id: hash(state), expiresAt });
 	return state;
 }
 export async function consumeOAuthState(db: Db, state: string, now = new Date()) {
-	return Boolean(
-		await db.oauthStates.findOneAndDelete({
-			_id: hash(state),
-			expiresAt: { $gt: now },
-		}),
-	);
+	return Boolean(await db.oauthStates.findOneAndDelete({ _id: hash(state), expiresAt: { $gt: now } }));
 }
 export async function createSession(db: Db, userId: string, expiresAt = new Date(Date.now() + 30 * 86_400_000)) {
 	const token = randomUUID() + randomUUID();
@@ -231,81 +207,121 @@ export async function createSession(db: Db, userId: string, expiresAt = new Date
 	return { token, expiresAt };
 }
 export async function sessionUser(db: Db, token: string, now = new Date()) {
-	const session = await db.sessions.findOne({
-		_id: hash(token),
-		expiresAt: { $gt: now },
-	});
+	const session = await db.sessions.findOne({ _id: hash(token), expiresAt: { $gt: now } });
 	if (!session) return null;
-	const user = await db.users.findOne({ _id: session.userId });
-	return user?.github.login ? { id: user._id, login: user.github.login } : null;
+	const user = await db.users.findOne({ _id: session.userId }, { projection: { _id: 1, github: 1 } });
+	return user?.github?.login ? { id: user._id, login: user.github.login } : null;
 }
-export async function bindInstallation(db: Db, userId: string, installationId: string, accountLogin?: string) {
-	if (!approvedInstallationAccount(accountLogin)) return false;
-	await mutateUser(db, userId, (user) => {
-		const installation = user.installations.find((item) => item.installationId === installationId);
-		if (!installation)
-			user.installations.push({
-				installationId,
-				accountLogin,
-				boundAt: new Date(),
-				repositories: [],
-			});
-		else installation.accountLogin = accountLogin;
-	});
-	return true;
-}
-export async function dashboardForUser(db: Db, userId: string, now = new Date()) {
-	const user = await db.users.findOne({ _id: userId });
-	if (!user?.github.login) throw new Error("unauthenticated");
-	const installations = user.installations.filter((installation) =>
-		approvedInstallationAccount(installation.accountLogin),
-	);
-	const repositories = installations.flatMap((installation) =>
-		installation.repositories.map((repository) => ({
-			...repository,
-			installationId: installation.installationId,
-			accountLogin: installation.accountLogin,
-			pullRequestsPermission: installation.permissions?.pull_requests,
-		})),
-	);
-	const projectedPullRequests: PullRequest[] = repositories.flatMap((repository) =>
-		repository.pullRequests
-			.filter((pr) => sameLogin(pr.author_login, user.github.login))
-			.map((pr) => ({
-				...pr,
-				installation_id: repository.installationId,
-				installation_pull_requests: repository.pullRequestsPermission,
-				repository_id: repository.repositoryId,
-				full_name: repository.full_name,
-			})),
-	);
-	const byIdentity = new Map<string, PullRequest>();
-	for (const pr of projectedPullRequests.filter((pr) => pr.state === "open" || pr.retention_candidate === true)) {
-		const key = `${pr.repository_id}:${pr.number}`;
-		const previous = byIdentity.get(key);
-		if (!previous || String(pr.updated_at ?? "") > String(previous.updated_at ?? "")) byIdentity.set(key, pr);
+
+const validateDashboardFilters = (filters: DashboardFilters | undefined) => {
+	const dashboardStatuses = new Set(["closed", "post-merge", "draft", "openspec", "ready", "reviewing", "mergeable"]);
+	if (
+		!filters ||
+		Object.keys(filters).some(
+			(key) => !["query", "statuses", "attention", "failedActions", "failedChecks"].includes(key),
+		) ||
+		Object.keys(filters).length !== 5 ||
+		typeof filters.query !== "string" ||
+		filters.query.length > 200 ||
+		!Array.isArray(filters.statuses) ||
+		filters.statuses.length > 20 ||
+		filters.statuses.some((status) => typeof status !== "string" || !dashboardStatuses.has(status)) ||
+		typeof filters.attention !== "boolean" ||
+		typeof filters.failedActions !== "boolean" ||
+		typeof filters.failedChecks !== "boolean"
+	)
+		throw new Error("invalid filters");
+};
+
+export async function updateDashboardPreferences(db: Db, userId: string, input: DashboardPreferences) {
+	const dashboardSortModes = new Set(["opened", "closest", "updated", "progress", "repository"]);
+	if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid preferences");
+	const keys = Object.keys(input as object);
+	if (keys.some((key) => !["repositoryIds", "sort", "filters"].includes(key))) throw new Error("invalid preferences");
+	if (
+		"repositoryIds" in input &&
+		input.repositoryIds !== null &&
+		(!Array.isArray(input.repositoryIds) ||
+			input.repositoryIds.length > 500 ||
+			input.repositoryIds.some((id) => typeof id !== "string" || id.length > 200))
+	)
+		throw new Error("invalid repositoryIds");
+	if ("sort" in input) {
+		const sort = input.sort as DashboardSortPreference | undefined;
+		if (
+			!sort ||
+			Object.keys(sort).some((key) => !["mode", "direction"].includes(key)) ||
+			Object.keys(sort).length !== 2 ||
+			!dashboardSortModes.has(sort.mode) ||
+			!["asc", "desc"].includes(sort.direction)
+		)
+			throw new Error("invalid sort");
 	}
-	const openPullRequests = [...byIdentity.values()];
-	const pullRequests: PullRequest[] = openPullRequests
-		.map((pr): PullRequest => {
-			const correlatedOpenSpecs = orderedOpenSpecs(
-				Array.isArray(pr.open_specs)
-					? (pr.open_specs as Record<string, unknown>[])
-					: pr.open_spec && typeof pr.open_spec === "object"
-						? [pr.open_spec as Record<string, unknown>]
-						: [],
+	if ("filters" in input) validateDashboardFilters(input.filters);
+	const set: Record<string, unknown> = { updatedAt: new Date() };
+	if ("repositoryIds" in input)
+		set["preferences.ui.dashboard.repositoryIds"] =
+			input.repositoryIds === null ? null : [...new Set(input.repositoryIds)];
+	if ("sort" in input) set["preferences.ui.dashboard.sort"] = input.sort;
+	if ("filters" in input) set["preferences.ui.dashboard.filters"] = input.filters;
+	await db.users.updateOne({ _id: userId }, { $set: set });
+}
+
+export async function dashboardForUser(db: Db, userId: string, now = new Date()): Promise<DashboardSnapshot> {
+	const user = await db.users.findOne({ _id: userId }, { projection: { _id: 1, github: 1, preferences: 1 } });
+	if (!user?.github?.login) throw new Error("unauthenticated");
+	const bindings = await db.bindings.find({ userId }).toArray();
+	const installations = (
+		await db.installations
+			.find({
+				_id: { $in: bindings.map((item) => item.installationId) },
+				active: { $ne: false },
+				suspended: { $ne: true },
+			})
+			.toArray()
+	).filter((item) => approvedInstallationAccount(item.accountLogin));
+	const installationIds = installations.map((item) => item.installationId);
+	const repositories = await db.repositories.find({ installationIds: { $in: installationIds } }).toArray();
+	const repositoryIds = repositories.map((item) => item.repositoryId);
+	const pullRows = await db.pullRequests
+		.find({ repositoryId: { $in: repositoryIds }, $or: [{ state: "open" }, { retention_candidate: true }] })
+		.toArray();
+	const byIdentity = new Map<string, PullRequest>();
+	for (const row of pullRows.filter((pr) => sameLogin(pr.author_login, user.github.login))) {
+		const previous = byIdentity.get(row._id);
+		if (!previous || String(row.updated_at ?? "") > String(previous.updated_at ?? "")) byIdentity.set(row._id, row);
+	}
+	const pullRequests: DashboardPullRequest[] = [...byIdentity.values()]
+		.map((pr): DashboardPullRequest => {
+			const repo = repositories.find((item) => item.repositoryId === String(pr.repositoryId));
+			const installation = installations.find(
+				(item) => item.installationId && repo?.installationIds.includes(item.installationId),
 			);
+			const specs = Array.isArray(pr.open_specs) ? orderedOpenSpecs(pr.open_specs as Record<string, unknown>[]) : [];
 			const labels = Array.isArray(pr.labels)
 				? pr.labels.filter((label): label is string => typeof label === "string")
 				: [];
-			const openSpecGateResult = openSpecGate(correlatedOpenSpecs, labels, pr);
-			const openSpec = correlatedOpenSpecs[0] ?? null;
+			const number = Number(pr.number);
+			const safeUrl =
+				typeof pr.url === "string" && URL.canParse(pr.url) && new URL(pr.url).protocol === "https:"
+					? pr.url
+					: repo?.full_name && Number.isSafeInteger(number)
+						? `https://github.com/${repo.full_name}/pull/${number}`
+						: undefined;
+			const { _id, repositoryId: _repositoryId, revision: _revision, updatedAt: _updatedAt, ...fields } = pr;
 			return {
-				...pr,
-				url: pullRequestUrl(pr.full_name, pr.number),
-				open_specs: correlatedOpenSpecs,
-				open_spec: openSpec,
-				needs_attention: needsAttention(pr) || !openSpecGateResult.ready,
+				...fields,
+				...(safeUrl ? { url: safeUrl } : {}),
+				installation_id: installation?.installationId,
+				installation_pull_requests:
+					typeof installation?.permissions?.pull_requests === "string"
+						? installation.permissions.pull_requests
+						: undefined,
+				repository_id: String(pr.repositoryId),
+				full_name: repo?.full_name,
+				open_specs: specs,
+				open_spec: specs[0] ?? null,
+				needs_attention: needsAttention(pr) || !openSpecGate(specs, labels, pr).ready,
 			};
 		})
 		.sort(
@@ -315,19 +331,26 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
 				String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")),
 		);
 	const cutoff = now.getTime() - 48 * 60 * 60_000;
-	const deployments: Record<string, unknown>[] = repositories
-		.flatMap((repository) =>
-			repository.deployments
-				.filter((item) => Date.parse(String(item.updated_at)) >= cutoff)
-				.map(
-					(item): Record<string, unknown> => ({
-						...item,
-						full_name: repository.full_name,
-					}),
-				),
-		)
-		.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
-	const notifications = await db.notifications.find({ userId }).sort({ createdAt: -1 }).limit(20).toArray();
+	const deployments = (
+		await db.deployments
+			.find({ repositoryId: { $in: repositoryIds }, updated_at: { $gte: new Date(cutoff).toISOString() } })
+			.sort({ updated_at: -1 })
+			.toArray()
+	).map((item) => {
+		const {
+			_id,
+			repositoryId: _repositoryId,
+			deploymentId,
+			revision: _revision,
+			updatedAt: _updatedAt,
+			...fields
+		} = item;
+		return {
+			id: deploymentId,
+			...fields,
+			full_name: repositories.find((repo) => repo.repositoryId === item.repositoryId)?.full_name,
+		};
+	});
 	const avatarUrl = safeAvatarUrl(user.github.avatarUrl);
 	return {
 		user: {
@@ -336,24 +359,24 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
 			...(userId === LOCAL_DEMO_USER.id ? { fixture_avatar: true } : {}),
 		},
 		pullRequests,
-		repositories: repositories.map((repository) => ({
-			installation_id: repository.installationId,
-			account_login: repository.accountLogin,
-			pull_requests: repository.pullRequestsPermission,
-			repository_id: repository.repositoryId,
-			full_name: repository.full_name,
-			installation_pull_requests: repository.pullRequestsPermission,
-		})),
+		repositories: repositories.map((repo) => {
+			const installation = installations.find((item) => repo.installationIds.includes(item.installationId));
+			return {
+				installation_id: installation?.installationId,
+				account_login: installation?.accountLogin,
+				pull_requests: installation?.permissions?.pull_requests,
+				repository_id: repo.repositoryId,
+				full_name: repo.full_name,
+				installation_pull_requests: installation?.permissions?.pull_requests,
+			};
+		}),
 		deployments,
-		notifications: notifications.map((notification) => ({
-			...notification,
-			id: notification._id,
-		})),
+		preferences: user.preferences?.ui?.dashboard ?? {},
 		installationCount: installations.length,
 		stale: installations.some((installation) => Boolean(installation.lastSyncError)),
 	};
 }
-export async function dashboardForSession(db: Db, token: string, now = new Date()) {
+export async function dashboardForSession(db: Db, token: string, now = new Date()): Promise<DashboardSnapshot> {
 	const user = await sessionUser(db, token, now);
 	if (!user) throw new Error("unauthenticated");
 	return dashboardForUser(db, user.id, now);

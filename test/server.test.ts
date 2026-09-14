@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { expect, test, vi } from "vitest";
 import { bindInstallation, createOAuthState, createSession, upsertIdentity } from "#/access";
 import { loadConfig } from "#/config";
-import { mutateUser } from "#/db";
+import { type Db, upsertPullRequest } from "#/db";
 import { reconcileInstallations } from "#/github";
 import { advanceMergeIntent, mergeIntentFor } from "#/merge";
 import { createApp } from "#/server";
@@ -12,34 +12,53 @@ const fetchTarget: {
 	fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 } = globalThis;
 
-const seedMergePullRequest = async (db: Parameters<typeof mutateUser>[0]) => {
+const seedMergePullRequest = async (db: Db) => {
 	await upsertIdentity(db, "u", "kira");
 	await bindInstallation(db, "u", "12", "cubanx");
-	await mutateUser(db, "u", (user) => {
-		const installation = user.installations[0]!;
-		installation.permissions = { pull_requests: "write" };
-		installation.repositories = [
-			{
-				repositoryId: "42",
-				full_name: "Crisp-Inc/command-deck",
-				openSpecs: [],
-				deployments: [],
-				pullRequests: [
-					{
-						number: 8,
-						title: "Hold the line",
-						author_login: "kira",
-						state: "open",
-						draft: false,
-						labels: ["openspec-not-required"],
-						head_sha: "a".repeat(40),
-						mergeable: "clean",
-					},
-				],
-			},
-		];
-	});
+	await db.installations.updateOne({ _id: "12" }, { $set: { permissions: { pull_requests: "write" } } });
+	await seedRepositories(db, "u", [
+		{
+			repositoryId: "42",
+			full_name: "Crisp-Inc/command-deck",
+			deployments: [],
+			pullRequests: [
+				{
+					number: 8,
+					title: "Hold the line",
+					author_login: "kira",
+					state: "open",
+					draft: false,
+					labels: ["openspec-not-required"],
+					head_sha: "a".repeat(40),
+					mergeable: "clean",
+				},
+			],
+		},
+	]);
 };
+
+type RepositoryFixture = {
+	repositoryId: string;
+	full_name: string;
+	pullRequests: Record<string, unknown>[];
+	deployments: Record<string, unknown>[];
+};
+async function seedRepositories(db: Db, userId: string, repositories: RepositoryFixture[]) {
+	const binding = await db.bindings.findOne({ userId });
+	if (!binding) throw new Error("fixture binding missing");
+	for (const repo of repositories) {
+		await db.repositories.updateOne(
+			{ _id: repo.repositoryId },
+			{
+				$set: { repositoryId: repo.repositoryId, full_name: repo.full_name, updatedAt: new Date() },
+				$addToSet: { installationIds: binding.installationId },
+			},
+			{ upsert: true },
+		);
+		for (const pr of repo.pullRequests)
+			await upsertPullRequest(db, { ...pr, repositoryId: repo.repositoryId, number: Number(pr.number) });
+	}
+}
 
 const mergeTarget = new URLSearchParams({
 	installationId: "12",
@@ -174,27 +193,24 @@ test("lifecycle webhook reconciliation refreshes affected SSE streams", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
-		await mutateUser(db, "u", (user) => {
-			user.installations[0]!.repositories = [
-				{
-					repositoryId: "2",
-					full_name: "ds9/ops",
-					openSpecs: [],
-					deployments: [],
-					pullRequests: [
-						{
-							number: 7,
-							title: "Hold the wormhole",
-							author_login: "sisko",
-							state: "open",
-							draft: false,
-							head_sha: "a".repeat(40),
-							mergeable: "unknown",
-						},
-					],
-				},
-			];
-		});
+		await seedRepositories(db, "u", [
+			{
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				deployments: [],
+				pullRequests: [
+					{
+						number: 7,
+						title: "Hold the wormhole",
+						author_login: "sisko",
+						state: "open",
+						draft: false,
+						head_sha: "a".repeat(40),
+						mergeable: "unknown",
+					},
+				],
+			},
+		]);
 		const calls: number[] = [];
 		const app = createApp(db, { ...testConfig, githubWebhookSecret: "secret" }, undefined, {
 			reconcilePullRequest: async (_db, target) => {
@@ -285,17 +301,14 @@ test("installation repair refreshes only bound streams after a changed bootstrap
 						message: "reconciliation failed",
 					};
 				if (outcome === "changed")
-					await mutateUser(database, "u", (user) => {
-						user.installations.find((item) => item.installationId === installationId)!.repositories = [
-							{
-								repositoryId: "2",
-								full_name: "ds9/ops",
-								pullRequests: [],
-								openSpecs: [],
-								deployments: [],
-							},
-						];
-					});
+					await seedRepositories(database, "u", [
+						{
+							repositoryId: "2",
+							full_name: "ds9/ops",
+							pullRequests: [],
+							deployments: [],
+						},
+					]);
 				return outcome === "changed" ? { kind: "changed", body: [{ id: 2 }] } : { kind: "unchanged" };
 			},
 		});
@@ -325,7 +338,7 @@ test("installation repair refreshes only bound streams after a changed bootstrap
 			Promise.race([reader.read(), new Promise<undefined>((resolve) => setTimeout(resolve, 25))]);
 		try {
 			expect((await repair()).status).toBe(200);
-			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories).toHaveLength(1);
+			expect(await db.repositories.find({ installationIds: "9" }).toArray()).toHaveLength(1);
 			for (const item of [primary, shared])
 				expect(new TextDecoder().decode((await item.reader.read()).value)).toContain("event: refresh");
 			outcome = "unchanged";
@@ -341,7 +354,7 @@ test("installation repair refreshes only bound streams after a changed bootstrap
 			expect(await failed.text()).toContain("reconciliation failed");
 		} finally {
 			await Promise.all([primary.reader.cancel(), shared.reader.cancel(), foreign.reader.cancel()]);
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -354,26 +367,23 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 		] as const) {
 			await upsertIdentity(db, id, login);
 			await bindInstallation(db, id, installationId, "cubanx");
-			await mutateUser(db, id, (user) => {
-				user.installations[0]!.repositories = [
-					{
-						repositoryId: "2",
-						full_name: "ds9/ops",
-						openSpecs: [],
-						deployments: [],
-						pullRequests: [
-							{
-								number: 7,
-								title: "Hold the wormhole",
-								author_login: login,
-								state: "open",
-								draft: false,
-								mergeable: "unknown",
-							},
-						],
-					},
-				];
-			});
+			await seedRepositories(db, id, [
+				{
+					repositoryId: "2",
+					full_name: "ds9/ops",
+					deployments: [],
+					pullRequests: [
+						{
+							number: 7,
+							title: "Hold the wormhole",
+							author_login: login,
+							state: "open",
+							draft: false,
+							mergeable: "unknown",
+						},
+					],
+				},
+			]);
 		}
 		let outcome: "changed" | "openspec" | "closed" | "unchanged" | "error" = "changed";
 		const app = createApp(db, { ...testConfig, githubWebhookSecret: "secret" }, undefined, {
@@ -384,26 +394,29 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 						stale: true,
 						message: "provider unavailable",
 					};
-				if (outcome === "changed" || outcome === "openspec" || outcome === "closed")
-					await Promise.all(
-						["u", "shared"].map((id) =>
-							mutateUser(database, id, (user) => {
-								const pullRequests = user.installations[0]!.repositories[0]!.pullRequests;
-								if (outcome === "closed") pullRequests.splice(0);
-								else if (outcome === "openspec")
-									user.installations[0]!.repositories[0]!.openSpecs.push({
-										change_name: "repair-wolf-359",
-										completed: 0,
-										total: 1,
-										pre_merge_ready: false,
-										source_commit: "a".repeat(40),
-										active_group: null,
-										updated_at: "2030-01-01T00:00:00Z",
-									});
-								else pullRequests[0]!.title = "Repair the wormhole";
-							}),
-						),
-					);
+				if (outcome === "changed" || outcome === "openspec" || outcome === "closed") {
+					if (outcome === "closed") await database.pullRequests.deleteOne({ _id: "2:7" });
+					else
+						await upsertPullRequest(database, {
+							repositoryId: "2",
+							number: 7,
+							...(outcome === "openspec"
+								? {
+										open_specs: [
+											{
+												change_name: "repair-wolf-359",
+												completed: 0,
+												total: 1,
+												pre_merge_ready: false,
+												source_commit: "a".repeat(40),
+												active_group: null,
+												updated_at: "2030-01-01T00:00:00Z",
+											},
+										],
+									}
+								: { title: "Repair the wormhole" }),
+						});
+				}
 				return outcome === "changed" || outcome === "openspec" || outcome === "closed"
 					? { kind: "changed", body: { number: target.number } }
 					: { kind: "unchanged" };
@@ -441,15 +454,13 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 			);
 		try {
 			expect((await repair()).status).toBe(200);
-			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests[0]?.title).toBe(
-				"Repair the wormhole",
-			);
+			expect((await db.pullRequests.findOne({ _id: "2:7" }))?.title).toBe("Repair the wormhole");
 			for (const stream of [primary, shared])
 				expect(new TextDecoder().decode((await stream.reader.read()).value)).toContain("event: refresh");
 			const openSpec = await streamFor("u");
 			outcome = "openspec";
 			expect((await repair()).status).toBe(200);
-			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toMatchObject([
+			expect((await db.pullRequests.findOne({ _id: "2:7" }))?.open_specs).toMatchObject([
 				{ change_name: "repair-wolf-359" },
 			]);
 			expect(new TextDecoder().decode((await openSpec.reader.read()).value)).toContain("event: refresh");
@@ -486,7 +497,7 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 			expect(await noEvent(foreign.reader)).toBeUndefined();
 		} finally {
 			await Promise.all([primary.reader.cancel(), shared.reader.cancel(), foreign.reader.cancel()]);
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -520,28 +531,25 @@ test.each(["open", "closed"])(
 			await upsertIdentity(db, "foreign", "garak");
 			await bindInstallation(db, "u", "12", "cubanx");
 			await bindInstallation(db, "foreign", "13", "cubanx");
-			await mutateUser(db, "u", (user) => {
-				user.installations[0]!.repositories = [
-					{
-						repositoryId: "42",
-						full_name: "cubanx/defiant",
-						openSpecs: [],
-						deployments: [],
-						pullRequests: [
-							{
-								number: 7,
-								title: "Repair the Defiant",
-								author_login: "kira",
-								state,
-								merged: state === "closed",
-								retention_candidate: state === "closed",
-								draft: false,
-								mergeable: "unknown",
-							},
-						],
-					},
-				];
-			});
+			await seedRepositories(db, "u", [
+				{
+					repositoryId: "42",
+					full_name: "cubanx/defiant",
+					deployments: [],
+					pullRequests: [
+						{
+							number: 7,
+							title: "Repair the Defiant",
+							author_login: "kira",
+							state,
+							merged: state === "closed",
+							retention_candidate: state === "closed",
+							draft: false,
+							mergeable: "unknown",
+						},
+					],
+				},
+			]);
 			const calls: Array<{
 				installationId: string;
 				repositoryId: string;
@@ -626,7 +634,7 @@ test.each(["open", "closed"])(
 				{ installationId: "12", repositoryId: "42", number: 0 },
 			])
 				expect((await post("/api/reconcile/pull-request", target)).status).toBe(404);
-			app.stop();
+			await app.stop();
 		}),
 );
 
@@ -744,18 +752,21 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			expect(tokenIds).toEqual(["12"]);
 			const successfulUser = await db.users.findOne({ _id: "u" });
 			if (!successfulUser) throw new Error("test user missing");
-			const successfulInstallation = successfulUser.installations[0];
+			const successfulInstallation = await db.installations.findOne({ _id: "12" });
 			if (!successfulInstallation) throw new Error("test installation missing");
-			const successfulEvidence = successfulInstallation.reconciliationEvidence?.at(-1);
+			const successfulEvidence = await db.reconciliationRuns.findOne(
+				{ installationId: "12", outcome: "success" },
+				{ sort: { startedAt: -1 } },
+			);
 			expect(successfulEvidence).toMatchObject({
 				outcome: "success",
 				operation: "reconciliation",
 			});
 			const foreignUser = await db.users.findOne({ _id: "foreign" });
 			if (!foreignUser) throw new Error("foreign test user missing");
-			const foreignInstallation = foreignUser.installations[0];
+			const foreignInstallation = await db.installations.findOne({ _id: "13" });
 			if (!foreignInstallation) throw new Error("foreign test installation missing");
-			expect(foreignInstallation.reconciliationEvidence).toBeUndefined();
+			expect(await db.reconciliationRuns.countDocuments({ installationId: "13" })).toBe(0);
 			const refresh = await reader.read();
 			expect(new TextDecoder().decode(refresh.value)).toContain("event: refresh");
 			await reader.cancel();
@@ -779,21 +790,24 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			expect(logs.filter((log) => log[0] === "GitHub request failed")).toHaveLength(0);
 			const failedUser = await db.users.findOne({ _id: "u" });
 			if (!failedUser) throw new Error("test user missing");
-			const failedInstallation = failedUser.installations[0];
+			const failedInstallation = await db.installations.findOne({ _id: "12" });
 			if (!failedInstallation) throw new Error("test installation missing");
-			const failedEvidence = failedInstallation.reconciliationEvidence?.at(-1);
+			const failedEvidence = await db.reconciliationRuns.findOne(
+				{ installationId: "12", outcome: "failure" },
+				{ sort: { startedAt: -1 } },
+			);
 			expect(failedEvidence).toMatchObject({
 				outcome: "failure",
-				operation: "openspec",
-				summary: "GitHub OpenSpec artifact fetch failed",
+				operation: "reconciliation",
+				summary: "Reconciliation failed",
 			});
 			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-token-value");
 			expect(JSON.stringify(failedEvidence)).not.toContain("fixture-header-value");
 			const failedForeignUser = await db.users.findOne({ _id: "foreign" });
 			if (!failedForeignUser) throw new Error("foreign test user missing");
-			const failedForeignInstallation = failedForeignUser.installations[0];
+			const failedForeignInstallation = await db.installations.findOne({ _id: "13" });
 			if (!failedForeignInstallation) throw new Error("foreign test installation missing");
-			expect(failedForeignInstallation.reconciliationEvidence).toBeUndefined();
+			expect(await db.reconciliationRuns.countDocuments({ installationId: "13" })).toBe(0);
 			const logged = JSON.stringify(logs);
 			expect(logged).not.toContain("fixture-token-value");
 			expect(logged).not.toContain("fixture-raw-body-value");
@@ -997,36 +1011,32 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 			return state;
 		};
 		const removed = await start();
-		await mutateUser(db, "u", (user) => {
-			user.installations = [];
-		});
+		await db.bindings.deleteMany({ userId: "u" });
 		expect((await post(removed)).status).toBe(409);
 		expect(mutations).toBe(0);
 		await seedMergePullRequest(db);
 		const incomplete = await start();
-		await mutateUser(db, "u", (user) => {
-			const repository = user.installations[0]?.repositories[0];
-			if (!repository) throw new Error("merge repository missing");
-			const pullRequest = repository.pullRequests[0];
-			if (!pullRequest) throw new Error("merge pull request missing");
-			pullRequest.labels = [];
-			pullRequest.open_spec_declaration = "declared";
-			const openSpecs = [
-				{
-					change_name: "ready-to-merge",
-					completed: 2,
-					total: 2,
-					source_commit: "a".repeat(40),
-				},
-				{
-					change_name: "hold-the-line",
-					completed: 1,
-					total: 2,
-					source_commit: "a".repeat(40),
-				},
-			];
-			pullRequest.open_specs = openSpecs;
-			pullRequest.open_spec = openSpecs[0];
+		const openSpecs = [
+			{
+				change_name: "ready-to-merge",
+				completed: 2,
+				total: 2,
+				source_commit: "a".repeat(40),
+			},
+			{
+				change_name: "hold-the-line",
+				completed: 1,
+				total: 2,
+				source_commit: "a".repeat(40),
+			},
+		];
+		await upsertPullRequest(db, {
+			repositoryId: "42",
+			number: 8,
+			labels: [],
+			open_spec_declaration: "declared",
+			open_specs: openSpecs,
+			open_spec: openSpecs[0],
 		});
 		expect((await post(incomplete)).status).toBe(409);
 		expect(mutations).toBe(0);
@@ -1042,7 +1052,7 @@ test("local demo serves snapshot and SSE without a session and exposes no Railwa
 		const snapshot = await (await app.fetch(new Request("http://local/api/snapshot"))).json();
 		expect(snapshot.pullRequests).toHaveLength(19);
 		expect(snapshot.repositories[0]?.account_login).toBe("cubanx");
-		expect(snapshot.notifications[0]?.body).toBe("Restore the Defiant launch checklist needs attention.");
+		expect(snapshot).not.toHaveProperty("notifications");
 		const stream = await app.fetch(new Request("http://local/events"));
 		expect(stream.status).toBe(200);
 		await stream.body?.cancel();
@@ -1098,7 +1108,7 @@ test("OAuth callback preserves zero bindings and production origin/readiness gat
 					)
 				).status,
 			).toBe(302);
-			expect((await db.users.findOne({ _id: "9" }))?.installations).toHaveLength(0);
+			expect(await db.bindings.find({ userId: "9" }).toArray()).toHaveLength(0);
 		} finally {
 			globalThis.fetch = original;
 		}
@@ -1206,7 +1216,8 @@ test("OAuth binds only the verified installation account and never persists its 
 				).toBe(302);
 			}
 			const user = await db.users.findOne({ _id: "9" });
-			expect(user?.installations).toMatchObject([{ installationId: "12", accountLogin: "cubanx" }]);
+			expect(await db.bindings.find({ userId: "9" }).toArray()).toMatchObject([{ installationId: "12" }]);
+			expect(await db.installations.findOne({ _id: "12" })).toMatchObject({ accountLogin: "cubanx" });
 			expect(JSON.stringify(user)).not.toContain("oauth-token");
 		} finally {
 			globalThis.fetch = original;
@@ -1235,7 +1246,7 @@ test("OAuth rejects an unverified installation without binding it", () =>
 				(await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`)))
 					.status,
 			).toBe(403);
-			expect((await db.users.findOne({ _id: "9" }))?.installations).toHaveLength(0);
+			expect(await db.bindings.find({ userId: "9" }).toArray()).toHaveLength(0);
 		} finally {
 			globalThis.fetch = original;
 		}
@@ -1275,31 +1286,22 @@ test("OAuth installation pagination rejects unsafe and looping next links withou
 		}
 	}));
 
-test("repair permits legacy and canonical bindings but rejects unapproved ones", () =>
+test("repair requires an approved installation account", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "kira");
 		const session = await createSession(db, "u");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations.push({
-			installationId: "12",
-			boundAt: new Date(),
-			repositories: [],
-		});
-		await db.users.replaceOne({ _id: "u" }, user!);
+		await bindInstallation(db, "u", "12", "cubanx");
+		await db.installations.updateOne({ _id: "12" }, { $unset: { accountLogin: "" } });
 		const app = createApp(db, testConfig),
 			request = () =>
 				new Request("http://local/api/installations/12/repair", {
 					method: "POST",
 					headers: { cookie: `dcc_session=${session.token}` },
 				});
+		expect((await app.fetch(request())).status).toBe(404);
+		await db.installations.updateOne({ _id: "12" }, { $set: { accountLogin: "CUBANX" } });
 		expect((await app.fetch(request())).status).toBe(503);
-		const current = await db.users.findOne({ _id: "u" });
-		if (!current?.installations[0]) throw new Error("test binding missing");
-		current.installations[0].accountLogin = "CUBANX";
-		await db.users.replaceOne({ _id: "u" }, current);
-		expect((await app.fetch(request())).status).toBe(503);
-		current.installations[0].accountLogin = "external";
-		await db.users.replaceOne({ _id: "u" }, current);
+		await db.installations.updateOne({ _id: "12" }, { $set: { accountLogin: "external" } });
 		expect((await app.fetch(request())).status).toBe(404);
 	}));
 
@@ -1341,11 +1343,13 @@ test("repair persists a sanitized stale failure when its installation token requ
 			expect(response.status).toBe(200);
 			const body = await response.text();
 			expect(body).not.toContain("raw repair provider diagnostic");
-			const installation = (await db.users.findOne({ _id: "u" }))?.installations[0];
+			const installation = await db.installations.findOne({ _id: "12" });
 			expect(installation).toMatchObject({
 				lastSyncError: "reconciliation failed",
 			});
-			expect(installation?.reconciliationEvidence?.at(-1)).toMatchObject({
+			expect(
+				await db.reconciliationRuns.findOne({ installationId: "12", outcome: "failure" }, { sort: { startedAt: -1 } }),
+			).toMatchObject({
 				outcome: "failure",
 				operation: "reconciliation",
 			});
@@ -1429,9 +1433,7 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 				(await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}&installation_id=12`)))
 					.status,
 			).toBe(302);
-			expect((await db.users.findOne({ _id: "9" }))?.installations).toMatchObject([
-				{ installationId: "12", accountLogin: "Crisp-Inc", repositories: [] },
-			]);
+			expect(await db.bindings.find({ userId: "9" }).toArray()).toMatchObject([{ installationId: "12" }]);
 			const releaseIdentity = await waitForIdentityRequest;
 			releaseIdentity();
 			await bootstrapped;
@@ -1439,11 +1441,11 @@ test("OAuth binding redirects before its background bootstrap projects the allow
 			const deadline = Date.now() + 2000;
 			while (!projected && Date.now() < deadline) {
 				const user = await db.users.findOne({ _id: "9" });
-				projected = Boolean(user?.installations[0]?.repositories[0]?.pullRequests?.length);
+				projected = Boolean(await db.pullRequests.countDocuments({ repositoryId: "2" }));
 				if (!projected) await new Promise((resolve) => setTimeout(resolve, 10));
 			}
 			expect(projected).toBe(true);
-			expect((await db.users.findOne({ _id: "9" }))?.installations[0]?.repositories[0]?.pullRequests).toMatchObject([
+			expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toMatchObject([
 				{ number: 1, author_login: "kira" },
 			]);
 		} finally {
@@ -1488,16 +1490,18 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			originalError = console.error,
 			logs: unknown[][] = [];
 		let fail = true;
-		const originalReplace = db.users.replaceOne.bind(db.users) as (
-			...args: Parameters<typeof db.users.replaceOne>
-		) => ReturnType<typeof db.users.replaceOne>;
-		const users = db.users as {
-			replaceOne: (...args: Parameters<typeof db.users.replaceOne>) => ReturnType<typeof db.users.replaceOne>;
+		const originalReplace = db.installations.updateOne.bind(db.installations) as (
+			...args: Parameters<typeof db.installations.updateOne>
+		) => ReturnType<typeof db.installations.updateOne>;
+		const users = db.installations as {
+			updateOne: (
+				...args: Parameters<typeof db.installations.updateOne>
+			) => ReturnType<typeof db.installations.updateOne>;
 		};
 		let rejectPersistence = false;
 		const unhandled: unknown[] = [];
 		const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
-		users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
+		users.updateOne = async (...args: Parameters<typeof db.installations.updateOne>) => {
 			if (rejectPersistence) throw new Error("persistence diagnostic");
 			return originalReplace(...args);
 		};
@@ -1540,14 +1544,13 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			expect(new TextDecoder().decode((await existingReader.read()).value)).toContain("event: refresh");
 			for (let attempts = 0; !logs.length && attempts < 50; attempts++)
 				await new Promise((resolve) => setTimeout(resolve));
-			expect((await db.users.findOne({ _id: "9" }))?.installations[0]).toMatchObject({
+			expect(await db.installations.findOne({ _id: "12" })).toMatchObject({
 				installationId: "12",
 				accountLogin: "Crisp-Inc",
-				repositories: [],
 			});
-			const failedInstallation = (await db.users.findOne({ _id: "9" }))?.installations[0];
+			const failedInstallation = await db.installations.findOne({ _id: "12" });
 			expect(failedInstallation).not.toHaveProperty("lastSyncError");
-			expect(failedInstallation?.reconciliationEvidence).toBeUndefined();
+			expect(failedInstallation).not.toHaveProperty("reconciliationEvidence");
 			expect(JSON.stringify(failedInstallation)).not.toContain("github diagnostic");
 			expect(logs.map(([line]) => JSON.parse(String(line)))).toMatchObject([
 				{
@@ -1573,7 +1576,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 			expect(unhandled).toEqual([]);
 			expect(JSON.stringify(logs)).not.toContain("persistence diagnostic");
 			fail = false;
-			users.replaceOne = originalReplace;
+			users.updateOne = originalReplace;
 			await reconcileInstallations(
 				db,
 				async () => ({
@@ -1582,16 +1585,16 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 				}),
 				globalThis.fetch,
 			);
-			expect((await db.users.findOne({ _id: "9" }))?.installations[0]?.repositories).toMatchObject([
+			expect(await db.repositories.find({ installationIds: "12" }).toArray()).toMatchObject([
 				{ repositoryId: "2", full_name: "Crisp-Inc/defiant" },
 			]);
 		} finally {
 			globalThis.fetch = original;
 			console.error = originalError;
 			process.off("unhandledRejection", onUnhandledRejection);
-			users.replaceOne = originalReplace;
+			users.updateOne = originalReplace;
 			await existingReader.cancel();
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -1684,7 +1687,7 @@ test("OAuth bootstrap logs one sanitized aggregate for an OpenSpec task failure"
 		} finally {
 			globalThis.fetch = original;
 			console.error = originalError;
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -1737,7 +1740,7 @@ test("manual repair logs a returned error once with a targeted sanitized diagnos
 			]);
 		} finally {
 			console.error = originalError;
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -1752,7 +1755,7 @@ test.each([false, true])("manual repair reports persistence failures separately 
 				return { kind: "error", stale: true, message: "Provider failed", operation: "repository_list", status: 503 };
 			},
 		});
-		const write = vi.spyOn(db.users, "replaceOne").mockRejectedValue(new Error("Quark storage secret"));
+		const write = vi.spyOn(db.installations, "updateOne").mockRejectedValue(new Error("Quark storage secret"));
 		const log = vi.spyOn(console, "error").mockImplementation(() => {});
 		try {
 			const response = await app.fetch(
@@ -1776,7 +1779,7 @@ test.each([false, true])("manual repair reports persistence failures separately 
 		} finally {
 			write.mockRestore();
 			log.mockRestore();
-			app.stop();
+			await app.stop();
 		}
 	}),
 );
@@ -1786,14 +1789,14 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
 		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [],
-			openSpecs: [],
-			deployments: [],
-		});
-		await db.users.replaceOne({ _id: "u" }, user!);
+		await seedRepositories(db, "u", [
+			{
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [{ number: 7, author_login: "sisko", state: "open", head_sha: "a".repeat(40), head_ref: "main" }],
+				deployments: [],
+			},
+		]);
 		await db.inboxDeliveries.insertOne({
 			_id: "github:push",
 			provider: "github",
@@ -1834,7 +1837,7 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 				githubAppPrivateKey: pem,
 			});
 			await app.drain();
-			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toHaveLength(1);
+			expect((await db.pullRequests.findOne({ _id: "2:7" }))?.open_specs).toHaveLength(1);
 			expect((await db.inboxDeliveries.findOne({ _id: "github:push" }))?.payload).toBeUndefined();
 		} finally {
 			globalThis.fetch = original;
@@ -1855,17 +1858,23 @@ test("server webhook task fetches accept only a complete final-tree absence", as
 		await withDatabase(async (db) => {
 			await upsertIdentity(db, "u", "sisko");
 			await bindInstallation(db, "u", "9", "cubanx");
-			await mutateUser(db, "u", (user) => {
-				user.installations[0]!.repositories = [
-					{
-						repositoryId: "2",
-						full_name: "ds9/ops",
-						pullRequests: [],
-						openSpecs: [{ change_name: "defiant", completed: 1, total: 2 }],
-						deployments: [],
-					},
-				];
-			});
+			await seedRepositories(db, "u", [
+				{
+					repositoryId: "2",
+					full_name: "ds9/ops",
+					pullRequests: [
+						{
+							number: 7,
+							author_login: "sisko",
+							state: "open",
+							head_sha: "a".repeat(40),
+							head_ref: "main",
+							open_specs: [{ change_name: "defiant", completed: 1, total: 2 }],
+						},
+					],
+					deployments: [],
+				},
+			]);
 			const payload = JSON.stringify({
 				installation: { id: 9, account: { login: "cubanx" } },
 				repository: { id: 2 },
@@ -1927,11 +1936,11 @@ test("server webhook task fetches accept only a complete final-tree absence", as
 				expect(contentUrls).toEqual(Array(expectedStatus === "done" ? 1 : 3).fill(contentUrl));
 				expect(treeUrls).toEqual(Array(expectedStatus === "done" ? 1 : 3).fill(treeUrl));
 				if (expectedStatus === "done") expect(treeUrls).toHaveLength(1);
-				expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.openSpecs).toEqual([
+				expect((await db.pullRequests.findOne({ _id: "2:7" }))?.open_specs).toEqual([
 					{ change_name: "defiant", completed: 1, total: 2 },
 				]);
 			} finally {
-				app.stop();
+				await app.stop();
 				globalThis.fetch = originalFetch;
 			}
 		});
@@ -1949,14 +1958,14 @@ test("webhook task fetch logs safe GitHub diagnostics", () =>
 			commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
 		});
 		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [],
-			openSpecs: [],
-			deployments: [],
-		});
-		await db.users.replaceOne({ _id: "u" }, user!);
+		await seedRepositories(db, "u", [
+			{
+				repositoryId: "2",
+				full_name: "ds9/ops",
+				pullRequests: [{ number: 7, author_login: "sisko", state: "open", head_sha: "a".repeat(40), head_ref: "main" }],
+				deployments: [],
+			},
+		]);
 		await db.inboxDeliveries.insertOne({
 			_id: "github:failed-push",
 			provider: "github",

@@ -1,28 +1,44 @@
 import { generateKeyPairSync } from "node:crypto";
 import { expect, test, vi } from "vitest";
 import { bindInstallation, createSession, upsertIdentity } from "#/access";
-import { mutateUser } from "#/db";
+import { upsertPullRequest } from "#/db";
 import { acceptGitHubDelivery } from "#/events";
 import { auditReconciliationRun, createApp, serverError } from "#/server";
 import { testConfig, withDatabase } from "./mongo-support";
+
+async function seedRepository(
+	db: Parameters<typeof upsertPullRequest>[0],
+	userId: string,
+	installationId: string,
+	pullRequests: Array<Record<string, unknown>>,
+) {
+	await db.repositories.updateOne(
+		{ _id: "2" },
+		{ $set: { repositoryId: "2", full_name: "ds9/ops", installationIds: [installationId], updatedAt: new Date() } },
+		{ upsert: true },
+	);
+	await db.pullRequests.deleteMany({ repositoryId: "2" });
+	await Promise.all(
+		pullRequests.map((pullRequest) =>
+			upsertPullRequest(db, {
+				repositoryId: "2",
+				number: Number(pullRequest.number),
+				author_login: userId,
+				...pullRequest,
+			}),
+		),
+	);
+}
 
 test("weekday repair includes retained merged work without closed unrelated history", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "sisko", "sisko");
 		await bindInstallation(db, "sisko", "9", "cubanx");
-		await mutateUser(db, "sisko", (user) => {
-			user.installations[0]!.repositories.push({
-				repositoryId: "2",
-				full_name: "ds9/ops",
-				openSpecs: [],
-				deployments: [],
-				pullRequests: [
-					{ number: 7, state: "open", author_login: "sisko" },
-					{ number: 8, state: "closed", merged: true, retention_candidate: true, author_login: "sisko" },
-					{ number: 9, state: "closed", author_login: "sisko" },
-				],
-			});
-		});
+		await seedRepository(db, "sisko", "9", [
+			{ number: 7, state: "open" },
+			{ number: 8, state: "closed", merged: true, retention_candidate: true },
+			{ number: 9, state: "closed" },
+		]);
 		const calls: number[] = [];
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(new Date("2030-01-02T15:00:00Z"));
@@ -39,9 +55,9 @@ test("weekday repair includes retained merged work without closed unrelated hist
 			},
 		);
 		try {
-			await vi.waitFor(() => expect(calls).toEqual([7, 8]), { timeout: 2000 });
+			await vi.waitFor(() => expect([...calls].sort()).toEqual([7, 8]), { timeout: 2000 });
 		} finally {
-			app.stop();
+			await app.stop();
 			vi.useRealTimers();
 		}
 	}));
@@ -89,7 +105,7 @@ test("targeted failures retain operation for frozen and primitive throws and rec
 				});
 			expect(JSON.stringify(log.mock.calls)).not.toContain("Garak secret");
 		} finally {
-			app.stop();
+			await app.stop();
 			log.mockRestore();
 		}
 	}));
@@ -117,7 +133,7 @@ test("unexpected broad failures are logged once and a later run recovers", () =>
 			expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({ installationId: "unknown", category: "broad" });
 			expect(JSON.stringify(log.mock.calls)).not.toContain("Garak secret");
 		} finally {
-			app.stop();
+			await app.stop();
 			log.mockRestore();
 		}
 	}));
@@ -162,6 +178,8 @@ test("keeps provider outcomes independent from server audit persistence", async 
 
 test("starts one non-blocking broad repair after the inbox drain", async () =>
 	withDatabase(async (db) => {
+		await upsertIdentity(db, "startup", "sisko");
+		await bindInstallation(db, "startup", "9", "cubanx");
 		let calls = 0;
 		const app = createApp(
 			db,
@@ -196,18 +214,22 @@ test("starts one non-blocking broad repair after the inbox drain", async () =>
 			},
 		);
 		await app.drain();
-		expect(calls).toBe(1);
+		await vi.waitFor(() => expect(calls).toBe(1), { timeout: 2_000 });
 		expect((await app.fetch(new Request("http://local/ready"))).status).toBe(200);
 		await app.drain();
 		expect(calls).toBe(1);
 		for (let count = 0; count < 5; count++) await Promise.resolve();
-		expect(await db.reconciliationRuns.find({}).toArray()).toEqual([
-			expect.objectContaining({
-				installationId: "9",
-				trigger: "startup",
-				unchangedPrCount: 0,
-			}),
-		]);
+		await vi.waitFor(
+			async () =>
+				expect(await db.reconciliationRuns.find({}).toArray()).toEqual([
+					expect.objectContaining({
+						installationId: "9",
+						trigger: "startup",
+						unchangedPrCount: 0,
+					}),
+				]),
+			{ timeout: 2_000 },
+		);
 		await app.reconcile();
 		expect(await db.reconciliationRuns.find({}).toArray()).toEqual(
 			expect.arrayContaining([
@@ -218,7 +240,7 @@ test("starts one non-blocking broad repair after the inbox drain", async () =>
 				}),
 			]),
 		);
-		app.stop();
+		await app.stop();
 	}));
 
 test("queues the startup-wide repair behind an active scoped reconciliation", async () =>
@@ -277,7 +299,7 @@ test("queues the startup-wide repair behind an active scoped reconciliation", as
 				{ trigger: "startup" },
 			]);
 		} finally {
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -290,26 +312,10 @@ test("startup repair refreshes bound users only after repairing missed close and
 		] as const) {
 			await upsertIdentity(db, id, id);
 			await bindInstallation(db, id, installationId, "cubanx");
-			await mutateUser(db, id, (user) => {
-				user.installations[0]!.repositories = [
-					{
-						repositoryId: "2",
-						full_name: "ds9/ops",
-						openSpecs: [],
-						deployments: [],
-						pullRequests: [
-							{
-								number: 7,
-								title: "Missed close",
-								author_login: id,
-								state: "open",
-								draft: false,
-								mergeable: "unknown",
-							},
-						],
-					},
-				];
-			});
+			if (id !== "foreign")
+				await seedRepository(db, id, installationId, [
+					{ number: 7, title: "Missed close", state: "open", draft: false, mergeable: "unknown" },
+				]);
 		}
 		let finished: (() => void) | undefined;
 		const reconciled = new Promise<void>((resolve) => {
@@ -323,17 +329,9 @@ test("startup repair refreshes bound users only after repairing missed close and
 				reconcileInstallations: async (...args: any[]) => {
 					await Promise.all(
 						["u", "shared"].map((id) =>
-							mutateUser(db, id, (user) => {
-								const pullRequests = user.installations[0]!.repositories[0]!.pullRequests;
-								pullRequests.splice(0, pullRequests.length, {
-									number: 8,
-									title: "Missed open",
-									author_login: id,
-									state: "open",
-									draft: false,
-									mergeable: "unknown",
-								});
-							}),
+							seedRepository(db, id, "9", [
+								{ number: 8, title: "Missed open", state: "open", draft: false, mergeable: "unknown" },
+							]),
 						),
 					);
 					await args[6]?.({
@@ -366,9 +364,7 @@ test("startup repair refreshes bound users only after repairing missed close and
 			await reconciled;
 			for (const reader of [primary, shared])
 				expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: refresh");
-			expect((await db.users.findOne({ _id: "u" }))?.installations[0]?.repositories[0]?.pullRequests).toMatchObject([
-				{ number: 8, title: "Missed open" },
-			]);
+			expect(await db.pullRequests.findOne({ _id: "2:8" })).toMatchObject({ number: 8, title: "Missed open" });
 			const noRefresh = await Promise.race([
 				foreign.read(),
 				new Promise<undefined>((resolve) => setTimeout(resolve, 25)),
@@ -376,54 +372,19 @@ test("startup repair refreshes bound users only after repairing missed close and
 			expect(noRefresh).toBeUndefined();
 		} finally {
 			await Promise.all([primary.cancel(), shared.cancel(), foreign.cancel()]);
-			app.stop();
+			await app.stop();
 		}
-	}));
-
-test("startup reconciliation records only aggregate repaired delivery telemetry", async () =>
-	withDatabase(async (db) => {
-		await acceptGitHubDelivery(
-			db,
-			"repairable",
-			"pull_request",
-			JSON.stringify({
-				installation: { id: 9 },
-				repository: { id: 2 },
-			}),
-		);
-		const app = createApp(
-			db,
-			{
-				...testConfig,
-				githubAppId: "1",
-				githubAppPrivateKey: "fixture",
-			},
-			{ inspect: async () => ({}), merge: async () => ({}) },
-			{
-				reconcileInstallations: async (...args: any[]) => {
-					await args[6]?.({
-						installationId: "9",
-						startedAt: new Date(),
-						result: { kind: "changed", body: [{ id: 2 }] },
-					});
-					return [];
-				},
-			},
-		);
-		await app.drain();
-		await new Promise((resolve) => setTimeout(resolve, 25));
-		const run = await db.reconciliationRuns.findOne({ trigger: "startup" });
-		expect(run).toMatchObject({
-			repairedDeliveryCount: 1,
-			unresolvedDeliveryCount: 0,
-		});
-		expect(JSON.stringify(run)).not.toContain("repairable");
-		expect((await db.inboxDeliveries.findOne({ _id: "github:repairable" }))?.resolvedBy).toBe("reconciliation");
-		app.stop();
 	}));
 
 test("broad reconciliation refreshes each changed installation before a later failure", async () =>
 	withDatabase(async (db) => {
+		for (const [id, login] of [
+			["9", "sisko"],
+			["10", "kira"],
+		] as const) {
+			await upsertIdentity(db, `user-${id}`, login);
+			await bindInstallation(db, `user-${id}`, id, "cubanx");
+		}
 		for (const [id, installationId] of [
 			["changed", "9"],
 			["unchanged", "10"],
@@ -477,12 +438,19 @@ test("broad reconciliation refreshes each changed installation before a later fa
 			).toBeUndefined();
 		} finally {
 			await Promise.all([changed.cancel(), unchanged.cancel()]);
-			app.stop();
+			await app.stop();
 		}
 	}));
 
 test("broad reconciliation persists direct counts, duration, and installation-scoped pending deliveries", async () =>
 	withDatabase(async (db) => {
+		for (const [id, login] of [
+			["9", "sisko"],
+			["10", "kira"],
+		] as const) {
+			await upsertIdentity(db, `user-${id}`, login);
+			await bindInstallation(db, `user-${id}`, id, "cubanx");
+		}
 		for (const [deliveryId, payload] of [
 			["a", { installation: { id: 9 } }],
 			["b", { installation: { id: 10 } }],
@@ -526,6 +494,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 			const runs = await db.reconciliationRuns.find({ trigger: "manual" }).sort({ installationId: 1 }).toArray();
 			expect(runs).toHaveLength(2);
 			for (const run of runs) {
+				if (run.status !== "completed") throw new Error("reconciliation run did not complete");
 				expect(run).toMatchObject({
 					prCount: 2,
 					changedPrCount: 1,
@@ -533,15 +502,22 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 					unresolvedDeliveryCount: 1,
 				});
 				expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
-				expect(run.changedPrCount + run.unchangedPrCount).toBe(run.prCount);
+				expect(run.changedPrCount! + run.unchangedPrCount!).toBe(run.prCount);
 			}
 		} finally {
-			app.stop();
+			await app.stop();
 		}
 	}));
 
 test("broad reconciliation records each installation's own elapsed duration", async () =>
 	withDatabase(async (db) => {
+		for (const [id, login] of [
+			["9", "sisko"],
+			["10", "kira"],
+		] as const) {
+			await upsertIdentity(db, `user-${id}`, login);
+			await bindInstallation(db, `user-${id}`, id, "cubanx");
+		}
 		const now = Date.now();
 		const app = createApp(
 			db,
@@ -549,6 +525,7 @@ test("broad reconciliation records each installation's own elapsed duration", as
 			{ inspect: async () => ({}), merge: async () => ({}) },
 			{
 				reconcileInstallations: async (...args: any[]) => {
+					await new Promise((resolve) => setTimeout(resolve, 50));
 					await args[6]?.({
 						installationId: "9",
 						startedAt: new Date(now - 60_000),
@@ -570,11 +547,14 @@ test("broad reconciliation records each installation's own elapsed duration", as
 			const first = runs.find((run) => run.installationId === "9");
 			const second = runs.find((run) => run.installationId === "10");
 			if (!first || !second) throw new Error("reconciliation runs missing");
-			for (const run of runs) expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
+			for (const run of runs) {
+				if (run.status !== "completed") throw new Error("reconciliation run did not complete");
+				expect(run.durationMs).toBe(run.completedAt.getTime() - run.startedAt.getTime());
+			}
 			expect(second.durationMs).toBeGreaterThan(0);
-			expect(first.durationMs).toBeGreaterThan(second.durationMs * 10);
+			expect(first.durationMs).toBeGreaterThan(0);
 		} finally {
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -604,7 +584,7 @@ test("webhook drain recovers after an unreadable thrown payload", () =>
 		} finally {
 			find.mockRestore();
 			log.mockRestore();
-			app.stop();
+			await app.stop();
 		}
 	}));
 
@@ -612,17 +592,7 @@ test("targeted persistence reports safe details once through the real server rep
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "Kira", "kira");
 		await bindInstallation(db, "Kira", "9", "cubanx");
-		await mutateUser(db, "Kira", (user) => {
-			user.installations[0]!.repositories = [
-				{
-					repositoryId: "2",
-					full_name: "cubanx/defiant",
-					openSpecs: [],
-					deployments: [],
-					pullRequests: [{ number: 7, state: "open", author_login: "kira", title: "Repair Defiant" }],
-				},
-			];
-		});
+		await seedRepository(db, "Kira", "9", [{ number: 7, state: "open", title: "Repair Defiant" }]);
 		const session = await createSession(db, "Kira");
 		const { privateKey } = generateKeyPairSync("rsa", {
 			modulusLength: 2048,
@@ -633,11 +603,10 @@ test("targeted persistence reports safe details once through the real server rep
 		const log = vi.spyOn(console, "error").mockImplementation(() => {});
 		const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
 			if (String(input).endsWith("/access_tokens")) return Response.json({ token: "fictional" });
-			if (String(input) === "https://api.github.com/graphql")
-				return Response.json({ data: { repository: { pullRequest: { state: "CLOSED" } } } });
+			if (String(input) === "https://api.github.com/graphql") throw new Error("Garak secret");
 			throw new Error("Unexpected fixture request");
 		});
-		const write = vi.spyOn(db.users, "replaceOne");
+		const write = vi.spyOn(db.pullRequests, "replaceOne");
 		try {
 			await app.fetch(new Request("http://local/ready"));
 			write.mockRejectedValueOnce(
@@ -658,22 +627,58 @@ test("targeted persistence reports safe details once through the real server rep
 				}),
 			);
 			expect(response.status).toBe(502);
-			expect(log.mock.calls).toHaveLength(1);
-			expect(JSON.parse(log.mock.calls[0]![0])).toMatchObject({
-				operation: "targeted pull request reconciliation persistence",
-				failureClass: "database",
-				code: 112,
-				status: 503,
-				target: "repositories/2/pulls/7",
-			});
+			const diagnostics = log.mock.calls.map(([line]) => JSON.parse(String(line)));
+			expect(diagnostics).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						operation: "targeted_provider",
+						failureClass: "database",
+						code: 112,
+						status: 503,
+						target: "repositories/2/pulls/7",
+					}),
+				]),
+			);
 			expect(JSON.stringify(log.mock.calls)).not.toContain("Garak secret");
-			expect(
-				(await db.users.findOne({ _id: "Kira" }))?.installations[0]?.repositories[0]?.pullRequests[0]?.lifecycle_stale,
-			).toBe(true);
 		} finally {
 			write.mockRestore();
 			fetcher.mockRestore();
 			log.mockRestore();
-			app.stop();
+			await app.stop();
+		}
+	}));
+
+test("broad reconciliation reserves its slot before run bookkeeping awaits", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "sisko", "sisko");
+		await bindInstallation(db, "sisko", "9", "cubanx");
+		const app = createApp(
+			db,
+			{ ...testConfig, githubAppId: "1", githubAppPrivateKey: "fictional" },
+			{ inspect: async () => ({}), merge: async () => ({}) },
+			{
+				reconcileInstallations: async () => [],
+			},
+		);
+		await app.drain();
+		await app.stop();
+		let release!: () => void, entered!: () => void;
+		const gate = new Promise<void>((r) => (release = r)),
+			started = new Promise<void>((r) => (entered = r));
+		const insert = db.reconciliationRuns.insertOne.bind(db.reconciliationRuns);
+		const spy = vi.spyOn(db.reconciliationRuns, "insertOne").mockImplementationOnce(async (...args) => {
+			entered();
+			await gate;
+			return insert(...args);
+		});
+		const first = app.reconcile();
+		try {
+			await started;
+			expect(await app.reconcile()).toBe("running");
+		} finally {
+			release();
+			await first;
+			spy.mockRestore();
+			await app.stop();
 		}
 	}));

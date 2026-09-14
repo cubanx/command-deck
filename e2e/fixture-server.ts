@@ -5,6 +5,7 @@ const encoder = new TextEncoder();
 const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
 let merged = false;
 let refreshed = false;
+let preferences: Record<string, unknown> = {};
 
 const repository = {
 	account_login: "starfleet",
@@ -88,7 +89,7 @@ const snapshot = () => ({
 			pull_request_url: "https://github.com/starfleet/defiant/pull/202",
 		},
 	],
-	notifications: [],
+	preferences,
 });
 
 const refresh = () => {
@@ -148,6 +149,10 @@ const server = Bun.serve({
 		fetch: async (request) => {
 			const url = new URL(request.url);
 			if (url.pathname === "/api/snapshot") return Response.json(snapshot());
+ if (url.pathname === "/api/preferences" && request.method === "PATCH") {
+ preferences = { ...preferences, ...await request.json() };
+ return Response.json(preferences);
+ }
 			if (request.method === "POST" && url.pathname === "/api/reconcile/pull-request")
 				return Response.json({ status: "success" });
 		if (url.pathname === "/events") {

@@ -1,10 +1,72 @@
+import { isDeepStrictEqual } from "node:util";
 import { BSON, type Collection, MongoClient, type Db as MongoDb } from "mongodb";
+import { compareDeploymentStatus, shouldApplyDeploymentStatus } from "#/deployment-status";
 
-export const MAX_USER_BSON_BYTES = 12 * 1024 * 1024;
 export const RECENT_MERGED_PULL_REQUEST_CAP = 100;
 export const RECENT_MERGED_PULL_REQUEST_RETENTION_MS = 48 * 60 * 60 * 1_000;
 const MAX_CAS_RETRIES = 3;
 export type PullRequest = Record<string, unknown> & { opened_at?: string };
+export type DashboardSortMode = "opened" | "closest" | "updated" | "progress" | "repository";
+export type DashboardSortPreference = {
+	mode: string;
+	direction: "asc" | "desc";
+};
+export type DashboardFilters = {
+	query?: string;
+	statuses?: string[];
+	attention?: boolean;
+	failedActions?: boolean;
+	failedChecks?: boolean;
+};
+export type DashboardPreferences = {
+	repositoryIds?: string[] | null;
+	sort?: DashboardSortPreference;
+	filters?: DashboardFilters;
+};
+export type UserDocument = {
+	_id: string;
+	schemaVersion: 1;
+	github: { login?: string; avatarUrl?: string };
+	preferences?: { ui?: { dashboard?: DashboardPreferences } };
+	createdAt: Date;
+	updatedAt: Date;
+};
+export type InstallationDocument = {
+	_id: string;
+	installationId: string;
+	accountLogin?: string;
+	permissions?: { pull_requests?: string };
+	active?: boolean;
+	suspended?: boolean;
+	lastSuccessfulSyncAt?: Date;
+	lastSyncError?: string;
+	validators?: Record<string, { etag?: string; body?: unknown; nextUrl?: string; updatedAt: Date }>;
+};
+export type UserInstallationBinding = { _id: string; userId: string; installationId: string; boundAt: Date };
+export type RepositoryDocument = {
+	_id: string;
+	repositoryId: string;
+	full_name: string;
+	installationIds: string[];
+	default_branch?: string;
+	policy?: RepositoryPolicy;
+	validators?: Record<string, { etag?: string; body?: unknown; nextUrl?: string; updatedAt: Date }>;
+	updatedAt: Date;
+};
+export type PullRequestDocument = PullRequest & {
+	_id: string;
+	repositoryId: string;
+	number: number;
+	updatedAt: Date;
+	revision?: number;
+};
+export type DeploymentDocument = Record<string, unknown> & {
+	revision?: number;
+	_id: string;
+	repositoryId: string;
+	deploymentId: string;
+	updatedAt: Date;
+};
 export type RepositoryPolicy = Record<string, unknown> & {
 	refreshed_at: string;
 	required_checks: unknown[];
@@ -26,16 +88,6 @@ export type Repository = {
 	policy?: RepositoryPolicy;
 	recentMergedPullRequests?: MergedPullRequestEvidence[];
 };
-export type Installation = {
-	installationId: string;
-	accountLogin?: string;
-	permissions?: { pull_requests?: string };
-	boundAt: Date;
-	repositories: Repository[];
-	lastSuccessfulSyncAt?: Date;
-	lastSyncError?: string;
-	reconciliationEvidence?: ReconciliationEvidence[];
-};
 export type ReconciliationEvidence = {
 	completedAt: Date;
 	outcome: "success" | "failure";
@@ -43,15 +95,6 @@ export type ReconciliationEvidence = {
 	summary: string;
 	repository?: string;
 	status?: number;
-};
-export type UserAggregate = {
-	_id: string;
-	schemaVersion: 1;
-	revision: number;
-	github: { login?: string; avatarUrl?: string };
-	installations: Installation[];
-	createdAt: Date;
-	updatedAt: Date;
 };
 export type Session = { _id: string; userId: string; expiresAt: Date };
 export type OAuthState = { _id: string; expiresAt: Date };
@@ -86,23 +129,8 @@ export type InboxDelivery = {
 	resolvedAt?: Date;
 	resolvedBy?: "projection" | "recorded_noop" | "reconciliation";
 	receivedAt: Date;
+	processingStartedAt?: Date;
 	processedAt?: Date;
-};
-export type ProviderCache = {
-	_id: string;
-	etag?: string;
-	body?: unknown;
-	nextUrl?: string;
-	updatedAt: Date;
-};
-export type Notification = {
-	_id: string;
-	userId: string;
-	transitionKey: string;
-	title: string;
-	body: string;
-	link?: string;
-	createdAt: Date;
 };
 export type ReconciliationRun = {
 	installationId: string;
@@ -120,16 +148,42 @@ export type ReconciliationRun = {
 	repairedDeliveryCount: number;
 	outcome: "success" | "partial_failure" | "failure";
 };
+type RunningReconciliationRun = Pick<ReconciliationRun, "installationId" | "trigger" | "startedAt"> & {
+	_id?: string;
+	status: "running";
+	completedAt?: never;
+	durationMs?: never;
+	prCount?: never;
+	providerRequestCount?: never;
+	changedPrCount?: never;
+	unchangedPrCount?: never;
+	changedFieldCategories?: never;
+	failureCount?: never;
+	unresolvedDeliveryCount?: never;
+	repairedDeliveryCount?: never;
+	outcome?: never;
+	operation?: never;
+	summary?: never;
+};
+export type ReconciliationRunDocument =
+	| RunningReconciliationRun
+	| (Pick<ReconciliationRun, "installationId" | "trigger" | "startedAt" | "completedAt" | "durationMs" | "outcome"> &
+			Partial<
+				Omit<ReconciliationRun, "installationId" | "trigger" | "startedAt" | "completedAt" | "durationMs" | "outcome">
+			> & { _id?: string; status: "completed"; operation?: string; summary?: string });
 export type Db = {
 	mongo: MongoDb;
-	users: Collection<UserAggregate>;
+	users: Collection<UserDocument>;
+	installations: Collection<InstallationDocument>;
+	bindings: Collection<UserInstallationBinding>;
+	repositories: Collection<RepositoryDocument>;
+	pullRequests: Collection<PullRequestDocument>;
+	deployments: Collection<DeploymentDocument>;
 	sessions: Collection<Session>;
 	oauthStates: Collection<OAuthState>;
 	mergeIntents: Collection<MergeIntent>;
 	inboxDeliveries: Collection<InboxDelivery>;
-	providerCache: Collection<ProviderCache>;
-	notifications: Collection<Notification>;
-	reconciliationRuns: Collection<ReconciliationRun>;
+	reconciliationRuns: Collection<ReconciliationRunDocument>;
 	client: MongoClient;
 };
 
@@ -167,14 +221,17 @@ export async function openDatabase(config = mongoConfig()): Promise<Db> {
 		return {
 			client,
 			mongo,
-			users: mongo.collection<UserAggregate>("users"),
+			users: mongo.collection<UserDocument>("users"),
+			installations: mongo.collection<InstallationDocument>("installations"),
+			bindings: mongo.collection<UserInstallationBinding>("user_installation_bindings"),
+			repositories: mongo.collection<RepositoryDocument>("repositories"),
+			pullRequests: mongo.collection<PullRequestDocument>("pull_requests"),
+			deployments: mongo.collection<DeploymentDocument>("deployments"),
 			sessions: mongo.collection<Session>("sessions"),
 			oauthStates: mongo.collection<OAuthState>("oauth_states"),
 			mergeIntents: mongo.collection<MergeIntent>("merge_intents"),
 			inboxDeliveries: mongo.collection<InboxDelivery>("inbox_deliveries"),
-			providerCache: mongo.collection<ProviderCache>("provider_cache"),
-			notifications: mongo.collection<Notification>("notifications"),
-			reconciliationRuns: mongo.collection<ReconciliationRun>("reconciliation_runs"),
+			reconciliationRuns: mongo.collection<ReconciliationRunDocument>("reconciliation_runs"),
 		};
 	})();
 	cached = { key, promise };
@@ -185,16 +242,29 @@ export async function openDatabase(config = mongoConfig()): Promise<Db> {
 }
 export async function initializeDatabase(db: Db) {
 	await Promise.all([
-		db.users.createIndex({ "installations.installationId": 1 }),
+		db.users.createIndex({ "github.login": 1 }),
+		db.installations.createIndex({ installationId: 1 }, { unique: true }),
+		db.bindings.createIndex({ userId: 1, installationId: 1 }, { unique: true }),
+		db.bindings.createIndex({ installationId: 1, userId: 1 }),
+		db.repositories.createIndex({ repositoryId: 1 }, { unique: true }),
+		db.repositories.createIndex({ installationIds: 1 }),
+		db.pullRequests.createIndex({ repositoryId: 1, number: 1 }, { unique: true }),
+		db.pullRequests.createIndex({ repositoryId: 1, state: 1, updated_at: -1 }),
+		db.pullRequests.createIndex({ repositoryId: 1, retention_candidate: 1 }),
+		db.pullRequests.createIndex({ author_login: 1, state: 1 }),
+		db.deployments.createIndex({ repositoryId: 1, deploymentId: 1 }, { unique: true }),
+		db.deployments.createIndex({ repositoryId: 1, updated_at: -1 }),
 		db.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.oauthStates.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.mergeIntents.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 		db.inboxDeliveries.createIndex({ status: 1, nextAttemptAt: 1 }),
 		db.inboxDeliveries.createIndex({ receivedAt: 1 }),
-		db.notifications.createIndex({ userId: 1, transitionKey: 1 }, { unique: true }),
-		db.notifications.createIndex({ userId: 1, createdAt: -1 }),
-		db.reconciliationRuns.createIndex({ completedAt: 1 }, { expireAfterSeconds: 1_209_600 }),
-		db.reconciliationRuns.createIndex({ installationId: 1, completedAt: -1 }),
+		db.inboxDeliveries.createIndex(
+			{ processedAt: 1 },
+			{ expireAfterSeconds: 259_200, partialFilterExpression: { status: { $in: ["done", "ignored"] } } },
+		),
+		db.reconciliationRuns.createIndex({ completedAt: 1 }, { expireAfterSeconds: 259_200 }),
+		db.reconciliationRuns.createIndex({ installationId: 1, startedAt: -1 }),
 	]);
 }
 export async function databaseReady(db: Db) {
@@ -205,55 +275,142 @@ export async function closeDatabase(db: Db) {
 	await db.client.close();
 	cached = undefined;
 }
-const userWrites = new WeakMap<Db, Map<string, Promise<void>>>();
 
-export async function mutateUser(db: Db, userId: string, mutate: (user: UserAggregate) => void) {
-	// ponytail: process-local coordination; CAS still protects against other processes and direct writers.
-	let pending = userWrites.get(db);
-	if (!pending) {
-		pending = new Map();
-		userWrites.set(db, pending);
-	}
-	const previous = pending.get(userId);
-	let release!: () => void;
-	const current = new Promise<void>((resolve) => {
-		release = resolve;
-	});
-	pending.set(userId, current);
-	await previous;
-	try {
-		return await mutateUserNow(db, userId, mutate);
-	} finally {
-		if (pending.get(userId) === current) pending.delete(userId);
-		release();
-	}
-}
-
-async function mutateUserNow(db: Db, userId: string, mutate: (user: UserAggregate) => void) {
+const MAX_DOMAIN_BSON_BYTES = 12 * 1024 * 1024;
+export async function upsertPullRequest(
+	db: Db,
+	input: PullRequest & { repositoryId: string; number: number },
+	expected?: { revision?: number; head_sha?: unknown; absent?: boolean },
+) {
+	const { _id: ignoredId, updatedAt: ignoredTime, revision: ignoredRevision, ...patch } = input;
+	const _id = `${input.repositoryId}:${input.number}`;
 	for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
-		const existing = await db.users.findOne({ _id: userId });
-		if (!existing) throw new Error("user aggregate not found");
-		const next = structuredClone(existing);
-		mutate(next);
-		next.revision++;
-		next.updatedAt = new Date();
-		if (BSON.serialize(next).byteLength > MAX_USER_BSON_BYTES)
-			throw Object.assign(
-				new Error(
-					`user ${userId} installations ${next.installations.map((item) => item.installationId).join(",") || "none"} exceeds ${MAX_USER_BSON_BYTES} byte limit`,
-				),
-				{ name: "UserAggregateSizeError" },
-			); // ponytail: whole-document CAS is enough today; use targeted positional updates if measured write amplification matters.
-		if ((await db.users.replaceOne({ _id: userId, revision: existing.revision }, next)).modifiedCount === 1)
-			return next;
+		const existing = await db.pullRequests.findOne({ _id });
+		if (
+			expected &&
+			(expected.absent
+				? existing
+				: !existing || expected.revision !== existing.revision || expected.head_sha !== existing.head_sha)
+		)
+			return false;
+		if (existing?.merged === true && (input.state === "open" || input.merged === false)) return false;
+		const incomingTime = Date.parse(String(input.updated_at ?? ""));
+		const existingTime = Date.parse(String(existing?.updated_at ?? ""));
+		if (existing && Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime < existingTime)
+			return false;
+		const next = BSON.deserialize(BSON.serialize({ ...existing, ...patch, _id })) as PullRequestDocument;
+		if (existing && isDeepStrictEqual(existing, next)) return false;
+		const revision = typeof existing?.revision === "number" ? existing.revision : 0;
+		const replacement = { ...next, revision: revision + 1, updatedAt: new Date() };
+		if (BSON.serialize(replacement).byteLength > MAX_DOMAIN_BSON_BYTES)
+			throw Object.assign(new Error(`pull request ${_id} exceeds the safe BSON limit`), {
+				name: "DomainDocumentSizeError",
+			});
+		if (!existing) {
+			try {
+				await db.pullRequests.insertOne(replacement);
+				return true;
+			} catch (error) {
+				if ((error as { code?: number }).code !== 11000) throw error;
+			}
+		} else {
+			const result = await db.pullRequests.replaceOne(
+				{ _id, revision: existing.revision === undefined ? { $exists: false } : revision },
+				replacement,
+			);
+			if (result.modifiedCount === 1) return true;
+		}
 	}
-	throw new Error("user aggregate changed concurrently");
+	throw new Error(`pull request ${_id} changed concurrently`);
 }
 
-export function appendReconciliationEvidence(installation: Installation, evidence: ReconciliationEvidence) {
-	installation.reconciliationEvidence = [...(installation.reconciliationEvidence ?? []), evidence].slice(-20);
+export async function upsertDeployment(
+	db: Db,
+	input: Record<string, unknown> & { repositoryId: string; deploymentId: string },
+) {
+	const { _id: ignoredId, updatedAt: ignoredTime, revision: ignoredRevision, ...patch } = input;
+	const _id = `${input.repositoryId}:${input.deploymentId}`;
+	for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+		const existing = await db.deployments.findOne({ _id });
+		const next = BSON.deserialize(BSON.serialize({ ...existing, ...patch, _id })) as DeploymentDocument;
+		if (existing && ("status_id" in patch || "status_created_at" in patch)) {
+			if (compareDeploymentStatus(next, existing) < 0 || !shouldApplyDeploymentStatus(next, existing)) return false;
+		}
+		if (existing && isDeepStrictEqual(existing, next)) return false;
+		const revision = typeof existing?.revision === "number" ? existing.revision : 0;
+		const replacement = { ...next, revision: revision + 1, updatedAt: new Date() };
+		if (BSON.serialize(replacement).byteLength > MAX_DOMAIN_BSON_BYTES)
+			throw Object.assign(new Error(`deployment ${_id} exceeds the safe BSON limit`), {
+				name: "DomainDocumentSizeError",
+			});
+		if (!existing) {
+			try {
+				await db.deployments.insertOne(replacement);
+				return true;
+			} catch (error) {
+				if ((error as { code?: number }).code !== 11000) throw error;
+			}
+		} else {
+			const result = await db.deployments.replaceOne(
+				{ _id, revision: existing.revision === undefined ? { $exists: false } : revision },
+				replacement,
+			);
+			if (result.modifiedCount === 1) return true;
+		}
+	}
+	throw new Error(`deployment ${_id} changed concurrently`);
 }
 
+export async function patchPullRequest(
+	db: Db,
+	_id: string,
+	patch: Record<string, unknown>,
+	unset: string[] = [],
+	expected?: { revision?: number; head_sha?: unknown; source_commit?: unknown },
+) {
+	for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+		const existing = await db.pullRequests.findOne({ _id });
+		if (!existing) return false;
+		if (expected) {
+			const sourceChanged =
+				("head_sha" in expected && expected.head_sha !== existing.head_sha) ||
+				("source_commit" in expected && expected.source_commit !== existing.source_commit);
+			if (sourceChanged) return false;
+			if (expected.revision !== existing.revision) throw new Error(`pull request ${_id} changed concurrently`);
+		}
+		const next = { ...existing, ...patch } as Record<string, unknown>;
+		for (const key of unset) delete next[key];
+		const normalized = BSON.deserialize(BSON.serialize(next)) as PullRequestDocument;
+		if (isDeepStrictEqual(existing, normalized)) return false;
+		const revision = typeof existing.revision === "number" ? existing.revision : 0;
+		const replacement = { ...normalized, revision: revision + 1, updatedAt: new Date() };
+		if (BSON.serialize(replacement).byteLength > MAX_DOMAIN_BSON_BYTES)
+			throw Object.assign(new Error(`pull request ${_id} exceeds the safe BSON limit`), {
+				name: "DomainDocumentSizeError",
+			});
+		const result = await db.pullRequests.replaceOne(
+			{ _id, revision: existing.revision === undefined ? { $exists: false } : revision },
+			replacement,
+		);
+		if (result.modifiedCount === 1) return true;
+	}
+	throw new Error(`pull request ${_id} changed concurrently`);
+}
+
+export async function deletePullRequest(db: Db, _id: string, expected: { revision?: number; updated_at?: unknown }) {
+	for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+		const existing = await db.pullRequests.findOne({ _id });
+		if (!existing) return false;
+		if (expected.updated_at !== existing.updated_at) return false;
+		if (expected.revision !== existing.revision) throw new Error(`pull request ${_id} changed concurrently`);
+		const result = await db.pullRequests.deleteOne({
+			_id,
+			revision: existing.revision === undefined ? { $exists: false } : existing.revision,
+		});
+		if (result.deletedCount === 1) return true;
+	}
+	throw new Error(`pull request ${_id} changed concurrently`);
+}
 export function retainRecentMergedPullRequests(evidence: MergedPullRequestEvidence[], now = Date.now()) {
 	return evidence
 		.filter((item) => Date.parse(item.merged_at) >= now - RECENT_MERGED_PULL_REQUEST_RETENTION_MS)

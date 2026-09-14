@@ -8,13 +8,34 @@ import {
 	dashboardForUser,
 	LOCAL_DEMO_USER,
 	safeAvatarUrl,
-	seedBindings,
 	seedLocalDemo,
 	sessionUser,
 	upsertIdentity,
 } from "#/access";
-import { mutateUser } from "#/db";
+import { type Db, upsertDeployment, upsertPullRequest } from "#/db";
 import { withDatabase } from "./mongo-support";
+
+type RepositoryFixture = {
+	repositoryId: string;
+	full_name: string;
+	pullRequests: Array<Record<string, unknown>>;
+	deployments: Array<Record<string, unknown>>;
+};
+async function putRepositories(db: Db, installationId: string, ...repositories: RepositoryFixture[]) {
+	for (const { repositoryId, full_name, pullRequests, deployments } of repositories) {
+		await db.repositories.updateOne(
+			{ _id: repositoryId },
+			{
+				$set: { repositoryId, full_name, updatedAt: new Date() },
+				$addToSet: { installationIds: installationId },
+			},
+			{ upsert: true },
+		);
+		for (const pr of pullRequests) await upsertPullRequest(db, { ...pr, repositoryId, number: Number(pr.number) });
+		for (const deployment of deployments)
+			await upsertDeployment(db, { ...deployment, repositoryId, deploymentId: String(deployment.id) });
+	}
+}
 
 test("OAuth state is one-time and expires", () =>
 	withDatabase(async (db) => {
@@ -32,8 +53,7 @@ test("sessions are hashed, expire, and dashboard identity never crosses users", 
 		await upsertIdentity(db, "u2", "kira", "https://avatars.githubusercontent.com/u/200?v=4");
 		await bindInstallation(db, "u1", "i1", "cubanx");
 		await bindInstallation(db, "u2", "i2", "cubanx");
-		const user = await db.users.findOne({ _id: "u1" });
-		user?.installations[0]?.repositories.push({
+		await putRepositories(db, "i1", {
 			repositoryId: "r",
 			full_name: "ds9/ops",
 			pullRequests: [
@@ -45,10 +65,8 @@ test("sessions are hashed, expire, and dashboard identity never crosses users", 
 					checks_state: "failure",
 				},
 			],
-			openSpecs: [],
 			deployments: [],
 		});
-		await db.users.replaceOne({ _id: "u1" }, user!);
 		const { token } = await createSession(db, "u1", new Date("2030-01-01"));
 		expect((await db.sessions.findOne({}))?._id).not.toBe(token);
 		expect((await sessionUser(db, token, new Date("2029-01-01")))?.id).toBe("u1");
@@ -86,8 +104,7 @@ test("dashboard shows every open authored PR across allowed installations, atten
 		await bindInstallation(db, "u", "1", "cubanx");
 		await bindInstallation(db, "u", "2", "Crisp-Inc");
 		await bindInstallation(db, "other", "3", "hudson-law");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await putRepositories(db, "1", {
 			repositoryId: "r1",
 			full_name: "cubanx/defiant",
 			pullRequests: [
@@ -103,10 +120,9 @@ test("dashboard shows every open authored PR across allowed installations, atten
 				{ number: 3, title: "Closed", author_login: "odo", state: "closed" },
 				{ number: 4, title: "Not Odo", author_login: "quark", state: "open" },
 			],
-			openSpecs: [],
 			deployments: [],
 		});
-		user?.installations[1]?.repositories.push({
+		await putRepositories(db, "2", {
 			repositoryId: "r2",
 			full_name: "cubanx/defiant",
 			pullRequests: [
@@ -128,17 +144,14 @@ test("dashboard shows every open authored PR across allowed installations, atten
 					updated_at: "2030-01-02T00:00:00Z",
 				},
 			],
-			openSpecs: [],
 			deployments: [],
 		});
-		user?.installations[1]?.repositories.push({
+		await putRepositories(db, "2", {
 			repositoryId: "r3",
 			full_name: "cubanx/local-only",
 			pullRequests: [],
-			openSpecs: [],
 			deployments: [],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const dashboard = await dashboardForUser(db, "u");
 		expect(dashboard.repositories).toContainEqual({
 			installation_id: "2",
@@ -159,8 +172,7 @@ test("dashboard deduplicates renamed stable repositories and matches authors cas
 		await upsertIdentity(db, "u", "Sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
 		await bindInstallation(db, "u", "2", "Crisp-Inc");
-		const user = await db.users.findOne({ _id: "u" });
-		user?.installations[0]?.repositories.push({
+		await putRepositories(db, "1", {
 			repositoryId: "r",
 			full_name: "ds9/old",
 			pullRequests: [
@@ -172,10 +184,11 @@ test("dashboard deduplicates renamed stable repositories and matches authors cas
 					updated_at: "2030-01-01",
 				},
 			],
-			openSpecs: [],
 			deployments: [],
 		});
-		user?.installations[1]?.repositories.push(
+		await putRepositories(
+			db,
+			"2",
 			{
 				repositoryId: "r",
 				full_name: "ds9/new",
@@ -188,18 +201,15 @@ test("dashboard deduplicates renamed stable repositories and matches authors cas
 						updated_at: "2030-01-02",
 					},
 				],
-				openSpecs: [],
 				deployments: [],
 			},
 			{
 				repositoryId: "other",
 				full_name: "ds9/old",
 				pullRequests: [{ number: 1, title: "other", author_login: "SiSkO", state: "open" }],
-				openSpecs: [],
 				deployments: [],
 			},
 		);
-		await db.users.replaceOne({ _id: "u" }, user!);
 		expect((await dashboardForUser(db, "u")).pullRequests.map((pr) => pr.title).sort()).toEqual(["new", "other"]);
 	}));
 
@@ -211,7 +221,6 @@ test("local demo projections are deterministic and isolated", () =>
 		expect(dashboard.installationCount).toBe(1);
 		expect(dashboard.pullRequests).toHaveLength(19);
 		expect(dashboard.deployments).toHaveLength(3);
-		expect(dashboard.notifications).toHaveLength(1);
 		expect(dashboard.user).toEqual({
 			login: "sisko",
 			fixture_avatar: true,
@@ -266,27 +275,24 @@ test("dashboard ignores post-merge-only OpenSpec work for attention", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
-		await mutateUser(db, "u", (user) => {
-			user.installations[0]?.repositories.push({
-				repositoryId: "2",
-				full_name: "ds9/ops",
-				pullRequests: [
-					{
-						number: 1,
-						author_login: "sisko",
-						state: "open",
-						open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
-					},
-					{
-						number: 2,
-						author_login: "sisko",
-						state: "open",
-						open_specs: [{ completed: 1, total: 2 }],
-					},
-				],
-				openSpecs: [],
-				deployments: [],
-			});
+		await putRepositories(db, "1", {
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [
+				{
+					number: 1,
+					author_login: "sisko",
+					state: "open",
+					open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
+				},
+				{
+					number: 2,
+					author_login: "sisko",
+					state: "open",
+					open_specs: [{ completed: 1, total: 2 }],
+				},
+			],
+			deployments: [],
 		});
 		const pullRequests = await dashboardForUser(db, "u");
 		expect(pullRequests.pullRequests.find((pr) => pr.number === 1)?.needs_attention).toBe(false);
@@ -297,58 +303,55 @@ test("dashboard derives OpenSpec attention from the canonical gate", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
-		await mutateUser(db, "u", (user) => {
-			user.installations[0]?.repositories.push({
-				repositoryId: "2",
-				full_name: "ds9/ops",
-				pullRequests: [
-					{
-						number: 1,
-						author_login: "sisko",
-						state: "open",
-					},
-					{
-						number: 2,
-						author_login: "sisko",
-						state: "open",
-						labels: ["openspec-not-required"],
-					},
-					{
-						number: 3,
-						author_login: "sisko",
-						state: "open",
-						open_spec_declaration: "invalid",
-					},
-					{
-						number: 4,
-						author_login: "sisko",
-						state: "open",
-						open_spec_declaration: "empty",
-					},
-					{
-						number: 5,
-						author_login: "sisko",
-						state: "open",
-						open_spec_declaration: "empty",
-						labels: ["openspec-not-required"],
-					},
-					{
-						number: 6,
-						author_login: "sisko",
-						state: "open",
-						open_spec_declaration: "absent",
-						detected_open_specs: ["repair-wolf-359"],
-					},
-					{
-						number: 7,
-						author_login: "sisko",
-						state: "open",
-						open_specs: [{ completed: "not-a-number", total: 2 }],
-					},
-				],
-				openSpecs: [],
-				deployments: [],
-			});
+		await putRepositories(db, "1", {
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [
+				{
+					number: 1,
+					author_login: "sisko",
+					state: "open",
+				},
+				{
+					number: 2,
+					author_login: "sisko",
+					state: "open",
+					labels: ["openspec-not-required"],
+				},
+				{
+					number: 3,
+					author_login: "sisko",
+					state: "open",
+					open_spec_declaration: "invalid",
+				},
+				{
+					number: 4,
+					author_login: "sisko",
+					state: "open",
+					open_spec_declaration: "empty",
+				},
+				{
+					number: 5,
+					author_login: "sisko",
+					state: "open",
+					open_spec_declaration: "empty",
+					labels: ["openspec-not-required"],
+				},
+				{
+					number: 6,
+					author_login: "sisko",
+					state: "open",
+					open_spec_declaration: "absent",
+					detected_open_specs: ["repair-wolf-359"],
+				},
+				{
+					number: 7,
+					author_login: "sisko",
+					state: "open",
+					open_specs: [{ completed: "not-a-number", total: 2 }],
+				},
+			],
+			deployments: [],
 		});
 		const pullRequests = await dashboardForUser(db, "u");
 		expect(pullRequests.pullRequests.find((pr) => pr.number === 1)?.needs_attention).toBe(true);
@@ -364,10 +367,9 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
-		const user = await db.users.findOne({ _id: "u" }),
-			sha = "a".repeat(40),
+		const sha = "a".repeat(40),
 			now = new Date("2030-01-03T00:00:00Z");
-		user?.installations[0]?.repositories.push({
+		await putRepositories(db, "1", {
 			repositoryId: "2",
 			full_name: "ds9/ops",
 			pullRequests: [
@@ -412,33 +414,6 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					labels: ["openspec-not-required"],
 				},
 			],
-			openSpecs: [
-				{
-					change_name: "sha-match",
-					completed: 2,
-					total: 2,
-					source_commit: sha,
-					source_ref: "other",
-				},
-				{
-					change_name: "branch-match",
-					completed: 2,
-					total: 2,
-					source_ref: "unique",
-				},
-				{
-					change_name: "ambiguous-a",
-					completed: 2,
-					total: 2,
-					source_ref: "shared",
-				},
-				{
-					change_name: "ambiguous-b",
-					completed: 2,
-					total: 2,
-					source_ref: "shared",
-				},
-			],
 			deployments: [
 				{ id: "old", state: "success", updated_at: "2025-12-31T23:59:59Z" },
 				{ id: "pending", state: "pending", updated_at: "2030-01-02T23:00:00Z" },
@@ -446,7 +421,6 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 				{ id: "success", state: "success", updated_at: "2030-01-02T21:00:00Z" },
 			],
 		});
-		await db.users.replaceOne({ _id: "u" }, user!);
 		const dashboard = await dashboardForUser(db, "u", now);
 		expect(dashboard.pullRequests.map((pr) => pr.number)).toEqual([1, 2, 3, 4]);
 		const pullRequests = new Map(dashboard.pullRequests.map((pr) => [pr.number, pr]));
@@ -463,54 +437,51 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 		expect(dashboard.deployments.map((deployment) => deployment.id)).toEqual(["pending", "failure", "success"]);
 	}));
 
-test("dashboard keeps every exact-head OpenSpec in deterministic order and falls back to a unique branch", () =>
+test("dashboard keeps every exact-head OpenSpec in deterministic order and keeps PR-associated progress", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
 		const sha = "a".repeat(40);
-		await mutateUser(db, "u", (user) => {
-			user.installations[0]?.repositories.push({
-				repositoryId: "2",
-				full_name: "ds9/ops",
-				pullRequests: [
-					{
-						number: 1,
-						author_login: "sisko",
-						state: "open",
-						head_sha: sha,
-						head_ref: "feature/shared",
-						open_specs: [
-							{
-								change_name: "zeta",
-								completed: 1,
-								total: 1,
-								source_commit: sha,
-							},
-							{
-								change_name: "alpha",
-								completed: 1,
-								total: 1,
-								source_commit: sha,
-							},
-							{
-								change_name: "alpha",
-								completed: 1,
-								total: 1,
-								source_commit: sha,
-							},
-						],
-					},
-					{
-						number: 2,
-						author_login: "sisko",
-						state: "open",
-						head_ref: "feature/unique",
-						open_specs: [{ change_name: "branch", completed: 1, total: 1 }],
-					},
-				],
-				openSpecs: [],
-				deployments: [],
-			});
+		await putRepositories(db, "1", {
+			repositoryId: "2",
+			full_name: "ds9/ops",
+			pullRequests: [
+				{
+					number: 1,
+					author_login: "sisko",
+					state: "open",
+					head_sha: sha,
+					head_ref: "feature/shared",
+					open_specs: [
+						{
+							change_name: "zeta",
+							completed: 1,
+							total: 1,
+							source_commit: sha,
+						},
+						{
+							change_name: "alpha",
+							completed: 1,
+							total: 1,
+							source_commit: sha,
+						},
+						{
+							change_name: "alpha",
+							completed: 1,
+							total: 1,
+							source_commit: sha,
+						},
+					],
+				},
+				{
+					number: 2,
+					author_login: "sisko",
+					state: "open",
+					head_ref: "feature/unique",
+					open_specs: [{ change_name: "branch", completed: 1, total: 1 }],
+				},
+			],
+			deployments: [],
 		});
 		const pulls = await dashboardForUser(db, "u");
 		const exact = pulls.pullRequests.find((pr) => pr.number === 1)!;
@@ -522,220 +493,17 @@ test("dashboard keeps every exact-head OpenSpec in deterministic order and falls
 		expect(pulls.pullRequests.find((pr) => pr.number === 2)?.open_specs).toMatchObject([{ change_name: "branch" }]);
 	}));
 
-test("operational collection identities and binding seeds are idempotent", () =>
-	withDatabase(async (db) => {
-		await seedBindings(db, {
-			userId: "9",
-			bindings: [
-				{ installationId: "1", accountLogin: "cubanx" },
-				{ installationId: "2", accountLogin: "Crisp-Inc" },
-			],
-		});
-		await seedBindings(db, {
-			userId: "9",
-			bindings: [{ installationId: "1", accountLogin: "cubanx" }],
-		});
-		expect((await db.users.findOne({ _id: "9" }))?.installations).toHaveLength(2);
-		await upsertIdentity(db, "10", "kira");
-		await bindInstallation(db, "10", "3", "hudson-law");
-		await seedBindings(db, {
-			userId: "10",
-			bindings: [{ installationId: "3", accountLogin: "hudson-law" }],
-		});
-		expect((await db.users.findOne({ _id: "10" }))?.installations).toMatchObject([
-			{ installationId: "3", accountLogin: "hudson-law" },
-		]);
-		await expect(
-			seedBindings(db, {
-				userId: "9",
-				bindings: [
-					{ installationId: "1", accountLogin: "cubanx" },
-					{ installationId: "1", accountLogin: "cubanx" },
-				],
-			}),
-		).rejects.toThrow("invalid binding seed");
-		await seedBindings(db, {
-			userId: "9",
-			bindings: [{ installationId: "3", accountLogin: "crisp-inc" }],
-		});
-		const before = await db.users.findOne({ _id: "9" });
-		await expect(
-			seedBindings(db, {
-				userId: "9",
-				bindings: [
-					{ installationId: "3", accountLogin: "hudson-law" },
-					{ installationId: "1", accountLogin: "Crisp-Inc" },
-				],
-			}),
-		).rejects.toThrow("conflicting binding seed");
-		await expect(
-			seedBindings(db, {
-				userId: "not-a-github-id",
-				bindings: [{ installationId: "3", accountLogin: "hudson-law" }],
-			}),
-		).rejects.toThrow("invalid binding seed");
-		await expect(
-			seedBindings(db, {
-				userId: "9",
-				bindings: [
-					{ installationId: "3", accountLogin: "hudson-law" },
-					{ installationId: "not-an-installation", accountLogin: "hudson-law" },
-				],
-			}),
-		).rejects.toThrow("invalid binding seed");
-		expect((await db.users.findOne({ _id: "9" }))?.installations).toEqual(before?.installations);
-		await db.inboxDeliveries.insertOne({
-			_id: "github:d1",
-			provider: "github",
-			deliveryId: "d1",
-			eventName: "push",
-			status: "pending",
-			attempts: 0,
-			receivedAt: new Date(),
-		});
-		await expect(
-			db.inboxDeliveries.insertOne({
-				_id: "github:d1",
-				provider: "github",
-				deliveryId: "d1",
-				eventName: "push",
-				status: "pending",
-				attempts: 0,
-				receivedAt: new Date(),
-			}),
-		).rejects.toMatchObject({ code: 11000 });
-		await db.notifications.insertOne({
-			_id: "n1",
-			userId: "9",
-			transitionKey: "transition",
-			title: "Title",
-			body: "Body",
-			createdAt: new Date(),
-		});
-		await expect(
-			db.notifications.insertOne({
-				_id: "n2",
-				userId: "9",
-				transitionKey: "transition",
-				title: "Title",
-				body: "Body",
-				createdAt: new Date(),
-			}),
-		).rejects.toMatchObject({ code: 11000 });
-	}));
-
-test("aggregate CAS preserves concurrent data and rejects oversized replacement", () =>
+test("identity upserts are atomic and preserve separate bindings", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "9", "kira");
 		await bindInstallation(db, "9", "1", "cubanx");
-		await mutateUser(db, "9", (user) => {
-			user.installations[0]?.repositories.push({
-				repositoryId: "r",
-				full_name: "ds9/ops",
-				pullRequests: [{ number: 1 }],
-				openSpecs: [],
-				deployments: [],
-			});
-		});
-		expect((await db.users.findOne({ _id: "9" }))?.installations[0]?.repositories[0]?.pullRequests).toHaveLength(1);
-		await expect(
-			mutateUser(db, "9", (user) => {
-				user.github.avatarUrl = "x".repeat(13 * 1024 * 1024);
-			}),
-		).rejects.toThrow("user 9 installations 1 exceeds");
-		expect((await db.users.findOne({ _id: "9" }))?.github.avatarUrl).toBeUndefined();
-	}));
-
-test("identity upserts are atomic and preserve seeded bindings", () =>
-	withDatabase(async (db) => {
-		await seedBindings(db, {
-			userId: "9",
-			bindings: [{ installationId: "1", accountLogin: "cubanx" }],
-		});
 		await Promise.all(
 			Array.from({ length: 8 }, () => upsertIdentity(db, "9", "kira", "https://example.test/kira.png")),
 		);
 		expect(await db.users.countDocuments({ _id: "9" })).toBe(1);
 		expect(await db.users.findOne({ _id: "9" })).toMatchObject({
-			revision: 8,
 			github: { login: "kira", avatarUrl: "https://example.test/kira.png" },
-			installations: [{ installationId: "1", accountLogin: "cubanx" }],
 		});
-	}));
-
-test("aggregate CAS retries conflicts and preserves multiple bindings", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "kira");
-		await bindInstallation(db, "u", "1", "cubanx");
-		await bindInstallation(db, "u", "2", "cubanx");
-		const original = db.users.replaceOne.bind(db.users) as (
-			...args: Parameters<typeof db.users.replaceOne>
-		) => ReturnType<typeof db.users.replaceOne>;
-		let conflicts = 0;
-		db.users.replaceOne = async (...args: Parameters<typeof db.users.replaceOne>) => {
-			if (conflicts++ === 0)
-				return {
-					acknowledged: true,
-					matchedCount: 0,
-					modifiedCount: 0,
-					upsertedCount: 0,
-					upsertedId: null,
-				};
-			return original(...args);
-		};
-		await mutateUser(db, "u", (user) => {
-			user.github.avatarUrl = "https://example.test/avatar";
-		});
-		expect((await db.users.findOne({ _id: "u" }))?.installations).toHaveLength(2);
-		expect(conflicts).toBe(2);
-		db.users.replaceOne = async () => ({
-			acknowledged: true,
-			matchedCount: 0,
-			modifiedCount: 0,
-			upsertedCount: 0,
-			upsertedId: null,
-		});
-		await expect(mutateUser(db, "u", () => {})).rejects.toThrow("changed concurrently");
-		db.users.replaceOne = original;
-	}));
-
-test("notifications are user-scoped, newest first, and bounded", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u1", "sisko");
-		await upsertIdentity(db, "u2", "kira");
-		for (let index = 0; index < 21; index++)
-			await db.notifications.insertOne({
-				_id: `n${index}`,
-				userId: "u1",
-				transitionKey: `t${index}`,
-				title: "Deployment",
-				body: "Detail",
-				link: `https://example.test/${index}`,
-				createdAt: new Date(1_700_000_000_000 + index),
-			});
-		await expect(
-			db.notifications.insertOne({
-				_id: "duplicate",
-				userId: "u1",
-				transitionKey: "t1",
-				title: "Deployment",
-				body: "Detail",
-				createdAt: new Date(),
-			}),
-		).rejects.toMatchObject({ code: 11000 });
-		await db.notifications.insertOne({
-			_id: "other",
-			userId: "u2",
-			transitionKey: "t1",
-			title: "Other",
-			body: "Other",
-			createdAt: new Date(),
-		});
-		const notifications = (await dashboardForUser(db, "u1")).notifications;
-		expect(notifications).toHaveLength(20);
-		expect(notifications[0]).toMatchObject({
-			_id: "n20",
-			link: "https://example.test/20",
-		});
-		expect(notifications.some((item) => item._id === "other")).toBe(false);
+		expect(await db.bindings.find({ userId: "9" }).toArray()).toMatchObject([{ installationId: "1" }]);
+		expect(await db.users.findOne({ _id: "9" })).not.toHaveProperty("installations");
 	}));

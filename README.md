@@ -2,7 +2,7 @@
 
 A small, installable command center for a developer's open pull requests, checks, reviews, GitHub deployment status, and committed OpenSpec progress.
 
-The service treats authenticated webhooks plus MongoDB user projections as the incremental source. Provider API calls are limited to explicit bootstrap/repair, targeted OpenSpec file reads, and six-hour conditional reconciliation.
+The service treats authenticated webhooks plus shared MongoDB domain projections as the incremental source. Provider API calls are limited to explicit bootstrap/repair, targeted OpenSpec file reads, and reconciliation.
 
 ## Local setup
 
@@ -20,9 +20,9 @@ MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run test:mongo
 
 Stop the disposable test database with `docker stop dcc-mongodb-test`. Tests create UUID-named guarded databases and drop only those databases.
 
-`bun run dev:demo` binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and notification state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
+`bun run dev:demo` binds to loopback and idempotently seeds one fictional developer with representative pull request, OpenSpec, deployment, and preference state. It uses the real dashboard, snapshot, SSE, scoping, and MongoDB paths without provider credentials or cookies.
 
-Both top-level actions open one configuration screen for local checkouts, notifications, appearance, and manual reconciliation. **Reconcile now** reuses the authenticated, user-scoped installation reconciliation path and reports running, success, or sanitized failure state.
+Both top-level actions open one configuration screen for local checkouts, appearance, and manual reconciliation. **Reconcile now** reuses the authenticated, user-scoped installation reconciliation path and reports running, success, or sanitized failure state.
 
 On browsers with the File System Access API, grant read-only access to one organization root and the PWA resolves known repositories beneath it by stable repository identity. Exact per-repository overrides cover nonstandard layouts; unresolved or unverified folders are never associated silently. Directory handles persist in IndexedDB and permissions are revalidated after reload. The browser reads only repository identity, `.git/HEAD`, and `openspec/changes/*/tasks.md`; handles, paths, files, branches, and local OpenSpec data never leave the browser. Browsers without the directory picker continue to show committed GitHub projections.
 
@@ -74,21 +74,15 @@ Local `bun run validate:all` first rejects credential-bearing MongoDB URIs in tr
 
 Keep values in the environment or a secret manager. Never commit `.env`, App private keys, webhook secrets, or provider tokens.
 
-## Existing binding handoff
+## Clean-start connection
 
-The post-merge cutover may seed only existing installation bindings, never SQLite data or provider projections:
-
-```bash
-bun run seed:bindings <github-user-id> <installation-id:account-login> [...]
-```
-
-Only the exact account logins `cubanx`, `Crisp-Inc`, and `hudson-law` are accepted. Run it with the approved production Environment only during the separate cutover OpenSpec.
+The domain-document cutover starts with an empty application database. Users sign in, reconnect approved installations through the verified GitHub flow, and reconcile to rebuild projections. Manual binding seeds and legacy data imports are unsupported. Follow the [clean-start runbook](openspec/changes/split-domain-documents/clean-start-runbook.md) only after merge and the required production authorization.
 
 ## Production rollout contract
 
 Repository configuration only is covered here; creating a Railway service, MongoDB deployment, domain, GitHub App, secrets, or deployment requires fresh authorization.
 
-1. The dependent `operate-developer-command-center-mongodb-cutover` OpenSpec owns Atlas configuration, deployment, and the narrow binding handoff. Do not deploy this storage change directly.
+1. The `split-domain-documents` OpenSpec and its clean-start runbook own this rollout: merge first, obtain the required production authorization, stop old writers, reset the named application database, deploy the verified revision, then reconnect and reconcile.
 2. Set the required server variables by name only: `PUBLIC_URL`, `MONGODB_URI_BASE`, `MONGODB_DATABASE`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Railway supplies `PORT` and `RAILWAY_PUBLIC_DOMAIN`. Never place resolved values in evidence.
 3. Railway activates only after `/ready` returns `200`; `/health` is liveness only. MongoDB connectivity and idempotent index initialization are the readiness dependency.
 
@@ -114,28 +108,28 @@ After binding an installation, bootstrap its current repositories and open pull 
 
 GitHub Deployment and Deployment status deliveries are signed with `GITHUB_WEBHOOK_SECRET`, deduplicated by delivery ID, and projected only within the delivery's installation. The dashboard shows repository-centric deployment status; it intentionally does not query Railway APIs or expose Railway logs, replicas, restarts, or configuration.
 
-GitHub installation bindings determine dashboard visibility. Bootstrap and explicit repair use short-lived installation tokens with bounded conditional reads for recent deployments and their latest statuses; webhooks remain the incremental source. The dashboard retains only safe HTTP(S) deployment target and log links. Direct Railway access is a future capability, not a hidden credential waiting in the walls.
+GitHub installation bindings determine dashboard visibility. Bootstrap and explicit repair use short-lived installation tokens and unconditional pagination; status reads cover recent deployments and known unfinished deployments. Webhooks remain the incremental source. The dashboard retains only safe HTTP(S) deployment target and log links. Direct Railway access is a future capability, not a hidden credential waiting in the walls.
 
 ## Trust and data boundaries
 
 - GitHub requests are size-limited and HMAC-verified against the raw body before durable inbox insertion. Delivery IDs are unique and redelivery-safe.
 - Accepted payloads are persisted before `202`, processed serially, retried after restart, and cleared after successful projection. Inbox draining assumes one application process; multi-replica operation requires atomic delivery claims.
-- GitHub deployment status transitions are idempotent and only terminal state changes notify installation-bound users.
+- GitHub deployment status transitions are idempotent. Authorized active clients receive SSE invalidations for changed projections.
 - Dashboard queries join the current developer to GitHub installations; pull requests are additionally filtered to the signed-in GitHub author.
 - Sessions are high-entropy opaque tokens; only SHA-256 hashes are stored in MongoDB and cookies are secure, HTTP-only, and same-site.
 - Provider text is escaped before browser rendering. The service worker caches only public shell assets, never authenticated API or webhook traffic.
 
 ## API-budget behavior
 
-Normal GitHub pull-request, review, check, workflow, installation, deployment, and deployment-status changes update projections from webhooks without list/search calls. Push events fetch only changed committed `openspec/changes/*/tasks.md` files. Bootstrap, repair, and reconciliation use installation tokens, authenticated ETags, serial requests, rate-limit headers, and bounded backoff. An authorized `304` preserves the projection without consuming the primary REST limit.
+Normal GitHub pull-request, review, check, workflow, installation, deployment, and deployment-status changes update projections from webhooks without list/search calls. Push events fetch only changed committed `openspec/changes/*/tasks.md` files. Bootstrap, repair, and reconciliation use installation tokens, complete pagination, serial requests, rate-limit headers, and bounded backoff. A `304` without owned cached data must be retried unconditionally; it never represents an empty list.
 
-Reconciliation follows GitHub Link pagination for repositories, open pull requests, and deployment lists. The dashboard retains the newest 20 deployment projections per repository with one latest-status read each. Deployment target and log links are retained only when they are safe HTTP(S) URLs.
+Reconciliation follows GitHub Link pagination for repositories, pull requests, and deployment lists. Each deployment has its own document with ordered latest-status evidence; the dashboard selects the recent 48-hour window. Deployment target and log links are retained only when they are safe HTTP(S) URLs.
 
 ## MVP limits and operational gate
 
-- Notifications reach authenticated active clients through SSE and the browser Notification API. Closed-PWA Web Push is deferred.
+- PR cards refresh through authenticated SSE. Browser notifications are deferred.
 - The service presents committed OpenSpec task files only; uncommitted worktree reporting is deferred.
-- MongoDB uses a bounded user aggregate with a 12 MiB application guard. Postgres, Redis, queues, teams, invitations, admin/RBAC screens, Electron, local tunnels, and offline-first data sync are out of scope.
+- MongoDB stores identity and UI preferences in users; installations, user bindings, repositories, PRs, deployments, receipts and reconciliation runs are separate documents. PR and deployment writes retain the 12 MiB application guard. OpenSpec evidence belongs to its associated PR. Completed receipts and runs expire after 72 hours; incomplete receipts and runs remain. Postgres, Redis, queues, teams, invitations, admin/RBAC screens, Electron, local tunnels, and offline-first data sync are out of scope.
 - This checkout does not create credentials, register an App, configure webhooks, deploy, or mutate external systems. Those actions require a separate reviewed operational OpenSpec and explicit authorization.
 
 ## License
