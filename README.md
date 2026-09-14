@@ -82,7 +82,7 @@ The domain-document cutover starts with an empty application database. Users sig
 
 Repository configuration only is covered here; creating a Railway service, MongoDB deployment, domain, GitHub App, secrets, or deployment requires fresh authorization.
 
-1. The dependent `operate-developer-command-center-mongodb-cutover` OpenSpec owns Atlas configuration, deployment, and the narrow binding handoff. Do not deploy this storage change directly.
+1. The `split-domain-documents` OpenSpec and its clean-start runbook own this rollout: merge first, obtain the required production authorization, stop old writers, reset the named application database, deploy the verified revision, then reconnect and reconcile.
 2. Set the required server variables by name only: `PUBLIC_URL`, `MONGODB_URI_BASE`, `MONGODB_DATABASE`, `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`. Railway supplies `PORT` and `RAILWAY_PUBLIC_DOMAIN`. Never place resolved values in evidence.
 3. Railway activates only after `/ready` returns `200`; `/health` is liveness only. MongoDB connectivity and idempotent index initialization are the readiness dependency.
 
@@ -108,7 +108,7 @@ After binding an installation, bootstrap its current repositories and open pull 
 
 GitHub Deployment and Deployment status deliveries are signed with `GITHUB_WEBHOOK_SECRET`, deduplicated by delivery ID, and projected only within the delivery's installation. The dashboard shows repository-centric deployment status; it intentionally does not query Railway APIs or expose Railway logs, replicas, restarts, or configuration.
 
-GitHub installation bindings determine dashboard visibility. Bootstrap and explicit repair use short-lived installation tokens with bounded conditional reads for recent deployments and their latest statuses; webhooks remain the incremental source. The dashboard retains only safe HTTP(S) deployment target and log links. Direct Railway access is a future capability, not a hidden credential waiting in the walls.
+GitHub installation bindings determine dashboard visibility. Bootstrap and explicit repair use short-lived installation tokens and unconditional pagination; status reads cover recent deployments and known unfinished deployments. Webhooks remain the incremental source. The dashboard retains only safe HTTP(S) deployment target and log links. Direct Railway access is a future capability, not a hidden credential waiting in the walls.
 
 ## Trust and data boundaries
 
