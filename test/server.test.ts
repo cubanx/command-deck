@@ -1245,6 +1245,7 @@ test("Install GitHub reconnects existing approved installations", () =>
 						{ id: 12, account: { login: "cubanx" } },
 						{ id: 13, account: { login: "Crisp-Inc" } },
 						{ id: 14, account: { login: "external" } },
+						{ id: 15, account: { login: "Crisp-Inc" }, suspended_at: "2030-01-01T00:00:00Z" },
 					],
 				});
 			throw new Error(`unexpected ${url}`);

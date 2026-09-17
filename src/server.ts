@@ -464,7 +464,7 @@ const beginInstall = async (context: AppContext, request: Request) => {
 	return Response.redirect(oauthAuthorizeUrl(context, context.config.githubClientId, state), 302);
 };
 
-type VerifiedInstallation = { id: number; account?: { login?: string } };
+type VerifiedInstallation = { id: number; account?: { login?: string }; suspended_at?: string | null };
 const verifyInstallations = async (
 	accessToken: string,
 	installationId?: string,
@@ -573,8 +573,8 @@ const oauthCallback = async (context: AppContext, request: Request, url: URL) =>
 				status: 502,
 			});
 		const requested = installationId
-			? verification.verified.filter((item) => String(item.id) === installationId)
-			: verification.verified.filter((item) => approvedInstallationAccount(item.account?.login));
+			? verification.verified.filter((item) => String(item.id) === installationId && !item.suspended_at)
+			: verification.verified.filter((item) => approvedInstallationAccount(item.account?.login) && !item.suspended_at);
 		if (installationId && !requested.length) return new Response("unverified installation", { status: 403 });
 		if (!requested.length) {
 			const appSlug = context.config.githubAppSlug;
