@@ -1224,6 +1224,95 @@ test("OAuth binds only the verified installation account and never persists its 
 		}
 	}));
 
+test("Install GitHub reconnects existing approved installations", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "9", "kira");
+		const session = await createSession(db, "9");
+		const app = createApp(db, {
+				...testConfig,
+				githubAppSlug: "command-deck-ai",
+				githubClientId: "client",
+				githubClientSecret: "secret",
+			}),
+			original = globalThis.fetch;
+		fetchTarget.fetch = async (input) => {
+			const url = String(input);
+			if (url.includes("access_token")) return Response.json({ access_token: "oauth-token" });
+			if (url.endsWith("/user")) return Response.json({ id: 9, login: "kira" });
+			if (url.includes("user/installations"))
+				return Response.json({
+					installations: [
+						{ id: 12, account: { login: "cubanx" } },
+						{ id: 13, account: { login: "Crisp-Inc" } },
+						{ id: 14, account: { login: "external" } },
+					],
+				});
+			throw new Error(`unexpected ${url}`);
+		};
+		try {
+			expect(
+				(
+					await app.fetch(
+						new Request("http://local/api/snapshot", { headers: { cookie: `dcc_session=${session.token}` } }),
+					)
+				).status,
+			).toBe(200);
+			const start = await app.fetch(
+				new Request("http://local/install/github", { headers: { cookie: `dcc_session=${session.token}` } }),
+			);
+			expect(start.status).toBe(302);
+			const location = start.headers.get("location");
+			expect(location).toBeTruthy();
+			if (!location) throw new Error("missing OAuth redirect");
+			const authorize = new URL(location);
+			expect(authorize.origin + authorize.pathname).toBe("https://github.com/login/oauth/authorize");
+			const state = authorize.searchParams.get("state");
+			expect(state).toBeTruthy();
+			expect((await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}`))).status).toBe(
+				302,
+			);
+			expect(await db.bindings.find({ userId: "9" }).sort({ installationId: 1 }).toArray()).toMatchObject([
+				{ installationId: "12" },
+				{ installationId: "13" },
+			]);
+		} finally {
+			globalThis.fetch = original;
+		}
+	}));
+
+test("Install GitHub falls back to app installation when no approved installation exists", () =>
+	withDatabase(async (db) => {
+		await upsertIdentity(db, "9", "kira");
+		const session = await createSession(db, "9");
+		const app = createApp(db, {
+				...testConfig,
+				githubAppSlug: "command-deck-ai",
+				githubClientId: "client",
+				githubClientSecret: "secret",
+			}),
+			original = globalThis.fetch;
+		fetchTarget.fetch = async (input) =>
+			String(input).includes("access_token")
+				? Response.json({ access_token: "oauth-token" })
+				: String(input).includes("user/installations")
+					? Response.json({ installations: [] })
+					: Response.json({ id: 9, login: "kira" });
+		try {
+			const start = await app.fetch(
+				new Request("http://local/install/github", { headers: { cookie: `dcc_session=${session.token}` } }),
+			);
+			const state = new URL(start.headers.get("location") ?? "").searchParams.get("state");
+			expect(state).toBeTruthy();
+			const callback = await app.fetch(new Request(`http://local/auth/github/callback?code=code&state=${state}`));
+			expect(callback.headers.get("location")).toMatch(
+				/^https:\/\/github\.com\/apps\/command-deck-ai\/installations\/new\?state=/,
+			);
+			expect(await db.bindings.countDocuments({ userId: "9" })).toBe(0);
+		} finally {
+			globalThis.fetch = original;
+		}
+	}));
+
 test("OAuth rejects an unverified installation without binding it", () =>
 	withDatabase(async (db) => {
 		const app = createApp(db, {
