@@ -440,40 +440,41 @@ const sessionRoute = async (context: AppContext, request: Request, path: string)
 	});
 };
 
+const oauthAuthorizeUrl = (context: AppContext, clientId: string, state: string) => {
+	const redirect = context.config.oauthCallbackUrl
+		? `&redirect_uri=${encodeURIComponent(context.config.oauthCallbackUrl)}`
+		: "";
+	return `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(clientId)}&state=${encodeURIComponent(state)}${redirect}`;
+};
+
 const beginOAuth = async (context: AppContext, request: Request) => {
 	if (!trustedOrigin(request, context.config)) return new Response("invalid public origin", { status: 400 });
 	if (!context.config.githubClientId) return new Response("GitHub OAuth is not configured", { status: 503 });
 	const state = await createOAuthState(context.db);
-	const redirect = context.config.oauthCallbackUrl
-		? `&redirect_uri=${encodeURIComponent(context.config.oauthCallbackUrl)}`
-		: "";
-	return Response.redirect(
-		`https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(context.config.githubClientId)}&state=${encodeURIComponent(state)}${redirect}`,
-		302,
-	);
+	return Response.redirect(oauthAuthorizeUrl(context, context.config.githubClientId, state), 302);
 };
 
 const beginInstall = async (context: AppContext, request: Request) => {
 	const user = await context.authenticated(request);
-	if (!user || !context.config.githubAppSlug)
+	if (!user || !context.config.githubAppSlug || !context.config.githubClientId)
 		return new Response("GitHub App installation is not configured", {
 			status: 503,
 		});
-	const state = await createOAuthState(context.db);
-	return Response.redirect(
-		`https://github.com/apps/${encodeURIComponent(context.config.githubAppSlug)}/installations/new?state=${encodeURIComponent(state)}`,
-		302,
-	);
+	const state = await createOAuthState(context.db, undefined, "installation");
+	return Response.redirect(oauthAuthorizeUrl(context, context.config.githubClientId, state), 302);
 };
 
-type VerifiedInstallation = { id: number; account?: { login?: string } };
-const verifyInstallation = async (accessToken: string, installationId: string) => {
+type VerifiedInstallation = { id: number; account?: { login?: string }; suspended_at?: string | null };
+const verifyInstallations = async (
+	accessToken: string,
+	installationId?: string,
+): Promise<{ failed: true } | { failed: false; verified: VerifiedInstallation[] }> => {
 	const headers = {
 		authorization: `Bearer ${accessToken}`,
 		accept: "application/vnd.github+json",
 	};
 	let next: string | undefined = "https://api.github.com/user/installations?per_page=100";
-	let verified: VerifiedInstallation | undefined;
+	const verified: VerifiedInstallation[] = [];
 	const seen = new Set([next]);
 	for (let pages = 0; next && pages < 100; pages++) {
 		const response: Response = await githubFetch(fetch, next, { headers });
@@ -481,13 +482,13 @@ const verifyInstallation = async (accessToken: string, installationId: string) =
 		const body = (await response.json()) as {
 			installations?: VerifiedInstallation[];
 		};
-		verified = body.installations?.find((item) => String(item.id) === installationId) ?? verified;
+		verified.push(...(body.installations ?? []));
 		try {
 			next = githubNextLink(response.headers.get("link"), seen);
 		} catch {
 			return { failed: true };
 		}
-		if (verified) break;
+		if (installationId && verified.some((item) => String(item.id) === installationId)) break;
 	}
 	return { failed: false, verified };
 };
@@ -529,6 +530,7 @@ const oauthCallback = async (context: AppContext, request: Request, url: URL) =>
 	const code = url.searchParams.get("code");
 	const state = url.searchParams.get("state");
 	const installationId = url.searchParams.get("installation_id");
+	const reconnectingInstallations = state?.startsWith("installation.") ?? false;
 	const { githubClientId, githubClientSecret } = context.config;
 	if (
 		!trustedOrigin(request, context.config) ||
@@ -564,20 +566,31 @@ const oauthCallback = async (context: AppContext, request: Request, url: URL) =>
 	};
 	const userId = String(identity.id);
 	await upsertIdentity(context.db, userId, identity.login, identity.avatar_url);
-	if (installationId && /^\d+$/.test(installationId)) {
-		const verification = await verifyInstallation(accessToken, installationId);
+	if ((installationId && /^\d+$/.test(installationId)) || reconnectingInstallations) {
+		const verification = await verifyInstallations(accessToken, installationId ?? undefined);
 		if (verification.failed)
 			return new Response("GitHub installation verification failed", {
 				status: 502,
 			});
-		if (!verification.verified) return new Response("unverified installation", { status: 403 });
-		if (
-			!approvedInstallationAccount(verification.verified.account?.login) ||
-			!(await bindInstallation(context.db, userId, installationId, verification.verified.account?.login))
-		)
-			return new Response("unapproved installation", { status: 403 });
+		const requested = installationId
+			? verification.verified.filter((item) => String(item.id) === installationId && !item.suspended_at)
+			: verification.verified.filter((item) => approvedInstallationAccount(item.account?.login) && !item.suspended_at);
+		if (installationId && !requested.length) return new Response("unverified installation", { status: 403 });
+		if (!requested.length) {
+			const appSlug = context.config.githubAppSlug;
+			if (!appSlug) return new Response("GitHub App installation is not configured", { status: 503 });
+			const installState = await createOAuthState(context.db);
+			return Response.redirect(
+				`https://github.com/apps/${encodeURIComponent(appSlug)}/installations/new?state=${encodeURIComponent(installState)}`,
+				302,
+			);
+		}
+		for (const installation of requested) {
+			if (!(await bindInstallation(context.db, userId, String(installation.id), installation.account?.login)))
+				return new Response("unapproved installation", { status: 403 });
+			queueBootstrap(context, String(installation.id));
+		}
 		context.refresh(userId);
-		queueBootstrap(context, installationId);
 	}
 	const session = await createSession(context.db, userId);
 	return new Response(null, {

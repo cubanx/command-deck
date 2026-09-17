@@ -7,6 +7,11 @@ The system SHALL bind GitHub App installation identifiers to authenticated devel
 - **WHEN** a signed-in developer returns from the GitHub App setup flow with an installation identifier and approved account login found on any page of that developer's authorized installation list
 - **THEN** a separate user-installation binding and shared installation with verified account login are durably established for that developer without granting access to unrelated installations, and canonical bootstrap is scheduled before the callback redirects
 
+#### Scenario: Developer reconnects an existing installation
+- **WHEN** a signed-in developer starts the connection flow and GitHub reports previously installed approved installations in that developer's authorized installation list
+- **THEN** every reported approved installation is durably bound and bootstrapped without requiring reinstallation
+- **AND** the flow falls back to GitHub App installation only when no approved installation is reported
+
 #### Scenario: Immediate bootstrap fails after binding
 - **WHEN** canonical bootstrap fails after an approved installation is durably bound
 - **THEN** the binding remains available for scheduled reconciliation recovery and the failure is recorded through sanitized diagnostics

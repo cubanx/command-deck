@@ -193,8 +193,8 @@ export async function seedLocalDemo(db: Db) {
 	);
 }
 
-export async function createOAuthState(db: Db, expiresAt = new Date(Date.now() + 600_000)) {
-	const state = randomUUID();
+export async function createOAuthState(db: Db, expiresAt = new Date(Date.now() + 600_000), purpose?: "installation") {
+	const state = `${purpose ? `${purpose}.` : ""}${randomUUID()}`;
 	await db.oauthStates.insertOne({ _id: hash(state), expiresAt });
 	return state;
 }
