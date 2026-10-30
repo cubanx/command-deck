@@ -17,7 +17,7 @@ test("operator can inspect, merge, and refresh fixture pull requests", async ({
 	await expect(page.getByRole("article", { name: "Restore the Bajoran relay" })).toBeVisible();
 	await search.fill("");
 	await status.click();
-	await page.getByRole("option", { exact: true, name: "OpenSpec" }).click();
+	await page.getByRole("option", { exact: true, name: "Reviewing" }).click();
 	await expect(cards).toHaveCount(1);
 	await expect(page.getByRole("article", { name: "Restore the Bajoran relay" })).toBeVisible();
 	await page.getByRole("button", { name: "Clear filters" }).click();

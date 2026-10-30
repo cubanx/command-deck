@@ -4,11 +4,6 @@ import { QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { syncAppearance } from "#/features/command-center/appearance";
-import {
-	exactCheckoutDirectory,
-	persistVerifiedCheckout,
-	revalidateCheckout,
-} from "#/features/command-center/browser-checkout";
 import { Configuration } from "#/features/command-center/configuration";
 import { DashboardLoadError, OperationalDashboard } from "#/features/command-center/dashboard";
 import { CommandCenterNavigation } from "#/features/command-center/navigation";
@@ -32,46 +27,7 @@ const client = () => {
 	return queryClient;
 };
 
-const checkoutStorage = () => {
-	const records = new Map<string, unknown>();
-	const request = (result: unknown, save?: () => void) => {
-		const value: { result: unknown; onsuccess?: () => void; onerror?: () => void } = { result };
-		queueMicrotask(() => {
-			save?.();
-			value.onsuccess?.();
-		});
-		return value;
-	};
-	const database = {
-		createObjectStore: vi.fn(),
-		transaction: () => ({
-			objectStore: () => ({
-				getAll: () => request([...records.values()]),
-				put: (record: { key: string }) => request(undefined, () => records.set(record.key, record)),
-			}),
-		}),
-	};
-	vi.stubGlobal("indexedDB", {
-		open: () => {
-			const value: {
-				result: typeof database;
-				onupgradeneeded?: () => void;
-				onsuccess?: () => void;
-				onerror?: () => void;
-			} = {
-				result: database,
-			};
-			queueMicrotask(() => {
-				value.onupgradeneeded?.();
-				value.onsuccess?.();
-			});
-			return value;
-		},
-	});
-	return records;
-};
-
-test("renders responsive avatar navigation and preserves local checkout evidence as informational", async () => {
+test("renders responsive avatar navigation", async () => {
 	const originalViewport = window.innerWidth;
 	Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
 	try {
@@ -114,7 +70,6 @@ test("presents operational configuration controls and announces sanitized reconc
 	expect(within(configuration).queryByRole("button", { name: /Latest deployment/i })).toBeNull();
 	expect(screen.getByRole("button", { name: "Sync GitHub installations" })).toBeTruthy();
 	expect(screen.getByRole("button", { name: "Reconcile all PRs" })).toBeTruthy();
-	expect(screen.getByRole("table", { name: "Repository checkouts" })).toBeTruthy();
 	fireEvent.click(screen.getByRole("button", { name: "Sync GitHub installations" }));
 	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/reconcile", { method: "POST" }));
 	expect(await screen.findByText("Reconciliation completed.")).toBeTruthy();
@@ -202,7 +157,6 @@ test("prefetches the configuration snapshot and refreshes the subscribed avatar"
 		queryClient,
 	);
 	expect(screen.getByRole("button", { name: "User menu" }).textContent).toContain("N");
-	expect(screen.getByRole("button", { name: "Choose checkout for ds9/ops" })).toBeTruthy();
 	queryClient.setQueryData(["snapshot"], { ...queryClient.getQueryData(["snapshot"]), user: { login: "Ezri" } });
 	expect(await screen.findByText("E")).toBeTruthy();
 });
@@ -223,7 +177,7 @@ test("applies persisted appearance at startup and cleans up system changes", () 
 	expect(listeners.size).toBe(0);
 });
 
-test("persists appearance and labels checkout discovery as local informational evidence", async () => {
+test("persists appearance", async () => {
 	const store = new Map<string, string>();
 	vi.stubGlobal("localStorage", {
 		getItem: (key: string) => store.get(key) ?? null,
@@ -234,129 +188,4 @@ test("persists appearance and labels checkout discovery as local informational e
 	expect(store.get("dcc-appearance")).toBe("dark");
 	expect(document.documentElement.dataset.appearance).toBe("dark");
 	expect(document.documentElement.dataset.mantineColorScheme).toBe("dark");
-	expect(screen.getByText("Detected OpenSpec candidates are local and informational.")).toBeTruthy();
-	expect(screen.getByRole("button", { name: "Choose checkout for ds9/ops" })).toBeTruthy();
-});
-
-test("uses verified browser checkout contracts and reports picker failures without authority changes", async () => {
-	const handle = {
-		queryPermission: vi.fn(async () => "granted" as PermissionState),
-		getDirectoryHandle: vi.fn(async () => handle),
-		getFileHandle: vi.fn(),
-		entries: async function* () {},
-		requestPermission: vi.fn(),
-	};
-	const persisted: unknown[] = [];
-	expect(await revalidateCheckout({ handle })).toBe("granted");
-	expect(await exactCheckoutDirectory(handle, { full_name: "ds9/ops" })).toBe(handle);
-	expect(
-		await persistVerifiedCheckout({
-			handle,
-			repository: "ds9/ops",
-			read: async () => true,
-			persist: async () => persisted.push("saved"),
-			record: { key: "ds9:ops" },
-		}),
-	).toBe(true);
-	vi.stubGlobal(
-		"showDirectoryPicker",
-		vi.fn(async () => {
-			throw new Error("DS9 picker failed");
-		}),
-	);
-	renderFrontend(<Configuration />, client());
-	fireEvent.click(screen.getByRole("button", { name: "Choose checkout for ds9/ops" }));
-	expect((await screen.findByRole("status")).textContent).toBe("Checkout setup failed.");
-});
-
-test("reads, persists, and restores local checkout evidence without changing the snapshot", async () => {
-	const records = checkoutStorage();
-	const file = (text: string) => ({ getFile: async () => ({ text: async () => text }) });
-	const checkout = {
-		getDirectoryHandle: vi.fn(async (name: string) => {
-			if (name === ".git")
-				return {
-					getFileHandle: async (fileName: string) =>
-						file(fileName === "config" ? '[remote "origin"]\n url = https://github.com/ds9/ops\n' : "a".repeat(40)),
-					entries: async function* () {},
-				};
-			if (name === "openspec")
-				return {
-					getDirectoryHandle: async () => ({
-						entries: async function* () {
-							yield ["hold-the-line", { kind: "directory", getFileHandle: async () => file("- [x] Done") }];
-						},
-					}),
-				};
-			throw new DOMException("Missing", "NotFoundError");
-		}),
-		queryPermission: async () => "granted" as PermissionState,
-		requestPermission: async () => "granted" as PermissionState,
-	};
-	vi.stubGlobal(
-		"showDirectoryPicker",
-		vi.fn(async () => checkout),
-	);
-	const snapshot = client();
-	renderFrontend(<Configuration />, snapshot);
-	fireEvent.click(screen.getByRole("button", { name: "Choose checkout for ds9/ops" }));
-	expect((await screen.findByRole("status")).textContent).toContain("Checkout configured");
-	expect(screen.getByText(/Detected local candidates: hold-the-line/)).toBeTruthy();
-	expect(records.size).toBe(1);
-	expect(snapshot.getQueryData(["snapshot"])).toMatchObject({ pullRequests: [] });
-	cleanup();
-	renderFrontend(<Configuration />, client());
-	expect((await screen.findByRole("status")).textContent).toContain("Checkout restored");
-});
-
-test("keeps legacy account-root checkout results local to each repository", async () => {
-	const records = checkoutStorage();
-	const file = (text: string) => ({ getFile: async () => ({ text: async () => text }) });
-	const checkoutFor = (repository: string, candidate: string) => ({
-		getDirectoryHandle: async (name: string) => {
-			if (name === ".git")
-				return {
-					getFileHandle: async (fileName: string) =>
-						file(
-							fileName === "config" ? `[remote "origin"]\n url = https://github.com/${repository}\n` : "a".repeat(40),
-						),
-				};
-			if (name === "openspec")
-				return {
-					getDirectoryHandle: async () => ({
-						entries: async function* () {
-							yield [candidate, { kind: "directory", getFileHandle: async () => file("- [x] Done") }];
-						},
-					}),
-				};
-			throw new DOMException("Missing", "NotFoundError");
-		},
-		queryPermission: async () => "granted" as PermissionState,
-		requestPermission: async () => "granted" as PermissionState,
-	});
-	const root = {
-		getDirectoryHandle: async (name: string) =>
-			name === "ops" ? checkoutFor("ds9/ops", "hold-the-line") : checkoutFor("ds9/science", "wormhole-study"),
-		queryPermission: async () => "granted" as PermissionState,
-		requestPermission: async () => "granted" as PermissionState,
-	};
-	records.set("root:ds9", { key: "root:ds9", account: "ds9", kind: "root", handle: root });
-	const queryClient = client();
-	queryClient.setQueryData(["snapshot"], {
-		...queryClient.getQueryData(["snapshot"]),
-		repositories: [
-			{ account_login: "ds9", installation_id: "9", repository_id: "ops", full_name: "ds9/ops" },
-			{ account_login: "ds9", installation_id: "9", repository_id: "science", full_name: "ds9/science" },
-		],
-	});
-	renderFrontend(<Configuration />, queryClient);
-	const table = screen.getByRole("table", { name: "Repository checkouts" });
-	const ops = within(screen.getByRole("row", { name: /ds9\/ops\s+ds9/ }));
-	const science = within(screen.getByRole("row", { name: /ds9\/science\s+ds9/ }));
-	expect((await ops.findByRole("status")).textContent).toBe("Checkout restored for ds9/ops.");
-	expect((await science.findByRole("status")).textContent).toBe("Checkout restored for ds9/science.");
-	expect(ops.getByText("Detected local candidates: hold-the-line")).toBeTruthy();
-	expect(science.getByText("Detected local candidates: wormhole-study")).toBeTruthy();
-	expect(table.textContent).not.toContain("Detected local candidates: hold-the-line, wormhole-study");
-	expect(screen.getByText("Detected OpenSpec candidates are local and informational.")).toBeTruthy();
 });

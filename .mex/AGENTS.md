@@ -6,7 +6,7 @@ last_updated: 2026-08-13
 
 # Command Deck.ai
 
-A Bun and TypeScript service that projects signed GitHub activity and committed OpenSpec progress into a developer dashboard.
+A Bun and TypeScript service that projects signed GitHub activity into a developer dashboard.
 
 ## Non-negotiables
 
@@ -20,6 +20,5 @@ A Bun and TypeScript service that projects signed GitHub activity and committed 
 - Dev: `bun run dev`
 - Typecheck: `bun run typecheck`
 - Test: `bun test`
-- OpenSpec: `openspec validate <change> --strict`
 
 Read `ROUTER.md` for task-specific context.

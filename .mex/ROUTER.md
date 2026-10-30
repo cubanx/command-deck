@@ -24,7 +24,7 @@ Use CodeGraph first for structural code lookup. Mex is curated memory, not a rep
 ## Current state
 
 - The GitHub dashboard, webhook projection pipeline, local demo, and MongoDB persistence are implemented.
-- Deployment and production operations are governed by separate OpenSpec changes.
+- Deployment and production operations are governed by separate reviewed operational procedures.
 - The local Mex graph database is machine-local support data and is not committed.
 
 ## Routing

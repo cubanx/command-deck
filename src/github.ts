@@ -18,7 +18,6 @@ import {
 } from "#/db";
 import { latestDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
-import { detectedOpenSpecSlugs, parseOpenSpecDeclaration, parseTasks } from "#/openspec";
 import {
 	errorField,
 	failureDetails,
@@ -43,12 +42,6 @@ export const githubFetch = async (fetcher: FetchLike, input: RequestInfo | URL, 
 		throw error;
 	}
 };
-export type TaskFetcher = (input: {
-	installationId: string;
-	repositoryId: string;
-	path: string;
-	sha: string;
-}) => Promise<string | null | { finalTreeAbsent: true }>;
 export type GitHubRequestFailure = {
 	failureClass?: string;
 	code?: number;
@@ -108,13 +101,6 @@ const projectedPullRequestCounts = (
 	return counts;
 };
 
-type OpenSpecTask = {
-	repositoryId: string;
-	path: string;
-	changeName: string;
-	sha: string;
-	content: string;
-};
 type GraphqlConnection = {
 	nodes?: unknown[];
 	pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
@@ -138,10 +124,6 @@ const providerAggregateState = (items: unknown[], stateFor: (item: unknown) => u
 	return pending ? "pending" : unknown ? "unknown" : "success";
 };
 const optionalString = (value: unknown) => (typeof value === "string" ? value : undefined);
-const validBranch = (value: unknown) =>
-	typeof value === "string" && value.length <= 255 && /^[A-Za-z0-9._/-]+$/.test(value) && !value.includes("..")
-		? value
-		: undefined;
 const base64url = (value: string | Buffer) => Buffer.from(value).toString("base64url");
 const diagnosticString = (value: unknown) => (typeof value === "string" ? value.slice(0, 200) : undefined);
 const graphqlErrorDiagnostic = (errors: unknown) => {
@@ -440,331 +422,6 @@ export async function reconcileSerial(
 	}
 	return results;
 }
-type PullRequestOpenSpecs = {
-	incomplete?: boolean;
-	number: number;
-	tasks: OpenSpecTask[];
-	/** Evidence read at the immutable merge commit. Never replace this with default-branch progress. */
-	mergedTasks?: OpenSpecTask[];
-	mergedSourceCommit?: string;
-	mergedSourceRef?: string;
-	declaration: "absent" | "empty" | "declared" | "invalid";
-	detected: string[];
-	retention?: {
-		obligations: string[];
-		unresolved: boolean;
-		sourceCommit?: string;
-		sourceRef?: string;
-	};
-};
-const openSpecProjection = (
-	evidence: PullRequestOpenSpecs | undefined,
-	sourceRef?: unknown,
-	sourceRepository?: unknown,
-) => {
-	const repository = optionalString(sourceRepository);
-	const projectTasks = (tasks: OpenSpecTask[] | undefined, ref?: string) =>
-		tasks?.map((task) => {
-			const progress = parseTasks(task.content);
-			return {
-				change_name: task.changeName,
-				...progress,
-				pre_merge_ready: progress.preMergeReady,
-				active_group: progress.activeGroup,
-				active_groups: progress.activeGroups,
-				incomplete_groups: progress.incompleteGroups,
-				source_commit: task.sha,
-				source_ref: optionalString(ref),
-				...(repository
-					? {
-							source_url: safeUrl(
-								`https://github.com/${repository.split("/").map(encodeURIComponent).join("/")}/blob/${encodeURIComponent(task.sha)}/${task.path.split("/").map(encodeURIComponent).join("/")}`,
-							),
-						}
-					: {}),
-			};
-		});
-	const open_specs = projectTasks(evidence?.tasks, optionalString(sourceRef));
-	const merged_open_specs = projectTasks(evidence?.mergedTasks, evidence?.mergedSourceRef);
-	return {
-		open_specs,
-		open_spec: open_specs?.[0] ?? null,
-		open_spec_declaration: evidence?.declaration ?? "absent",
-		detected_open_specs: evidence?.detected ?? [],
-		...(evidence?.mergedTasks
-			? {
-					merged_open_specs,
-					merged_source_commit: evidence.mergedSourceCommit,
-					merged_source_ref: evidence.mergedSourceRef,
-				}
-			: {}),
-		...(evidence?.retention
-			? {
-					post_merge_obligations: evidence.retention.obligations,
-					post_merge_unresolved: evidence.retention.unresolved,
-					post_merge_source_commit: evidence.retention.sourceCommit,
-					post_merge_source_ref: evidence.retention.sourceRef,
-				}
-			: {}),
-	};
-};
-
-const mergedTaskPaths = (paths: unknown[], name: string) => {
-	const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	return paths
-		.map(String)
-		.filter((path) => new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escaped}/tasks\\.md$`).test(path));
-};
-
-const readDefaultBranch = async (request: FetchLike, repository: string) => {
-	const details = await githubFetch(request, `https://api.github.com/repos/${repository}`);
-	if (!details.ok) throw Object.assign(new Error("GitHub default branch read failed"), { status: details.status });
-	const body = (await details.json()) as { default_branch?: unknown };
-	const ref = validBranch(body.default_branch);
-	if (!ref) throw new Error("GitHub default branch was unavailable");
-	const commit = await githubFetch(
-		request,
-		`https://api.github.com/repos/${repository}/commits/${encodeURIComponent(ref)}`,
-	);
-	if (!commit.ok) throw Object.assign(new Error("GitHub default branch commit read failed"), { status: commit.status });
-	const commitBody = (await commit.json()) as { sha?: unknown };
-	if (typeof commitBody.sha !== "string" || !/^[0-9a-f]{40}$/i.test(commitBody.sha))
-		throw new Error("GitHub default branch commit was unavailable");
-	return { ref, sha: commitBody.sha };
-};
-
-const readDefaultTree = async (request: FetchLike, repository: string, sha: string) => {
-	const response = await githubFetch(
-		request,
-		`https://api.github.com/repos/${repository}/git/trees/${encodeURIComponent(sha)}?recursive=1`,
-	);
-	if (!response.ok)
-		throw Object.assign(new Error("GitHub default branch tree read failed"), { status: response.status });
-	const body = (await response.json()) as { truncated?: unknown; tree?: Array<{ path?: unknown; type?: unknown }> };
-	if (body.truncated !== false || !Array.isArray(body.tree))
-		throw new Error("GitHub default branch tree was incomplete");
-	return body.tree.filter((item) => item.type === "blob").map((item) => String(item.path ?? ""));
-};
-
-const fetchMergedOpenSpecTasks = async (input: {
-	installationId: string;
-	repositoryId: string;
-	request: FetchLike;
-	taskFetcher: TaskFetcher;
-	repository: string;
-	ref: string;
-	sha: string;
-	number: number;
-	body: unknown;
-	priorObligations: string[];
-	priorUnresolved?: boolean;
-	includeRetention?: boolean;
-}): Promise<PullRequestOpenSpecs> => {
-	const declaration = parseOpenSpecDeclaration(input.body);
-	const declared = declaration.state === "declared" ? declaration.slugs : [];
-	const obligations = [...new Set([...input.priorObligations, ...declared])].sort();
-	if (!obligations.length)
-		return {
-			number: input.number,
-			tasks: [],
-			declaration: declaration.state,
-			detected: [],
-			...(input.includeRetention !== false && (declaration.state === "invalid" || input.priorUnresolved)
-				? {
-						retention: {
-							obligations: [],
-							unresolved: true,
-							sourceCommit: input.sha,
-							sourceRef: input.ref,
-						},
-					}
-				: {}),
-		};
-	let tree: string[] | undefined;
-	const tasks: OpenSpecTask[] = [];
-	let unresolved = declaration.state === "invalid";
-	let retentionNeeded =
-		input.priorObligations.length > 0 || input.priorUnresolved === true || declaration.state === "invalid";
-	for (const changeName of obligations) {
-		let path = `openspec/changes/${changeName}/tasks.md`;
-		let content: string | null | { finalTreeAbsent: true };
-		try {
-			content = await input.taskFetcher({
-				installationId: input.installationId,
-				repositoryId: input.repositoryId,
-				path,
-				sha: input.sha,
-			});
-		} catch {
-			unresolved = true;
-			continue;
-		}
-		if (typeof content !== "string") {
-			tree ??= await readDefaultTree(input.request, input.repository, input.sha);
-			const archives = mergedTaskPaths(tree, changeName);
-			if (archives.length !== 1) {
-				unresolved = true;
-				continue;
-			}
-			path = archives[0]!;
-			try {
-				content = await input.taskFetcher({
-					installationId: input.installationId,
-					repositoryId: input.repositoryId,
-					path,
-					sha: input.sha,
-				});
-			} catch {
-				unresolved = true;
-				continue;
-			}
-		}
-		if (typeof content !== "string") {
-			unresolved = true;
-			continue;
-		}
-		if (parseTasks(content).total === 0) {
-			unresolved = true;
-		}
-		if (parseTasks(content).postMergeIncomplete) retentionNeeded = true;
-		tasks.push({ repositoryId: input.repositoryId, path, changeName, sha: input.sha, content });
-	}
-	return {
-		number: input.number,
-		tasks,
-		incomplete: unresolved,
-		declaration: declaration.state,
-		detected: [],
-		...(input.includeRetention !== false && (retentionNeeded || unresolved)
-			? {
-					retention: {
-						obligations,
-						unresolved,
-						sourceCommit: input.sha,
-						sourceRef: input.ref,
-					},
-				}
-			: {}),
-	};
-};
-
-async function fetchOpenSpecTasksForPullRequests(
-	db: Db,
-	installationId: string,
-	repositoryId: string,
-	pullRequests: Array<{
-		number?: unknown;
-		updated_at?: unknown;
-		head?: { sha?: unknown };
-		body?: unknown;
-	}>,
-	request: FetchLike,
-	taskFetcher: TaskFetcher,
-	repository?: string,
-	stage?: { value: string },
-): Promise<PullRequestOpenSpecs[] | ReadResult> {
-	const artifactFailure = (status?: number): ReadResult => ({
-		kind: "error",
-		stale: true,
-		message: "GitHub OpenSpec artifact fetch failed",
-		operation: "openspec",
-		repository,
-		summary: "GitHub OpenSpec artifact fetch failed",
-		...(status === undefined ? {} : { status }),
-	});
-	const errorStatus = (error: unknown) => {
-		const status = Number((error as { status?: unknown })?.status);
-		return Number.isSafeInteger(status) ? status : undefined;
-	};
-	const archiveTaskPaths = (paths: string[], name: string) => {
-		const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-		return paths.filter((path) =>
-			new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${escaped}/tasks\\.md$`).test(path),
-		);
-	};
-	const results: PullRequestOpenSpecs[] = [];
-	for (const pr of [...pullRequests].sort((a, b) => {
-		const aUpdatedAt = Date.parse(String(a.updated_at ?? "")),
-			bUpdatedAt = Date.parse(String(b.updated_at ?? "")),
-			aHasValidUpdatedAt = Number.isFinite(aUpdatedAt),
-			bHasValidUpdatedAt = Number.isFinite(bUpdatedAt);
-		if (aHasValidUpdatedAt !== bHasValidUpdatedAt) return Number(bHasValidUpdatedAt) - Number(aHasValidUpdatedAt);
-		return (
-			bUpdatedAt - aUpdatedAt ||
-			Number(a.number) - Number(b.number) ||
-			String(a.head?.sha ?? "").localeCompare(String(b.head?.sha ?? ""))
-		);
-	})) {
-		const sha = typeof pr.head?.sha === "string" ? pr.head.sha : undefined;
-		if (!sha) continue;
-		const number = Number(pr.number);
-		if (!Number.isSafeInteger(number))
-			return {
-				kind: "error",
-				stale: true,
-				message: "GitHub pull request number was invalid",
-				operation: "openspec",
-				repository,
-				summary: "GitHub OpenSpec read was incomplete",
-			};
-		if (stage) stage.value = "changed files";
-		const changes = await pagedGet(
-			db,
-			`installation:${installationId}:repo:${repositoryId}:pr:${number}:files:${sha}`,
-			`https://api.github.com/repositories/${repositoryId}/pulls/${number}/files?per_page=100`,
-			request,
-			{ operation: "openspec", repository },
-			"filename",
-		);
-		if (changes.kind !== "changed" || !Array.isArray(changes.body)) return changes;
-		const declaration = parseOpenSpecDeclaration(pr.body);
-		const paths = changes.body
-			.filter((item) => (item as { status?: unknown }).status !== "removed")
-			.map((item) => String((item as { filename?: unknown }).filename ?? ""));
-		const detected = detectedOpenSpecSlugs(paths);
-		const tasks: OpenSpecTask[] = [];
-		if (declaration.state === "declared")
-			for (const name of declaration.slugs) {
-				let path = `openspec/changes/${name}/tasks.md`;
-				let content: string | null | { finalTreeAbsent: true };
-				if (stage) stage.value = "active OpenSpec task";
-				try {
-					content = await taskFetcher({
-						installationId,
-						repositoryId,
-						path,
-						sha,
-					});
-				} catch (error) {
-					return artifactFailure(errorStatus(error));
-				}
-				if (typeof content !== "string") {
-					if (content?.finalTreeAbsent) return artifactFailure();
-					const archivePaths = archiveTaskPaths(paths, name);
-					const [archivePath] = archivePaths;
-					if (archivePaths.length !== 1 || !archivePath) return artifactFailure();
-					path = archivePath;
-					if (stage) stage.value = "archive OpenSpec task";
-					try {
-						content = await taskFetcher({
-							installationId,
-							repositoryId,
-							path,
-							sha,
-						});
-					} catch (error) {
-						return artifactFailure(errorStatus(error));
-					}
-					if (content === null) return artifactFailure();
-				}
-				if (typeof content !== "string") return artifactFailure();
-				tasks.push({ repositoryId, path, changeName: name, sha, content });
-			}
-		results.push({ number, tasks, declaration: declaration.state, detected });
-	}
-	return results;
-}
-
 async function refreshRepositoryPolicy(
 	db: Db,
 	installationId: string,
@@ -931,7 +588,6 @@ type ReconcilePullRequestInput = {
 	number: number;
 	token: string;
 	fetcher: FetchLike;
-	fetchTasks?: TaskFetcher;
 	reportFailure?: GitHubRequestFailureReporter;
 };
 type PullRequestRead = {
@@ -943,7 +599,6 @@ type PullRequestRead = {
 	threads: unknown[];
 	contexts: unknown[];
 	actions: unknown[];
-	openSpecEvidence: PullRequestOpenSpecs;
 };
 
 const loadReconciliationTarget = async (db: Db, input: ReconcilePullRequestInput) => {
@@ -963,7 +618,6 @@ const loadReconciliationTarget = async (db: Db, input: ReconcilePullRequestInput
 		repositoryId: repositoryDocument.repositoryId,
 		full_name: repositoryDocument.full_name,
 		pullRequests: pullRequests as PullRequest[],
-		openSpecs: [],
 		deployments: deployments as Record<string, unknown>[],
 		...(repositoryDocument.policy ? { policy: repositoryDocument.policy as Repository["policy"] } : {}),
 	};
@@ -994,120 +648,8 @@ const removeClosedPullRequest = async (
 	return { kind: changed ? "changed" : "unchanged", body: null };
 };
 
-const readMergedOpenSpecs = async (
-	input: ReconcilePullRequestInput,
-	request: FetchLike,
-	repository: Repository,
-	taskFetcher: TaskFetcher,
-	pullRequest: Record<string, unknown>,
-): Promise<PullRequestOpenSpecs> => {
-	const providerAuthor = optionalString((pullRequest.author as { login?: unknown } | undefined)?.login);
-	const matchingPriorPullRequests = repository.pullRequests.filter((item) =>
-		sameLogin(item.author_login, providerAuthor),
-	);
-	const priorObligations = [
-		...new Set(
-			matchingPriorPullRequests
-				.filter((item) => Number(item.number) === input.number)
-				.flatMap((item) =>
-					Array.isArray(item.post_merge_obligations)
-						? item.post_merge_obligations.filter((value): value is string => typeof value === "string")
-						: [],
-				),
-		),
-	];
-	try {
-		const mergeCommit = optionalString((pullRequest.mergeCommit as { oid?: unknown } | undefined)?.oid);
-		const branchEvidence = await readDefaultBranch(request, repository.full_name);
-		if (!mergeCommit)
-			return await fetchMergedOpenSpecTasks({
-				installationId: input.installationId,
-				repositoryId: input.repositoryId,
-				request,
-				taskFetcher,
-				repository: repository.full_name,
-				ref: branchEvidence.ref,
-				sha: branchEvidence.sha,
-				number: input.number,
-				body: pullRequest.body,
-				priorObligations,
-				priorUnresolved: matchingPriorPullRequests.some(
-					(item) => Number(item.number) === input.number && item.post_merge_unresolved === true,
-				),
-			});
-		const mergedEvidence = await fetchMergedOpenSpecTasks({
-			installationId: input.installationId,
-			repositoryId: input.repositoryId,
-			request,
-			taskFetcher,
-			repository: repository.full_name,
-			ref: optionalString(pullRequest.baseRefName) ?? branchEvidence.ref,
-			sha: mergeCommit,
-			number: input.number,
-			body: pullRequest.body,
-			priorObligations,
-			includeRetention: false,
-		});
-		const defaultEvidence = await fetchMergedOpenSpecTasks({
-			installationId: input.installationId,
-			repositoryId: input.repositoryId,
-			request,
-			taskFetcher,
-			repository: repository.full_name,
-			ref: branchEvidence.ref,
-			sha: branchEvidence.sha,
-			number: input.number,
-			body: pullRequest.body,
-			priorObligations: [
-				...priorObligations,
-				...mergedEvidence.tasks
-					.filter((task) => parseTasks(task.content).postMergeIncomplete)
-					.map((task) => task.changeName),
-			],
-			priorUnresolved: matchingPriorPullRequests.some(
-				(item) => Number(item.number) === input.number && item.post_merge_unresolved === true,
-			),
-		});
-		return {
-			...defaultEvidence,
-			incomplete: mergedEvidence.incomplete || defaultEvidence.incomplete,
-			...(mergedEvidence.incomplete ? {} : { mergedTasks: mergedEvidence.tasks }),
-			mergedSourceCommit: mergeCommit,
-			mergedSourceRef: optionalString(pullRequest.baseRefName) ?? branchEvidence.ref,
-		};
-	} catch {
-		const declaration = parseOpenSpecDeclaration(pullRequest.body);
-		const obligations = [...new Set([...priorObligations, ...declaration.slugs])].sort();
-		// A failed branch/tree read leaves declared work unresolved, without claiming a source commit.
-		return {
-			number: input.number,
-			tasks: [],
-			declaration: declaration.state,
-			detected: [],
-			...(obligations.length ||
-			declaration.state === "invalid" ||
-			matchingPriorPullRequests.some(
-				(item) => Number(item.number) === input.number && item.post_merge_unresolved === true,
-			)
-				? { retention: { obligations, unresolved: true } }
-				: {}),
-		} satisfies PullRequestOpenSpecs;
-	}
-};
-
-const validatePullRequestRead = (
-	input: Omit<PullRequestRead, "openSpecEvidence"> & {
-		tasks: PullRequestOpenSpecs | Awaited<ReturnType<typeof fetchOpenSpecTasksForPullRequests>>;
-	},
-): PullRequestRead => {
-	const { pullRequest, headSha, merged, labels, reviews, threads, contexts, actions, tasks } = input;
-	if (
-		(merged && "kind" in tasks) ||
-		(!merged && (!Array.isArray(tasks) || tasks.length !== 1 || ("kind" in tasks && tasks.kind === "error")))
-	)
-		throw Object.assign(new Error("GitHub OpenSpec read was incomplete"), {
-			status: !Array.isArray(tasks) && "kind" in tasks && tasks.kind === "error" ? tasks.status : undefined,
-		});
+const validatePullRequestRead = (input: PullRequestRead): PullRequestRead => {
+	const { labels, reviews, threads, contexts } = input;
 	if (
 		!labels.every((item: any) => item && typeof item.name === "string") ||
 		!reviews.every((item: any) => item && typeof item.state === "string") ||
@@ -1115,23 +657,7 @@ const validatePullRequestRead = (
 		!contexts.every((item: any) => item && (typeof item.name === "string" || typeof item.context === "string"))
 	)
 		throw new Error("GitHub pull request response was incomplete");
-	const openSpecEvidence: PullRequestOpenSpecs | undefined = merged
-		? (tasks as PullRequestOpenSpecs)
-		: Array.isArray(tasks)
-			? tasks[0]
-			: undefined;
-	if (!openSpecEvidence || "kind" in openSpecEvidence) throw new Error("GitHub OpenSpec read was incomplete");
-	return {
-		pullRequest,
-		headSha,
-		merged,
-		labels,
-		reviews,
-		threads,
-		contexts,
-		actions,
-		openSpecEvidence,
-	};
+	return input;
 };
 
 const readOpenPullRequest = async (
@@ -1195,40 +721,6 @@ const readOpenPullRequest = async (
 		throw Object.assign(new Error("GitHub Actions response was incomplete"), {
 			status: actions.kind === "error" ? actions.status : undefined,
 		});
-	const taskFetcher =
-		input.fetchTasks ??
-		(async (task: Parameters<TaskFetcher>[0]) => {
-			const response = await githubFetch(
-				request,
-				"https://api.github.com/repositories/" + task.repositoryId + "/contents/" + task.path + "?ref=" + task.sha,
-				{ headers: { accept: "application/vnd.github.raw" } },
-			);
-			if (response.ok) return response.text();
-			if (response.status === 404) return null;
-			throw Object.assign(new Error("GitHub OpenSpec artifact fetch failed"), {
-				status: response.status,
-			});
-		});
-	stage.value = "changed files";
-	const tasks = merged
-		? await readMergedOpenSpecs(input, request, repository, taskFetcher, pullRequest)
-		: await fetchOpenSpecTasksForPullRequests(
-				db,
-				input.installationId,
-				input.repositoryId,
-				[
-					{
-						number: input.number,
-						head: { sha: headSha },
-						updated_at: pullRequest.updatedAt,
-						body: pullRequest.body,
-					},
-				],
-				request,
-				taskFetcher,
-				repository.full_name,
-				stage,
-			);
 	return validatePullRequestRead({
 		pullRequest,
 		headSha,
@@ -1238,12 +730,11 @@ const readOpenPullRequest = async (
 		threads,
 		contexts,
 		actions: actions.body,
-		tasks,
 	});
 };
 
 const pullRequestProjection = (repository: Repository, number: number, read: PullRequestRead) => {
-	const { pullRequest, headSha, labels, reviews, threads, contexts, actions, openSpecEvidence, merged } = read;
+	const { pullRequest, headSha, labels, reviews, threads, contexts, actions, merged } = read;
 	const priorPullRequest = repository.pullRequests.find((item) => Number(item.number) === number);
 	const reviewNodes = reviews as Array<{ state: string }>;
 	const threadNodes = threads as Array<{ isResolved: boolean }>;
@@ -1321,27 +812,7 @@ const pullRequestProjection = (repository: Repository, number: number, read: Pul
 			const value = context as Record<string, unknown>;
 			return value.conclusion ?? value.state ?? value.status;
 		}),
-		...openSpecProjection(
-			openSpecEvidence,
-			openSpecEvidence.retention?.sourceRef ?? pullRequest.headRefName,
-			repository.full_name,
-		),
 	};
-};
-
-const canExcludeMergedPullRequest = (evidence: PullRequestOpenSpecs) => {
-	if (evidence.incomplete) return false;
-	const retention = evidence.retention;
-	return (
-		!retention ||
-		(!retention.unresolved &&
-			(retention.obligations.length === 0 ||
-				(retention.obligations.length === evidence.tasks.length &&
-					evidence.tasks.every((task) => {
-						const progress = parseTasks(task.content);
-						return progress.total > 0 && progress.completed === progress.total;
-					}))))
-	);
 };
 
 const isRevisionConflict = (error: unknown) => error instanceof Error && error.message.includes("changed concurrently");
@@ -1352,12 +823,12 @@ const applyOpenPullRequest = async (
 	input: ReconcilePullRequestInput,
 	read: PullRequestRead,
 ): Promise<ReadResult> => {
-	const { openSpecEvidence, merged } = read;
+	const { merged } = read;
 	const next = pullRequestProjection(repository, input.number, read);
 	const previous = repository.pullRequests.find((item) => Number(item.number) === input.number) as
 		| (PullRequest & { revision?: number })
 		| undefined;
-	if (merged && canExcludeMergedPullRequest(openSpecEvidence)) {
+	if (merged) {
 		let changed = false;
 		if (previous) {
 			const current = await db.pullRequests.findOne({ _id: `${input.repositoryId}:${input.number}` });
@@ -1377,14 +848,9 @@ const applyOpenPullRequest = async (
 	}
 	if (previous?.updated_at && next.updated_at && String(previous.updated_at) > String(next.updated_at))
 		return { kind: "unchanged" };
-	if (previous?.merged === true && merged !== true) return { kind: "unchanged" };
-	const openSpecFields = openSpecProjection(
-		openSpecEvidence,
-		openSpecEvidence.retention?.sourceRef ?? (read.pullRequest as { headRefName?: unknown }).headRefName,
-		repository.full_name,
-	);
+	if (previous?.merged === true) return { kind: "unchanged" };
 	const patch = Object.fromEntries(
-		Object.entries({ ...next, ...openSpecFields, lifecycle_stale: false }).filter(([, value]) => value !== undefined),
+		Object.entries({ ...next, lifecycle_stale: false }).filter(([, value]) => value !== undefined),
 	);
 	let changed: boolean;
 	if (previous) {
@@ -1392,27 +858,6 @@ const applyOpenPullRequest = async (
 		if (current?.revision !== previous.revision || current?.head_sha !== previous.head_sha)
 			return { kind: "unchanged" };
 		const projectedKeys = Object.keys(patch);
-		const projectedOpenSpecKeys = new Set(
-			[
-				"open_specs",
-				"open_spec",
-				"detected_open_specs",
-				"post_merge_source_commit",
-				"post_merge_source_ref",
-				"post_merge_obligations",
-				"post_merge_unresolved",
-				"post_merge_state",
-				"lifecycle_stale",
-				...(openSpecEvidence.mergedTasks === undefined
-					? []
-					: ["merged_open_specs", "merged_source_commit", "merged_source_ref"]),
-			].filter((key) => key in patch),
-		);
-		if (openSpecEvidence.mergedTasks === undefined && previous?.merged_open_specs !== undefined) {
-			projectedOpenSpecKeys.add("merged_open_specs");
-			projectedOpenSpecKeys.add("merged_source_commit");
-			projectedOpenSpecKeys.add("merged_source_ref");
-		}
 		const unset = Object.keys(previous).filter(
 			(key) =>
 				[
@@ -1440,8 +885,10 @@ const applyOpenPullRequest = async (
 					"required_checks",
 					"workflow_state",
 					"checks_state",
+					// Legacy projection fields that are no longer written; clear them from existing documents.
 					"open_specs",
 					"open_spec",
+					"open_spec_declaration",
 					"detected_open_specs",
 					"merged_open_specs",
 					"merged_source_commit",
@@ -1452,9 +899,7 @@ const applyOpenPullRequest = async (
 					"post_merge_unresolved",
 					"post_merge_state",
 					"lifecycle_stale",
-				].includes(key) &&
-				!projectedOpenSpecKeys.has(key) &&
-				!projectedKeys.includes(key),
+				].includes(key) && !projectedKeys.includes(key),
 		);
 		try {
 			changed = await patchPullRequest(db, `${input.repositoryId}:${input.number}`, patch, unset, {
@@ -1725,8 +1170,6 @@ export async function bootstrapInstallation(
 	token: string,
 	fetcher: FetchLike,
 	appJwt: string,
-	fetchTasks?: TaskFetcher,
-	reportTaskFetchFailure?: GitHubRequestFailureReporter,
 ): Promise<ReadResult> {
 	const request: FetchLike = (url, init) =>
 		fetcher(url, {
@@ -1744,23 +1187,6 @@ export async function bootstrapInstallation(
 				authorization: `Bearer ${appJwt}`,
 			},
 		});
-	const taskFetcher =
-		fetchTasks ??
-		(async (input) => {
-			const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
-			const response = await githubFetch(request, target, {
-				headers: { accept: "application/vnd.github.raw" },
-			});
-			if (response.ok) return response.text();
-			if (response.status === 404) return null;
-			await reportTaskFetchFailure?.({
-				operation: "bootstrap OpenSpec task fetch",
-				status: response.status,
-				target,
-				diagnostic: await githubErrorDiagnostic(response),
-			});
-			throw Object.assign(new Error("GitHub OpenSpec artifact fetch failed"), { status: response.status });
-		});
 	const identity = await loadBootstrapIdentity(db, installationId, identityRequest);
 	if ("kind" in identity) return identity;
 	const { account, permissions, boundRepositories } = identity;
@@ -1775,7 +1201,6 @@ export async function bootstrapInstallation(
 	const repositories = repos.body as Array<{ id: number; full_name: string }>;
 	const snapshots: Repository[] = [];
 	const existingPullRequestsByRepository = new Map<string, PullRequest[]>();
-	const openSpecTasks: OpenSpecTask[] = [];
 	const retainedTargets: Array<{ installationId: string; repositoryId: string; number: number }> = [];
 	for (const repo of repositories) {
 		const existingRepository = boundRepositories.find((item) => item.repositoryId === String(repo.id));
@@ -1832,18 +1257,6 @@ export async function bootstrapInstallation(
 			pullRequests,
 		);
 		retainedTargets.push(...targets);
-		const tasks = await fetchOpenSpecTasksForPullRequests(
-			db,
-			installationId,
-			String(repo.id),
-			pullRequests,
-			request,
-			taskFetcher,
-			repo.full_name,
-		);
-		if (!Array.isArray(tasks)) return tasks;
-		openSpecTasks.push(...tasks.flatMap((item) => item.tasks));
-		const evidenceByNumber = new Map(tasks.map((item) => [item.number, item]));
 		snapshots.push({
 			repositoryId: String(repo.id),
 			full_name: repo.full_name,
@@ -1870,7 +1283,6 @@ export async function bootstrapInstallation(
 								updated_at?: unknown;
 								body?: unknown;
 							};
-							const evidence = evidenceByNumber.get(Number(pr.number));
 							return {
 								number: pr.number,
 								title: pr.title,
@@ -1882,7 +1294,6 @@ export async function bootstrapInstallation(
 								head_ref: pr.head?.ref,
 								head_sha: pr.head?.sha,
 								updated_at: pr.updated_at,
-								...openSpecProjection(evidence, pr.head?.ref, repo.full_name),
 							};
 						})
 					: []),
@@ -1890,7 +1301,6 @@ export async function bootstrapInstallation(
 					(pr) => !pullRequests.some((item) => Number((item as { number?: unknown }).number) === Number(pr.number)),
 				),
 			],
-			openSpecs: [],
 			deployments: (deploymentRows as Record<string, unknown>[]).map((deployment) =>
 				correlateDeploymentPullRequest(deployment, deploymentPullRequests, recentMergedPullRequests),
 			),
@@ -1929,7 +1339,6 @@ export async function bootstrapInstallation(
 			...target,
 			token,
 			fetcher,
-			fetchTasks,
 		});
 		if (result.kind === "error") return result;
 	}
@@ -2026,8 +1435,6 @@ export async function reconcileInstallations(
 	credentialsFor: (installationId: string) => Promise<{ token: string; appJwt: string }>,
 	fetcher: FetchLike,
 	installationIds?: string[],
-	fetchTasks?: TaskFetcher,
-	reportTaskFetchFailure?: GitHubRequestFailureReporter,
 	onResult?: (item: { installationId: string; startedAt: Date; result: ReadResult }) => Promise<void>,
 ) {
 	const beginStandaloneRun = async (installationId: string) => {
@@ -2086,15 +1493,7 @@ export async function reconcileInstallations(
 		try {
 			const { token, appJwt } = await credentialsFor(installationId);
 			operation = "installation_bootstrap";
-			result = await bootstrapInstallation(
-				db,
-				installationId,
-				token,
-				fetcher,
-				appJwt,
-				fetchTasks,
-				reportTaskFetchFailure,
-			);
+			result = await bootstrapInstallation(db, installationId, token, fetcher, appJwt);
 		} catch {
 			result = {
 				...normalizedReconciliationFailure(),

@@ -11,7 +11,6 @@ import {
 } from "#/db";
 import { shouldApplyDeploymentStatus } from "#/deployment-status";
 import { approvedInstallationAccount, normalizedLogin, sameLogin } from "#/installations";
-import { changedTaskPaths, projectOpenSpec } from "#/openspec";
 
 export function githubSignatureValid(body: string, signature: string | null, secret: string) {
 	if (!signature?.startsWith("sha256=")) return false;
@@ -131,13 +130,6 @@ export const githubPayloadInstallationId = (payload?: string) => {
 		return undefined;
 	}
 };
-type TaskFetcher = (input: {
-	installationId: string;
-	repositoryId: string;
-	path: string;
-	sha: string;
-}) => Promise<string | null | { finalTreeAbsent: true }>;
-
 const retainMergedPullRequest = (
 	repository: import("./db").Repository,
 	pr: NonNullable<GitHubPayload["pull_request"]>,
@@ -422,65 +414,6 @@ const projectDeployment = (repository: import("./db").Repository, event: string,
 	return ["success", "failure", "error"].includes(nextState) && prior.state !== nextState;
 };
 
-const projectPush = async (
-	db: Db,
-	data: GitHubPayload,
-	installationId: string,
-	repositoryId: string,
-	account: string,
-	fetchTasks: TaskFetcher,
-) => {
-	let changed = false;
-	const commits = Array.isArray(data.commits) ? data.commits : [];
-	const files = commits.flatMap((commit) => [
-		...(commit.added ?? []),
-		...(commit.modified ?? []),
-		...(commit.removed ?? []),
-	]);
-	const sourceRef = data.ref?.startsWith("refs/heads/") ? branch(data.ref.slice(11)) : undefined;
-	const retentionPaths = files.filter(
-		(path) =>
-			/^openspec\/changes\/[^/]+\/tasks\.md$/.test(path) ||
-			/^openspec\/changes\/archive\/\d{4}-\d{2}-\d{2}-[^/]+\/tasks\.md$/.test(path),
-	);
-	const paths = [...new Set([...changedTaskPaths(files), ...retentionPaths])];
-	paths.sort((left, right) => {
-		const leftDeleted = commits.some((commit) => (commit.removed ?? []).includes(left));
-		const rightDeleted = commits.some((commit) => (commit.removed ?? []).includes(right));
-		return Number(rightDeleted) - Number(leftDeleted);
-	});
-	for (const path of paths) {
-		const changeName =
-			path.match(/^openspec\/changes\/([^/]+)\/tasks\.md$/)?.[1] ??
-			path.match(/^openspec\/changes\/archive\/\d{4}-\d{2}-\d{2}-([^/]+)\/tasks\.md$/)?.[1];
-		if (!changeName) continue;
-		const deleted = commits.some((commit) => (commit.removed ?? []).includes(path));
-		const content = deleted
-			? undefined
-			: await fetchTasks({
-					installationId,
-					repositoryId,
-					path,
-					sha: data.after ?? "unknown",
-				});
-		if (!deleted && content === null) throw new Error("OpenSpec artifact fetch failed");
-		if (!deleted && typeof content !== "string") continue;
-		const result = await projectOpenSpec(db, {
-			installationId,
-			accountLogin: account,
-			repositoryId,
-			path,
-			changeName,
-			content: typeof content === "string" ? content : "",
-			deleted,
-			sha: data.after ?? "unknown",
-			sourceRef,
-		});
-		changed ||= result.changed;
-	}
-	return changed;
-};
-
 const domainPatch = (before: Record<string, unknown> | undefined, after: Record<string, unknown>) => {
 	const patch: Record<string, unknown> = {};
 	const unset: string[] = [];
@@ -719,7 +652,6 @@ const loadGitHubProjectionContext = async (
 		repositoryId,
 		full_name: String(data.repository?.full_name ?? repositoryId),
 		pullRequests: pullRequests as import("#/db").PullRequest[],
-		openSpecs: [],
 		deployments: (deploymentFilter ? await db.deployments.find(deploymentFilter).toArray() : []) as Record<
 			string,
 			unknown
@@ -737,13 +669,12 @@ async function projectGitHub(
 	event: string,
 	raw: string,
 	resolvedAccount?: string,
-	fetchTasks?: TaskFetcher,
 	reviewBot?: ReviewBotConfig,
 ) {
 	const data = JSON.parse(raw) as GitHubPayload;
 	const loaded = await loadGitHubProjectionContext(db, event, data, resolvedAccount);
 	if (!loaded) return { status: "ignored" as const, targets: [] };
-	const { context, account } = loaded;
+	const { context } = loaded;
 	const { installationId, repositoryId, repository, targets } = context;
 	const changedValues = [
 		await projectPullRequestEvent(context),
@@ -751,9 +682,6 @@ async function projectGitHub(
 		await projectIssueCommentEvent(context, reviewBot),
 		await projectDeploymentEvent(context),
 		await projectClosedDeploymentCorrelation(context),
-		...(event === "push" && fetchTasks
-			? [await projectPush(db, data, installationId, repositoryId, account, fetchTasks)]
-			: []),
 	];
 	const changed = changedValues.some(Boolean);
 	if (event === "push")
@@ -860,12 +788,6 @@ export async function markDeliveriesRepairedByReconciliation(
 }
 export async function drainInbox(
 	db: Db,
-	fetchTasks?: (input: {
-		installationId: string;
-		repositoryId: string;
-		path: string;
-		sha: string;
-	}) => Promise<string | null | { finalTreeAbsent: true }>,
 	reviewBot?: ReviewBotConfig,
 	sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
 	now = () => new Date(),
@@ -920,14 +842,7 @@ export async function drainInbox(
 					continue;
 				}
 				await db.inboxDeliveries.updateOne({ _id: row._id }, { $set: { resolvedAccount: verification.account } });
-				const projection = await projectGitHub(
-					db,
-					row.eventName,
-					verification.raw,
-					verification.account,
-					fetchTasks,
-					reviewBot,
-				);
+				const projection = await projectGitHub(db, row.eventName, verification.raw, verification.account, reviewBot);
 				const installationId = verification.installationId;
 				const changedUsers =
 					(projection.changed || replay) && installationId

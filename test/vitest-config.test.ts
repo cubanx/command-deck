@@ -18,7 +18,6 @@ test("runs Mongo-backed tests in a single-worker project after unit tests", () =
 	});
 	expect(unit.test?.exclude).toEqual([
 		"test/domain-*.test.ts",
-		"test/merged-open-spec-evidence.test.ts",
 		"test/preferences-api.test.ts",
 		"test/reconciliation-runs.test.ts",
 		"test/access.test.ts",
@@ -28,7 +27,6 @@ test("runs Mongo-backed tests in a single-worker project after unit tests", () =
 		"test/github-events.test.ts",
 		"test/merge.test.ts",
 		"test/mongodb.test.ts",
-		"test/openspec.test.ts",
 		"test/projection-invariants.test.ts",
 		"test/server-startup-reconciliation.test.ts",
 		"test/server.test.ts",
@@ -38,7 +36,6 @@ test("runs Mongo-backed tests in a single-worker project after unit tests", () =
 		name: "mongo",
 		include: [
 			"test/domain-*.test.ts",
-			"test/merged-open-spec-evidence.test.ts",
 			"test/preferences-api.test.ts",
 			"test/reconciliation-runs.test.ts",
 			"test/access.test.ts",
@@ -48,7 +45,6 @@ test("runs Mongo-backed tests in a single-worker project after unit tests", () =
 			"test/github-events.test.ts",
 			"test/merge.test.ts",
 			"test/mongodb.test.ts",
-			"test/openspec.test.ts",
 			"test/projection-invariants.test.ts",
 			"test/server-startup-reconciliation.test.ts",
 			"test/server.test.ts",

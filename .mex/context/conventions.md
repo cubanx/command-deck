@@ -25,5 +25,4 @@ last_updated: 2026-08-13
 
 - `bun run typecheck`
 - `bun test` with the documented disposable local MongoDB prerequisite
-- `openspec validate <change> --strict` for OpenSpec work
 - `git diff --check`

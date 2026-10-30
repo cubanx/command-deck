@@ -1,6 +1,6 @@
 # Command Deck.ai
 
-A Bun and TypeScript service that projects signed GitHub activity and committed OpenSpec progress into a developer dashboard.
+A Bun and TypeScript service that projects signed GitHub activity into a developer dashboard.
 
 ## Repository guidance
 
@@ -14,7 +14,6 @@ A Bun and TypeScript service that projects signed GitHub activity and committed 
 - Typecheck: `bun run typecheck`
 - Test: `bun test`
 - Pre-push validation: `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun run validate:all`
-- OpenSpec: `openspec validate <change> --strict`
 
 ## Commit Messages
 
@@ -33,7 +32,6 @@ before committing.
 | --- | --- |
 | `github` | GitHub ingestion, reconciliation, and activity projections. |
 | `dashboard` | Dashboard views, interactions, and live updates. |
-| `progress` | OpenSpec task parsing and lifecycle evidence. |
 | `auth` | Sign-in, identity bindings, and access control. |
 | `docs` | Contributor guidance, runbooks, and design documentation. |
 | `test` | Test suites and fixtures. |
@@ -44,6 +42,6 @@ Examples:
 
 ```text
 fix(github)[rel]: ignore duplicate webhook deliveries
-ref(progress)[mnt]: consolidate task marker parsing
+ref(dashboard)[mnt]: consolidate lifecycle stage labels
 add(test)[rel]: stale projection regression coverage
 ```

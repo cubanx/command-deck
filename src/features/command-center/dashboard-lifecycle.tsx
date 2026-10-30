@@ -1,9 +1,8 @@
-export const stages = ["post-merge", "draft", "openspec", "ready", "reviewing", "mergeable"];
+export const stages = ["post-merge", "draft", "ready", "reviewing", "mergeable"];
 export const stageLabel = (stage: string) =>
 	({
 		"post-merge": "Post-merge",
 		draft: "Draft",
-		openspec: "OpenSpec",
 		ready: "Ready",
 		reviewing: "Reviewing",
 		mergeable: "Mergeable",
@@ -13,7 +12,6 @@ const pillLabel = (stage: string) =>
 	({
 		"post-merge": "Merged",
 		draft: "Draft",
-		openspec: "OpenSpec ready",
 		ready: "Ready for review",
 		reviewing: "Reviewing",
 		mergeable: "Mergeable",

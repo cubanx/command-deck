@@ -9,7 +9,7 @@ import {
 } from "#/features/command-center/sort-preference";
 
 test("accepts every supported sort preference and rejects malformed values", () => {
-	for (const mode of ["opened", "closest", "updated", "progress", "repository"]) {
+	for (const mode of ["opened", "closest", "updated", "repository"]) {
 		expect(sortPreference(JSON.stringify({ mode, direction: "desc" }))).toEqual({
 			mode,
 			direction: "desc",
@@ -21,7 +21,7 @@ test("accepts every supported sort preference and rejects malformed values", () 
 });
 
 test("encodes combined select values and fails closed to the current preference", () => {
-	for (const mode of ["opened", "closest", "updated", "progress", "repository"] as const)
+	for (const mode of ["opened", "closest", "updated", "repository"] as const)
 		for (const direction of ["asc", "desc"] as const) {
 			const preference = { mode, direction };
 			expect(sortPreferenceValue(preference)).toBe(`${mode}:${direction}`);

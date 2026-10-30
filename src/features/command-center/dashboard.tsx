@@ -60,7 +60,10 @@ const initialDashboardView = (
 	return {
 		sort: sortPreference(JSON.stringify(prefs?.sort)),
 		query: typeof filters?.query === "string" ? filters.query : "",
-		statuses: new Set(Array.isArray(filters?.statuses) ? filters.statuses : stages),
+		// Saved filters may name stages that no longer exist; the preferences API rejects unknown statuses.
+		statuses: new Set(
+			Array.isArray(filters?.statuses) ? filters.statuses.filter((status) => stages.includes(status)) : stages,
+		),
 		repositories: Array.isArray(prefs?.repositoryIds)
 			? new Set(repositoryRows.filter((repo) => prefs.repositoryIds?.includes(repo.id)).map((repo) => repo.name))
 			: null,
@@ -164,7 +167,7 @@ export function OperationalDashboard({ snapshot }: { snapshot: Snapshot }) {
 		}
 	};
 	const items = derivePullRequests(
-		snapshot.pullRequests.map((pr) => ({ pr, spec: pr.open_specs?.[0] ?? pr.open_spec })),
+		snapshot.pullRequests.map((pr) => ({ pr })),
 		view,
 	);
 	const set = <Key extends keyof ViewState>(key: Key, value: ViewState[Key]) => {

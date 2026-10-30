@@ -31,14 +31,6 @@ const blockedPullRequest = () => ({
 	head_ref: "ops/stabilize-bajoran-relay",
 	head_sha: "2012012012012012012012012012012012012012",
 	updated_at: "2026-08-27T12:00:00.000Z",
-	open_specs: [
-		{
-			change_name: "stabilize-bajoran-relay",
-			completed: 1,
-			total: 3,
-			pre_merge_ready: false,
-		},
-	],
 });
 
 const eligiblePullRequest = () => ({
@@ -67,7 +59,6 @@ const eligiblePullRequest = () => ({
 	required_checks: [
 		{ head_sha: "2022022022022022022022022022022022022022", conclusion: "success" },
 	],
-	labels: ["openspec-not-required"],
 	updated_at: refreshed ? "2026-08-27T12:05:00.000Z" : "2026-08-27T12:01:00.000Z",
 });
 

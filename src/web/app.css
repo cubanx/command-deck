@@ -548,21 +548,6 @@ caption {
 .error {
 	color: #b42318;
 }
-.openspec {
-	margin-top: 12px;
-	padding: 12px;
-	border: 1px solid var(--border);
-	border-radius: 6px;
-	background: var(--surface-muted);
-	color: var(--text);
-}
-.openspec > summary {
-	cursor: pointer;
-}
-.post-merge-badge {
-	margin-inline-start: var(--mantine-spacing-xs);
-	vertical-align: middle;
-}
 .command-center-blockers {
 	min-width: 0;
 	padding-inline-start: var(--mantine-spacing-lg);
@@ -588,23 +573,9 @@ caption {
 .command-center-pr-title-trigger[data-expanded] .command-center-pr-title-cue {
 	transform: translateY(-1px) rotate(180deg);
 }
-.tasks {
-	padding: 0;
-	list-style: none;
-}
-.tasks li {
-	margin: 7px 0;
-}
-.tasks input {
-	margin: 0 7px 0 0;
-	accent-color: #2563eb;
-}
 button,
 a,
 .button {
-	color: var(--link);
-}
-.openspec a {
 	color: var(--link);
 }
 button {
@@ -650,14 +621,6 @@ summary:focus-visible {
 }
 :root[data-appearance="dark"] .configuration-link:hover {
 	background: #334155;
-}
-:root[data-appearance="dark"] .openspec {
-	border-color: #64748b;
-	background: #111827;
-	color: #e5edf6;
-}
-:root[data-appearance="dark"] .openspec a {
-	color: #7dd3fc;
 }
 :root[data-appearance="dark"] .pr-card-header h3 a {
 	color: #7dd3fc;

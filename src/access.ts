@@ -9,7 +9,6 @@ import type {
 	UserDocument,
 } from "#/db";
 import { approvedInstallationAccount, sameLogin } from "#/installations";
-import { openSpecGate } from "#/openspec-gate";
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 type DashboardPullRequest = PullRequest & {
@@ -19,8 +18,6 @@ type DashboardPullRequest = PullRequest & {
 	installation_pull_requests?: string;
 	repository_id?: string;
 	full_name?: string;
-	open_specs?: Record<string, unknown>[];
-	open_spec?: Record<string, unknown> | null;
 	needs_attention?: boolean;
 	retention_candidate?: boolean;
 	updated_at?: string;
@@ -45,7 +42,6 @@ const normalize = (value: unknown) =>
 const needsAttention = (pr: Record<string, unknown>) =>
 	Boolean(
 		pr.draft ||
-			pr.post_merge_unresolved === true ||
 			normalize(pr.review_state) === "changes_requested" ||
 			badPrStates.has(normalize(pr.checks_state)) ||
 			badPrStates.has(normalize(pr.workflow_state)) ||
@@ -86,7 +82,6 @@ const localDemoPullRequests = [
 	workflow_state: index % 3 === 0 ? "failure" : "success",
 	bot_review_actor: "odo[bot]",
 	bot_review_state: index % 3 === 0 ? "in_progress" : "approved",
-	...([117, 118].includes(119 - index) ? { labels: ["openspec-not-required"] } : {}),
 }));
 
 export const safeAvatarUrl = (value: unknown) => {
@@ -106,13 +101,6 @@ const emptyUser = (id: string): UserDocument => ({
 	createdAt: new Date(),
 	updatedAt: new Date(),
 });
-const orderedOpenSpecs = (specs: Record<string, unknown>[]) =>
-	[
-		...new Map(
-			specs.map((spec) => [[spec.change_name, spec.source_commit, spec.source_ref].map(String).join("\0"), spec]),
-		).values(),
-	].sort((a, b) => String(a.change_name ?? "").localeCompare(String(b.change_name ?? "")));
-
 export async function upsertIdentity(db: Db, id: string, login: string, avatarUrl?: string) {
 	const safeAvatar = safeAvatarUrl(avatarUrl),
 		now = new Date();
@@ -160,24 +148,11 @@ export async function seedLocalDemo(db: Db) {
 	);
 	await db.pullRequests.deleteMany({ repositoryId: "local-demo-repository" });
 	await db.pullRequests.insertMany(
-		localDemoPullRequests.map((pr, index) => ({
+		localDemoPullRequests.map((pr) => ({
 			...pr,
 			_id: `local-demo-repository:${pr.number}`,
 			repositoryId: "local-demo-repository",
 			updatedAt: now,
-			...(index === 0
-				? {
-						open_specs: [
-							{
-								change_name: "restore-defiant-launch-checklist",
-								completed: 26,
-								total: 27,
-								source_commit: "local-demo-119",
-								source_ref: "demo/restore-the-defiant-launch-checklist",
-							},
-						],
-					}
-				: {}),
 		})),
 	);
 	await db.deployments.deleteMany({ repositoryId: "local-demo-repository" });
@@ -214,7 +189,7 @@ export async function sessionUser(db: Db, token: string, now = new Date()) {
 }
 
 const validateDashboardFilters = (filters: DashboardFilters | undefined) => {
-	const dashboardStatuses = new Set(["closed", "post-merge", "draft", "openspec", "ready", "reviewing", "mergeable"]);
+	const dashboardStatuses = new Set(["closed", "post-merge", "draft", "ready", "reviewing", "mergeable"]);
 	if (
 		!filters ||
 		Object.keys(filters).some(
@@ -234,7 +209,7 @@ const validateDashboardFilters = (filters: DashboardFilters | undefined) => {
 };
 
 export async function updateDashboardPreferences(db: Db, userId: string, input: DashboardPreferences) {
-	const dashboardSortModes = new Set(["opened", "closest", "updated", "progress", "repository"]);
+	const dashboardSortModes = new Set(["opened", "closest", "updated", "repository"]);
 	if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid preferences");
 	const keys = Object.keys(input as object);
 	if (keys.some((key) => !["repositoryIds", "sort", "filters"].includes(key))) throw new Error("invalid preferences");
@@ -297,10 +272,6 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
 			const installation = installations.find(
 				(item) => item.installationId && repo?.installationIds.includes(item.installationId),
 			);
-			const specs = Array.isArray(pr.open_specs) ? orderedOpenSpecs(pr.open_specs as Record<string, unknown>[]) : [];
-			const labels = Array.isArray(pr.labels)
-				? pr.labels.filter((label): label is string => typeof label === "string")
-				: [];
 			const number = Number(pr.number);
 			const safeUrl =
 				typeof pr.url === "string" && URL.canParse(pr.url) && new URL(pr.url).protocol === "https:"
@@ -319,9 +290,7 @@ export async function dashboardForUser(db: Db, userId: string, now = new Date())
 						: undefined,
 				repository_id: String(pr.repositoryId),
 				full_name: repo?.full_name,
-				open_specs: specs,
-				open_spec: specs[0] ?? null,
-				needs_attention: needsAttention(pr) || !openSpecGate(specs, labels, pr).ready,
+				needs_attention: needsAttention(pr),
 			};
 		})
 		.sort(

@@ -145,13 +145,12 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 									createdAt: "2026-08-20T12:00:00Z",
 									updatedAt: "2026-08-24T12:00:00Z",
 									title: "Defiant readiness",
-									body: "## OpenSpecs\n- alpha\n- `zeta`",
 									url: "https://github.com/ds9/ops/pull/7",
 									headRefOid: "a".repeat(40),
 									mergeable: "MERGEABLE",
 									reviewDecision: null,
 									labels: {
-										nodes: [{ name: "openspec-not-required" }],
+										nodes: [{ name: "needs-docs" }],
 										pageInfo: { hasNextPage: false },
 									},
 									reviewRequests: {
@@ -175,21 +174,8 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 					});
 				}
 				if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
-				if (value.includes("/pulls/7/files"))
-					return Response.json([
-						{ filename: "openspec/changes/alpha/tasks.md", status: "modified" },
-						{ filename: "openspec/changes/zeta/tasks.md", status: "renamed" },
-						{
-							filename: "openspec/changes/removed/tasks.md",
-							status: "removed",
-						},
-					]);
 				throw new Error(`unexpected targeted request ${value}`);
 			},
-			fetchTasks: async ({ path }) =>
-				path.includes("alpha")
-					? "## Current\n- [ ] Align the deflector\n\n## Next\n- [ ] Tune the warp core\n\n## Observe [post-merge]\n- [ ] Observe the anomaly"
-					: "- [x] Tune the warp core",
 		};
 		const result = await reconcilePullRequest(db, input);
 		expect(result.kind).toBe("changed");
@@ -200,24 +186,13 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 			changes_requested: false,
 			repository_policy_loaded: true,
 		});
-		expect((await dashboardForUser(db, "u")).pullRequests[0]?.open_specs).toMatchObject([
-			{
-				change_name: "alpha",
-				source_url: `https://github.com/ds9/ops/blob/${"a".repeat(40)}/openspec/changes/alpha/tasks.md`,
-				active_group: { title: "Current" },
-				active_groups: [{ title: "Current" }, { title: "Next" }],
-				incomplete_groups: [{ title: "Current" }, { title: "Next" }],
-			},
-			{ change_name: "zeta" },
-		]);
-		expect((await dashboardForUser(db, "u")).pullRequests[0]?.detected_open_specs).toEqual(["alpha", "zeta"]);
-		await db.pullRequests.updateOne({ _id: "2:7" }, { $set: { open_specs: [] } });
+		await db.pullRequests.updateOne({ _id: "2:7" }, { $set: { title: "Stale defiant readiness" } });
 		expect((await reconcilePullRequest(db, input)).kind).toBe("changed");
 		const persistenceFailures: GitHubRequestFailure[] = [];
 		input.reportFailure = (failure) => {
 			persistenceFailures.push(failure);
 		};
-		await db.pullRequests.updateOne({ _id: "2:7" }, { $set: { open_specs: [] } });
+		await db.pullRequests.updateOne({ _id: "2:7" }, { $set: { title: "Stale defiant readiness" } });
 		const write = vi
 			.spyOn(db.pullRequests, "replaceOne")
 			.mockRejectedValueOnce(
@@ -241,22 +216,9 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 			write.mockRestore();
 		}
 		const failures: GitHubRequestFailure[] = [];
-		input.fetchTasks = async () => {
-			throw Object.assign(new Error("fixture failure"), { status: 500 });
-		};
 		input.reportFailure = (failure) => {
 			failures.push(failure);
 		};
-		expect((await reconcilePullRequest(db, input)).kind).toBe("error");
-		expect(failures).toEqual([
-			{
-				failureClass: "unknown",
-				operation: "targeted pull request reconciliation active OpenSpec task",
-				status: 500,
-				target: "repositories/2/pulls/7",
-			},
-		]);
-		failures.splice(0);
 		input.fetcher = async () =>
 			Response.json({
 				errors: [
@@ -311,94 +273,7 @@ test("targeted repair replaces complete lifecycle evidence without broad reads",
 		expect(JSON.stringify(failures)).not.toContain("must-not-escape");
 	}));
 
-test("targeted repair recovers an authored merged PR from current default-branch evidence", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "9", "cubanx");
-		await seedRepositories(db, "u", {
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [],
-
-			deployments: [],
-			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
-		});
-		const defaultSha = "b".repeat(40);
-		const result = await reconcilePullRequest(db, {
-			installationId: "9",
-			repositoryId: "2",
-			number: 143,
-			token: "token",
-			fetcher: async (url, init) => {
-				const value = String(url);
-				if (value.endsWith("/graphql")) {
-					const query = JSON.parse(String(init?.body)).query;
-					expect(query).toContain("mergeCommit { oid }");
-					return Response.json({
-						data: {
-							repository: {
-								pullRequest: {
-									state: "MERGED",
-									merged: true,
-									isDraft: false,
-									createdAt: "2026-08-20T12:00:00Z",
-									updatedAt: "2026-08-24T12:00:00Z",
-									title: "Retain the follow-up",
-									body: "## OpenSpecs\n- retain-follow-up",
-									url: "https://github.com/ds9/ops/pull/143",
-									headRefName: "feature/retain-follow-up",
-									headRefOid: "a".repeat(40),
-									baseRefName: "main",
-									mergeCommit: { oid: "c".repeat(40) },
-									mergedAt: "2026-08-25T12:00:00Z",
-									author: { login: "sisko" },
-									mergeable: "MERGEABLE",
-									reviewDecision: null,
-									labels: { nodes: [], pageInfo: { hasNextPage: false } },
-									reviewRequests: { totalCount: 0 },
-									reviews: { nodes: [], pageInfo: { hasNextPage: false } },
-									reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
-									statusCheckRollup: { contexts: { nodes: [], pageInfo: { hasNextPage: false } } },
-								},
-							},
-						},
-					});
-				}
-				if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
-				if (value.endsWith("/repos/ds9/ops")) return Response.json({ default_branch: "main" });
-				if (value.includes("/commits/main"))
-					return Response.json({ sha: defaultSha, commit: { committer: { date: "2026-08-26T12:00:00Z" } } });
-				if (value.includes("/git/trees/"))
-					return Response.json({
-						truncated: false,
-						tree: [{ type: "blob", path: "openspec/changes/archive/2026-08-26-retain-follow-up/tasks.md" }],
-					});
-				throw new Error(`unexpected merged targeted request ${value}`);
-			},
-			fetchTasks: async ({ path, sha }) => {
-				expect(sha).toBe(defaultSha);
-				if (path === "openspec/changes/retain-follow-up/tasks.md") return null;
-				expect(path).toBe("openspec/changes/archive/2026-08-26-retain-follow-up/tasks.md");
-				return "## 2. Follow-up [post-merge]\n- [ ] Observe the result";
-			},
-		});
-		expect(result.kind).toBe("changed");
-		expect(await db.pullRequests.findOne({ repositoryId: "2" })).toMatchObject({
-			number: 143,
-			state: "closed",
-			merged: true,
-			retention_candidate: true,
-			post_merge_obligations: ["retain-follow-up"],
-			post_merge_source_commit: defaultSha,
-			post_merge_source_ref: "main",
-			post_merge_unresolved: false,
-		});
-		expect((await db.pullRequests.findOne({ repositoryId: "2" }))?.open_specs).toMatchObject([
-			{ source_url: expect.stringContaining("archive/2026-08-26-retain-follow-up") },
-		]);
-	}));
-
-test("targeted repair excludes a new merged PR with only pre-merge work", () =>
+test("targeted repair excludes a newly merged PR", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
@@ -423,7 +298,6 @@ test("targeted repair excludes a new merged PR with only pre-merge work", () =>
 								createdAt: "2026-08-20T12:00:00Z",
 								updatedAt: "2026-08-24T12:00:00Z",
 								title: "Finish the pre-merge work",
-								body: "## OpenSpecs\n- pre-merge-only",
 								url: "https://github.com/ds9/ops/pull/144",
 								headRefName: "feature/pre-merge-only",
 								headRefOid: "a".repeat(40),
@@ -443,9 +317,7 @@ test("targeted repair excludes a new merged PR with only pre-merge work", () =>
 					},
 				});
 			if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
-			if (value.endsWith("/repos/ds9/ops")) return Response.json({ default_branch: "main" });
-			if (value.includes("/commits/main")) return Response.json({ sha: "b".repeat(40) });
-			throw new Error(`unexpected pre-merge-only request ${value}`);
+			throw new Error(`unexpected merged request ${value}`);
 		};
 		const result = await reconcilePullRequest(db, {
 			installationId: "9",
@@ -453,121 +325,10 @@ test("targeted repair excludes a new merged PR with only pre-merge work", () =>
 			number: 144,
 			token: "token",
 			fetcher,
-			fetchTasks: async () => "## 1. Build\n- [ ] Work before merge",
 		});
 		expect(result.kind).toBe("unchanged");
 		expect((await dashboardForUser(db, "u")).pullRequests).toEqual([]);
 		expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toEqual([]);
-	}));
-
-test("merged retention keeps invalid, missing, zero-task and read-failed evidence unresolved", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "9", "cubanx");
-		await seedRepositories(db, "u", {
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [
-				{
-					number: 153,
-					author_login: "sisko",
-					state: "closed",
-					merged: true,
-					retention_candidate: true,
-					post_merge_obligations: ["complete-evidence"],
-				},
-			],
-
-			deployments: [],
-			policy: { refreshed_at: "2026-08-24T12:00:00Z", required_checks: [] },
-		});
-		const bodies = new Map([
-			[145, "## OpenSpecs\n- malformed!"],
-			[146, "## OpenSpecs\n"],
-			[147, "## OpenSpecs\n- missing-evidence"],
-			[148, "## OpenSpecs\n- zero-evidence"],
-			[149, "## OpenSpecs\n- failed-evidence"],
-			[151, "## OpenSpecs\n- foreign-evidence"],
-			[152, "## OpenSpecs\n- ambiguous-evidence"],
-			[153, "## OpenSpecs\n- complete-evidence"],
-			[154, "## OpenSpecs\n- unavailable-branch"],
-			[155, "## OpenSpecs\n- unavailable-tree"],
-		]);
-		let currentNumber = 0;
-		const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
-			const value = String(url);
-			if (value.endsWith("/graphql")) {
-				const number = Number((JSON.parse(String(init?.body)) as { variables: { number: number } }).variables.number);
-				currentNumber = number;
-				return Response.json({
-					data: {
-						repository: {
-							pullRequest: {
-								state: "MERGED",
-								merged: true,
-								isDraft: false,
-								createdAt: "2026-08-20T12:00:00Z",
-								updatedAt: "2026-08-24T12:00:00Z",
-								title: `Retain ${number}`,
-								body: bodies.get(number),
-								url: `https://github.com/ds9/ops/pull/${number}`,
-								headRefName: "feature/retention",
-								headRefOid: "a".repeat(40),
-								baseRefName: "main",
-								mergeCommit: { oid: "c".repeat(40) },
-								mergedAt: "2026-08-25T12:00:00Z",
-								author: { login: number === 151 ? "quark" : "sisko" },
-								mergeable: "MERGEABLE",
-								reviewDecision: null,
-								labels: { nodes: [], pageInfo: { hasNextPage: false } },
-								reviewRequests: { totalCount: 0 },
-								reviews: { nodes: [], pageInfo: { hasNextPage: false } },
-								reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } },
-								statusCheckRollup: { contexts: { nodes: [], pageInfo: { hasNextPage: false } } },
-							},
-						},
-					},
-				});
-			}
-			if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
-			if (value.endsWith("/repos/ds9/ops"))
-				return currentNumber === 154 ? new Response(null, { status: 503 }) : Response.json({ default_branch: "main" });
-			if (value.includes("/commits/main")) return Response.json({ sha: "b".repeat(40) });
-			if (value.includes("/git/trees/") && currentNumber === 155) return new Response(null, { status: 503 });
-			if (value.includes("/git/trees/"))
-				return Response.json({
-					truncated: false,
-					tree: [
-						{ type: "blob", path: "openspec/changes/archive/2026-08-01-ambiguous-evidence/tasks.md" },
-						{ type: "blob", path: "openspec/changes/archive/2026-08-02-ambiguous-evidence/tasks.md" },
-						{ type: "blob", path: "openspec/changes/archive/2026-08-01-complete-evidence/tasks.md" },
-					],
-				});
-			throw new Error(`unexpected retention evidence request ${value}`);
-		};
-		for (const number of [145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155]) {
-			const result = await reconcilePullRequest(db, {
-				installationId: "9",
-				repositoryId: "2",
-				number,
-				token: "token",
-				fetcher,
-				reportFailure: () => undefined,
-				fetchTasks: async ({ path }) => {
-					if (number === 147 || number === 152 || number === 155) return null;
-					if (number === 153) return path.includes("/archive/") ? "- [x] Observed Defiant" : null;
-					if (number === 148) return "No task markers here";
-					if (number === 149) throw new Error("provider unavailable");
-					return `## Follow-up [post-merge]\n- [ ] Observe ${path}`;
-				},
-			});
-			expect(result.kind).not.toBe("error");
-		}
-		const pullRequests = (await dashboardForUser(db, "u")).pullRequests;
-		expect(pullRequests.map((pullRequest) => Number(pullRequest.number))).toEqual([145, 147, 148, 149, 152, 154, 155]);
-		expect(pullRequests.filter((pullRequest) => pullRequest.post_merge_unresolved === true)).toHaveLength(7);
-		for (const number of [154, 155])
-			expect(pullRequests.find((pr) => pr.number === number)?.post_merge_source_commit).toBeFalsy();
 	}));
 
 test("targeted repair requires terminal provider evidence for success", () =>
@@ -1360,9 +1121,6 @@ test("installation bootstrap reports direct projected PR reconciliation counts",
 					author_login: "sisko",
 					state: "open",
 					draft: 0,
-					open_spec: null,
-					open_spec_declaration: "absent",
-					detected_open_specs: [],
 				},
 			],
 		});
@@ -1775,264 +1533,6 @@ test("broad repair preserves a missing open PR until targeted evidence succeeds"
 			mergeable: "clean",
 			bot_review_state: "complete",
 		});
-		expect(pullRequests[0]?.open_specs ?? []).toEqual([]);
-	}));
-
-test("complete bootstrap refreshes OpenSpecs from current pull request heads", () =>
-	withDatabase(async (db) => {
-		const invalidSha = "c".repeat(40),
-			olderSha = "a".repeat(40),
-			newerSha = "b".repeat(40);
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "9", "cubanx");
-		await seedRepositories(db, "u", {
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [],
-
-			deployments: [],
-		});
-		let hasChange = true,
-			listingUnchanged = false;
-		const fetcher = async (url: RequestInfo | URL) => {
-			const value = String(url);
-			if (value.includes("/app/installations/")) return Response.json({ account: { login: "cubanx" } });
-			if (value.includes("installation/repositories"))
-				return Response.json({
-					repositories: [{ id: 2, full_name: "ds9/ops" }],
-				});
-			if (value.includes("/pulls?"))
-				return Response.json([
-					{
-						number: 1,
-						title: "Q Who",
-						user: { login: "sisko" },
-						state: "open",
-						updated_at: "not-a-timestamp",
-						head: { sha: invalidSha },
-					},
-					{
-						number: 7,
-						title: "Wolf 359",
-						user: { login: "sisko" },
-						state: "open",
-						updated_at: "2026-08-20T12:00:00Z",
-						head: { sha: olderSha },
-					},
-					{
-						number: 8,
-						title: "Best of Both Worlds",
-						user: { login: "sisko" },
-						state: "open",
-						updated_at: "2026-08-21T12:00:00Z",
-						head: { sha: newerSha },
-						body: "## OpenSpecs\n- capture-wolf-359",
-					},
-				]);
-			if (value.includes("/pulls/8/files"))
-				if (listingUnchanged) {
-					listingUnchanged = false;
-					return new Response(null, { status: 304 });
-				} else
-					return hasChange
-						? Response.json(
-								[
-									{ filename: "openspec/changes/capture-wolf-359/tasks.md" },
-									{
-										filename: "openspec/changes/archive/2026-08-26-capture-wolf-359/tasks.md",
-									},
-								],
-								{
-									headers: { etag: "changes-v1" },
-								},
-							)
-						: Response.json([]);
-			if (value.includes("/pulls/") && value.includes("/files")) return Response.json([]);
-			return Response.json([]);
-		};
-		const fetchTasks = async (input: { path: string; sha: string }) => {
-			expect(input).toMatchObject({
-				path: "openspec/changes/capture-wolf-359/tasks.md",
-			});
-			return input.sha === newerSha ? "- [x] Hold the line" : "- [ ] Resistance is futile";
-		};
-		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", fetchTasks);
-		expect((await db.pullRequests.findOne({ repositoryId: "2", number: 8 }))?.open_specs).toMatchObject([
-			{
-				change_name: "capture-wolf-359",
-				completed: 1,
-				total: 1,
-				source_commit: newerSha,
-			},
-		]);
-		const dashboard = await dashboardForUser(db, "u");
-		expect(dashboard.pullRequests).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({
-					number: 8,
-					open_spec: expect.objectContaining({
-						source_commit: newerSha,
-						source_url: `https://github.com/ds9/ops/blob/${newerSha}/openspec/changes/capture-wolf-359/tasks.md`,
-					}),
-				}),
-				expect.objectContaining({ number: 1, open_spec: null }),
-				expect.objectContaining({ number: 7, open_spec: null }),
-			]),
-		);
-		listingUnchanged = true;
-		expect(await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", fetchTasks)).toMatchObject({
-			kind: "changed",
-		});
-		expect((await db.pullRequests.findOne({ repositoryId: "2", number: 8 }))?.open_specs).toMatchObject([
-			{ change_name: "capture-wolf-359", completed: 1, total: 1 },
-		]);
-		listingUnchanged = false;
-		hasChange = false;
-		await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", fetchTasks);
-		expect((await db.pullRequests.findOne({ repositoryId: "2", number: 8 }))?.open_specs).toMatchObject([
-			{ change_name: "capture-wolf-359" },
-		]);
-	}));
-
-test("bootstrap resolves a declared OpenSpec from one changed archive path only after active 404", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "9", "cubanx");
-		const sha = "a".repeat(40);
-		const reads: string[] = [];
-		let archivePaths = ["openspec/changes/archive/2026-08-26-standardize-sortable-headers/tasks.md"];
-		const fetcher = async (url: RequestInfo | URL) => {
-			const value = String(url);
-			if (value.includes("/app/installations/")) return Response.json({ account: { login: "cubanx" } });
-			if (value.includes("installation/repositories"))
-				return Response.json({
-					repositories: [{ id: 2, full_name: "ds9/ops" }],
-				});
-			if (value.includes("/pulls?"))
-				return Response.json([
-					{
-						number: 7,
-						title: "Archive",
-						user: { login: "sisko" },
-						state: "open",
-						head: { sha },
-						body: "## OpenSpecs\n- standardize-sortable-headers",
-					},
-				]);
-			if (value.includes("/pulls/7/files"))
-				return Response.json([
-					...archivePaths.map((filename) => ({ filename })),
-					{
-						filename: "openspec/changes/archive/2026-08-25-standardize-sortable-headers/tasks.md",
-						status: "removed",
-					},
-				]);
-			if (value.includes("/deployments")) return Response.json([]);
-			return Response.json([]);
-		};
-		const result = await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", async ({ path }) => {
-			reads.push(path);
-			return path.includes("archive/") ? "- [x] Archive me" : null;
-		});
-		expect(result.kind).toBe("changed");
-		expect(reads).toEqual([
-			"openspec/changes/standardize-sortable-headers/tasks.md",
-			"openspec/changes/archive/2026-08-26-standardize-sortable-headers/tasks.md",
-		]);
-		expect((await dashboardForUser(db, "u")).pullRequests[0]?.open_spec).toMatchObject({
-			change_name: "standardize-sortable-headers",
-			source_commit: sha,
-		});
-		for (const paths of [
-			[],
-			[
-				"openspec/changes/archive/2026-08-25-standardize-sortable-headers/tasks.md",
-				"openspec/changes/archive/2026-08-26-standardize-sortable-headers/tasks.md",
-			],
-		]) {
-			archivePaths = paths;
-			expect(await bootstrapInstallation(db, "9", "token", fetcher, "app-jwt", async () => null)).toMatchObject({
-				kind: "error",
-				message: "GitHub OpenSpec artifact fetch failed",
-			});
-		}
-	}));
-
-test("bootstrap keeps OpenSpec task failures generic while reporting safe diagnostics", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "9", "cubanx");
-		const reports: unknown[] = [];
-		const result = await bootstrapInstallation(
-			db,
-			"9",
-			"token",
-			async (url) => {
-				const value = String(url);
-				if (value.includes("/app/installations/")) return Response.json({ account: { login: "cubanx" } });
-				if (value.includes("installation/repositories"))
-					return Response.json({
-						repositories: [{ id: 2, full_name: "ds9/ops" }],
-					});
-				if (value.includes("/pulls?"))
-					return Response.json([
-						{
-							number: 7,
-							title: "In the Pale Moonlight",
-							user: { login: "sisko" },
-							state: "open",
-							head: { sha: "a".repeat(40) },
-							body: "## OpenSpecs\n- hold-the-line",
-						},
-					]);
-				if (value.includes("/deployments")) return Response.json([]);
-				if (value.includes("/pulls/7/files"))
-					return Response.json([
-						{ filename: "openspec/changes/hold-the-line/tasks.md" },
-						{
-							filename: "openspec/changes/archive/2026-08-26-hold-the-line/tasks.md",
-						},
-					]);
-				return Response.json(
-					{
-						message: "Resource not accessible by integration",
-						documentation_url: "https://docs.github.com/rest",
-						errors: [
-							{
-								resource: "Repository",
-								field: "contents",
-								code: "forbidden",
-								value: "must-not-log",
-							},
-						],
-						secret: "must-not-log",
-					},
-					{ status: 403 },
-				);
-			},
-			"app-jwt",
-			undefined,
-			(report) => {
-				reports.push(report);
-			},
-		);
-		expect(result).toMatchObject({
-			kind: "error",
-			message: "GitHub OpenSpec artifact fetch failed",
-		});
-		expect(reports).toEqual([
-			{
-				operation: "bootstrap OpenSpec task fetch",
-				status: 403,
-				target:
-					"https://api.github.com/repositories/2/contents/openspec/changes/hold-the-line/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				diagnostic: {
-					message: "Resource not accessible by integration",
-					documentationUrl: "https://docs.github.com/rest",
-					errors: [{ resource: "Repository", field: "contents", code: "forbidden" }],
-				},
-			},
-		]);
 	}));
 
 test("installation reconciliation obtains tokens and bootstraps serially in stable order", () =>
@@ -2161,8 +1661,6 @@ test("installation reconciliation logs each terminal provider failure once and c
 								: Response.json({ repositories: [] });
 						return Response.json([]);
 					},
-					undefined,
-					undefined,
 					undefined,
 					async ({ installationId }) => {
 						if (installationId === "10") throw new Error("raw bookkeeping diagnostic");

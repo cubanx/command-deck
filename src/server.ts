@@ -25,9 +25,7 @@ import {
 import {
 	approvedInstallationIdsForUser,
 	bootstrapInstallation,
-	type GitHubRequestFailure,
 	githubAppJwt,
-	githubErrorDiagnostic,
 	githubFetch,
 	githubNextLink,
 	installationToken,
@@ -251,9 +249,6 @@ const githubRead = async (url: string, token: string) => {
 		body: response.ok ? await response.json() : null,
 	};
 };
-
-const logGitHubRequestFailure = (failure: GitHubRequestFailure) =>
-	console.error("GitHub request failed", JSON.stringify(failure));
 
 const successfulEvidence = (items: Array<Record<string, unknown>> | undefined, noRequirements: boolean) =>
 	Array.isArray(items) && (items.length === 0 ? noRequirements : items.every((item) => item.conclusion === "success"));
@@ -505,7 +500,7 @@ const queueBootstrap = (context: AppContext, installationId: string) => {
 				else {
 					const appJwt = githubAppJwt(githubAppId!, githubAppPrivateKey!.replace(/\\n/g, "\n"));
 					const token = await installationToken(appJwt, installationId);
-					result = await bootstrapInstallation(context.db, installationId, token, fetch, appJwt, undefined);
+					result = await bootstrapInstallation(context.db, installationId, token, fetch, appJwt);
 				}
 			} catch {
 				result = normalizedReconciliationFailure();
@@ -669,12 +664,7 @@ const mergeCallback = async (context: AppContext, request: Request, url: URL) =>
 	if (!provider) return new Response("merge is unavailable", { status: 503 });
 	let authoritative: Record<string, unknown>;
 	try {
-		authoritative = {
-			...(await provider.inspect(intent)),
-			labels: projected.labels,
-			open_specs: projected.open_specs,
-			open_spec: projected.open_spec,
-		};
+		authoritative = await provider.inspect(intent);
 	} catch (error) {
 		console.error("merge eligibility read failed", error instanceof Error ? error.message : "unknown error");
 		return new Response("merge eligibility is unavailable", { status: 502 });
@@ -981,12 +971,7 @@ const mergeConfirmRoute = async (context: AppContext, request: Request, path: st
 			inspect: async () => {
 				const projected = await currentMergeTarget(context, user.id, intent);
 				if (!projected) return {};
-				return {
-					...(await provider.inspect(intent)),
-					labels: projected.labels,
-					open_specs: projected.open_specs,
-					open_spec: projected.open_spec,
-				};
+				return await provider.inspect(intent);
 			},
 			merge: (variables) => provider.merge(intent, variables),
 		});
@@ -1231,8 +1216,6 @@ const createBroadReconciler = (options: ReconciliationOptions) => {
 					},
 					countingFetch,
 					installationIds,
-					undefined,
-					undefined,
 					async ({ installationId, startedAt, result }) => {
 						const counts = directReconciliationCounts(result);
 						if (result.kind === "changed") for (const userId of await boundUserIds(db, installationId)) refresh(userId);
@@ -1346,7 +1329,6 @@ const knownOpenPullRequests = async (db: Db, initialized: Promise<unknown>) => {
 const createScheduleDrain = (options: {
 	db: Db;
 	initialized: Promise<unknown>;
-	githubTasks: Parameters<typeof drainInbox>[1];
 	reviewBot: Config["reviewBot"];
 	targetedCoordinator: ReturnType<typeof createTargetedCoordinator>;
 	reconcile: ReturnType<typeof createBroadReconciler>;
@@ -1363,7 +1345,6 @@ const createScheduleDrain = (options: {
 				await options.initialized;
 				await drainInbox(
 					options.db,
-					options.githubTasks,
 					options.reviewBot,
 					undefined,
 					undefined,
@@ -1415,55 +1396,6 @@ export function createApp(
 	};
 	const reconcileAll = dependencies.reconcileInstallations ?? reconcileInstallations;
 	const reconcileTarget = dependencies.reconcilePullRequest ?? reconcilePullRequest;
-	const githubTasks = async (input: { installationId: string; repositoryId: string; path: string; sha: string }) => {
-		if (!config.githubAppId || !config.githubAppPrivateKey) return null;
-		const token = await installationToken(
-			githubAppJwt(config.githubAppId, config.githubAppPrivateKey.replace(/\\n/g, "\n")),
-			input.installationId,
-		);
-		const target = `https://api.github.com/repositories/${input.repositoryId}/contents/${input.path}?ref=${input.sha}`;
-		const response = await githubFetch(fetch, target, {
-			headers: {
-				authorization: `Bearer ${token}`,
-				accept: "application/vnd.github.raw",
-			},
-		});
-		if (response.ok) return response.text();
-		if (response.status === 404) {
-			const treeTarget = `https://api.github.com/repositories/${input.repositoryId}/git/trees/${input.sha}?recursive=1`;
-			const tree = await githubFetch(fetch, treeTarget, {
-				headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" },
-			});
-			if (tree.ok) {
-				try {
-					const body = (await tree.json()) as { truncated?: unknown; tree?: Array<{ path?: unknown; type?: unknown }> };
-					if (
-						body.truncated === false &&
-						Array.isArray(body.tree) &&
-						!body.tree.some((entry) => entry.path === input.path && entry.type === "blob")
-					)
-						return { finalTreeAbsent: true } as const;
-				} catch (error) {
-					console.error("GitHub final tree payload was invalid", error instanceof Error ? error.name : "unknown");
-				}
-			} else {
-				logGitHubRequestFailure({
-					operation: "webhook OpenSpec task final tree fetch",
-					status: tree.status,
-					target: treeTarget,
-					diagnostic: await githubErrorDiagnostic(tree),
-				});
-				return null;
-			}
-		}
-		logGitHubRequestFailure({
-			operation: "webhook OpenSpec task fetch",
-			status: response.status,
-			target,
-			diagnostic: await githubErrorDiagnostic(response),
-		});
-		return null;
-	};
 	const reconciliationOptions = {
 		db,
 		config,
@@ -1495,7 +1427,6 @@ export function createApp(
 	const scheduleDrain = createScheduleDrain({
 		db,
 		initialized,
-		githubTasks,
 		reviewBot: config.reviewBot,
 		targetedCoordinator,
 		reconcile,

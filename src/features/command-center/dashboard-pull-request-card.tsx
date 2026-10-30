@@ -1,14 +1,8 @@
 import { Card, Group, Menu, Stack, Text, Title, UnstyledButton } from "@mantine/core";
 import { useRef } from "react";
 import { LifecycleRail } from "#/features/command-center/dashboard-lifecycle";
-import { OpenSpecTaskViewer } from "#/features/command-center/dashboard-openspec";
 import { safeHref } from "#/features/command-center/dashboard-utils";
-import {
-	type DerivedPullRequest,
-	detectedOpenSpecCandidatesFor,
-	mergeControlFor,
-	type PullRequest,
-} from "#/features/command-center/view-model";
+import { type DerivedPullRequest, mergeControlFor, type PullRequest } from "#/features/command-center/view-model";
 
 const hasMergeTarget = (pr: PullRequest) =>
 	typeof pr.installation_id === "string" &&
@@ -19,20 +13,6 @@ const hasMergeTarget = (pr: PullRequest) =>
 	Number(pr.number) > 0 &&
 	typeof pr.head_sha === "string" &&
 	/^[a-f\d]{40}$/i.test(pr.head_sha);
-
-function OpenSpecEvidence({ pr }: { pr: PullRequest }) {
-	const detectedOpenSpecs = detectedOpenSpecCandidatesFor(pr);
-	return (
-		<>
-			{pr.open_specs?.map((spec) => (
-				<OpenSpecTaskViewer key={spec.change_name} spec={spec} />
-			))}
-			{detectedOpenSpecs.length ? (
-				<Text>Detected OpenSpec candidates (informational): {detectedOpenSpecs.join(", ")}</Text>
-			) : null}
-		</>
-	);
-}
 
 function WorkflowFailures({ pr }: { pr: PullRequest }) {
 	return pr.workflow_failures?.length ? (
@@ -135,7 +115,6 @@ export function PullRequestCard({
 					))}
 				</Text>
 				<LifecycleRail bucket={item.bucket} />
-				<OpenSpecEvidence pr={pr} />
 				<WorkflowFailures pr={pr} />
 			</Stack>
 		</Card>

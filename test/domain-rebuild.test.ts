@@ -17,11 +17,10 @@ const closedPull = {
 	merge_commit_sha: merge,
 	head: { sha: head, ref: "ops/restore-defiant" },
 	user: { login: "sisko" },
-	body: "## OpenSpecs\n- restore-defiant",
 	html_url: "https://github.com/ds9/ops/pull/143",
 };
 
-test("clean start rebuilds old obligations and restores preferences before automatic signed-event refresh", () =>
+test("clean start rebuilds projections and restores preferences before automatic signed-event refresh", () =>
 	withDatabase(async (db) => {
 		expect(await db.users.countDocuments({})).toBe(0);
 		expect(await db.pullRequests.countDocuments({})).toBe(0);
@@ -58,7 +57,6 @@ test("clean start rebuilds old obligations and restores preferences before autom
 									merged: true,
 									isDraft: false,
 									title: closedPull.title,
-									body: closedPull.body,
 									url: closedPull.html_url,
 									createdAt: "2020-01-01T00:00:00Z",
 									updatedAt: "2020-01-03T00:00:00Z",
@@ -82,11 +80,6 @@ test("clean start rebuilds old obligations and restores preferences before autom
 				if (url.pathname.endsWith("/repos/ds9/ops")) return Response.json({ default_branch: "main" });
 				if (url.pathname.includes("/commits/main"))
 					return Response.json({ sha: current, commit: { committer: { date: "2026-09-13T00:00:00Z" } } });
-				if (url.pathname.includes("/git/trees/"))
-					return Response.json({
-						truncated: false,
-						tree: [{ type: "blob", path: "openspec/changes/restore-defiant/tasks.md" }],
-					});
 				if (url.pathname.includes("actions/runs")) return Response.json({ workflow_runs: [] });
 				if (
 					url.pathname.endsWith("/deployments") ||
@@ -97,18 +90,11 @@ test("clean start rebuilds old obligations and restores preferences before autom
 				throw new Error(`unexpected fictional rebuild request ${url.pathname}`);
 			},
 			"fictional-app-jwt",
-			async () => "## 1. Repair\n- [x] Restore shields\n## 2. Observe [post-merge]\n- [ ] Verify shields",
 		);
 		expect(result.kind).toBe("changed");
 		expect(pages).toEqual(["1", "2"]);
-		expect(await db.pullRequests.findOne({ _id: "301:143" })).toMatchObject({
-			number: 143,
-			state: "closed",
-			retention_candidate: true,
-			post_merge_source_commit: current,
-		});
 		expect((await dashboardForUser(db, "1701")).pullRequests).toEqual(
-			expect.arrayContaining([expect.objectContaining({ number: 143 }), expect.objectContaining({ number: 7 })]),
+			expect.arrayContaining([expect.objectContaining({ number: 7 })]),
 		);
 		const config = { ...testConfig, githubWebhookSecret: "fictional-defiant-secret" };
 		const dependencies = { reconcilePullRequest: async () => ({ kind: "unchanged" as const }) };
@@ -132,7 +118,7 @@ test("clean start rebuilds old obligations and restores preferences before autom
 			const headers = { cookie: `dcc_session=${second.token}` };
 			const snapshot = await (await app.fetch(new Request("http://local/api/snapshot", { headers }))).json();
 			expect(snapshot.preferences).toMatchObject(preferences);
-			expect(snapshot.pullRequests).toEqual(expect.arrayContaining([expect.objectContaining({ number: 143 })]));
+			expect(snapshot.pullRequests).toEqual(expect.arrayContaining([expect.objectContaining({ number: 7 })]));
 			await app.drain();
 			const stream = await app.fetch(new Request("http://local/events", { headers }));
 			reader = stream.body?.getReader();

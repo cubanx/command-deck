@@ -208,7 +208,7 @@ test("starts one non-blocking broad repair after the inbox drain", async () =>
 									: { kind: "unchanged" as const },
 						},
 					];
-					for (const row of rows) await args[6]?.({ ...row, startedAt: new Date() });
+					for (const row of rows) await args[4]?.({ ...row, startedAt: new Date() });
 					return rows;
 				},
 			},
@@ -265,7 +265,7 @@ test("queues the startup-wide repair behind an active scoped reconciliation", as
 						scopedStarted();
 						await scoped;
 					}
-					await args[6]?.({
+					await args[4]?.({
 						installationId: "9",
 						startedAt: new Date(),
 						result: { kind: "unchanged" },
@@ -334,7 +334,7 @@ test("startup repair refreshes bound users only after repairing missed close and
 							]),
 						),
 					);
-					await args[6]?.({
+					await args[4]?.({
 						installationId: "9",
 						startedAt: new Date(),
 						result: { kind: "changed", body: [{ id: 2 }] },
@@ -398,12 +398,12 @@ test("broad reconciliation refreshes each changed installation before a later fa
 			{ inspect: async () => ({}), merge: async () => ({}) },
 			{
 				reconcileInstallations: async (...args: any[]) => {
-					await args[6]?.({
+					await args[4]?.({
 						installationId: "9",
 						startedAt: new Date(),
 						result: { kind: "changed", body: [] },
 					});
-					await args[6]?.({
+					await args[4]?.({
 						installationId: "10",
 						startedAt: new Date(),
 						result: {
@@ -474,7 +474,7 @@ test("broad reconciliation persists direct counts, duration, and installation-sc
 			{
 				reconcileInstallations: async (...args: any[]) => {
 					for (const installationId of ["9", "10"])
-						await args[6]?.({
+						await args[4]?.({
 							installationId,
 							startedAt: new Date(),
 							result: {
@@ -526,12 +526,12 @@ test("broad reconciliation records each installation's own elapsed duration", as
 			{
 				reconcileInstallations: async (...args: any[]) => {
 					await new Promise((resolve) => setTimeout(resolve, 50));
-					await args[6]?.({
+					await args[4]?.({
 						installationId: "9",
 						startedAt: new Date(now - 60_000),
 						result: { kind: "unchanged" },
 					});
-					await args[6]?.({
+					await args[4]?.({
 						installationId: "10",
 						startedAt: new Date(now - 1_000),
 						result: { kind: "unchanged" },

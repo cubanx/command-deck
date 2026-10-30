@@ -40,33 +40,10 @@ test("webhook processing records a start timestamp and clears payload on complet
 	await withDatabase(async (db) => {
 		await initializeDatabase(db);
 		await bindInstallation(db, "1701", "42", "cubanx");
-		const body = JSON.stringify({
-			ref: "refs/heads/main",
-			after: "b".repeat(40),
-			installation: { id: 42, account: { login: "cubanx" } },
-			repository: { id: 301, full_name: "ds9/ops-console" },
-			commits: [{ modified: ["openspec/changes/warp-drive/tasks.md"] }],
-		});
-		expect(await acceptGitHubDelivery(db, "processing-start", "push", body)).toMatchObject({ kind: "accepted" });
-		let release!: () => void;
-		const blocked = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		let fetchStarted!: () => void;
-		const started = new Promise<void>((resolve) => {
-			fetchStarted = resolve;
-		});
-		const drain = drainInbox(db, async () => {
-			const row = await db.inboxDeliveries.findOne({ _id: "github:processing-start" });
-			expect(row?.processingStartedAt).toBeInstanceOf(Date);
-			expect(row?.payload).toBeDefined();
-			fetchStarted();
-			await blocked;
-			return "# Tasks\n";
-		});
-		await started;
-		release();
-		await drain;
+		expect(
+			await acceptGitHubDelivery(db, "processing-start", "pull_request", payload("start", "2026-09-13T12:00:00Z")),
+		).toMatchObject({ kind: "accepted" });
+		await drainInbox(db);
 		const row = await db.inboxDeliveries.findOne({ _id: "github:processing-start" });
 		expect(row).toMatchObject({ status: "done", processedAt: expect.any(Date) });
 		expect(row?.processingStartedAt).toBeInstanceOf(Date);
