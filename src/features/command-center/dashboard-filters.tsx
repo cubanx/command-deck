@@ -96,8 +96,6 @@ export function DashboardFilters({
 						{ value: "opened:desc", label: "Newest opened" },
 						{ value: "updated:asc", label: "Least recently updated" },
 						{ value: "updated:desc", label: "Most recently updated" },
-						{ value: "progress:asc", label: "Least complete" },
-						{ value: "progress:desc", label: "Most complete" },
 						{ value: "repository:asc", label: "Repository A–Z" },
 						{ value: "repository:desc", label: "Repository Z–A" },
 					]}

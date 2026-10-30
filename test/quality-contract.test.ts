@@ -138,16 +138,9 @@ test("narrow navigation keeps a centered deployment rail without forcing the bra
 	expect(css).not.toMatch(/\.command-center-navigation \.brand\s*\{\s*flex-basis: 100%;\s*\}/);
 });
 
-test("OpenSpec disclosures retain their native summary affordances", () => {
-	const css = text("src/web/app.css");
-	expect(css).toMatch(/\.openspec > summary\s*\{\s*cursor: pointer;\s*\}/);
-	expect(css).toMatch(/summary:focus-visible\s*\{/);
-});
-
-test("dashboard blockers and post-merge pills stay contained", () => {
+test("dashboard blockers stay contained", () => {
 	const css = text("src/web/app.css");
 	expect(css).toMatch(/\.command-center-blockers\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?overflow-wrap:\s*anywhere;/);
-	expect(css).toMatch(/\.post-merge-badge\s*\{[\s\S]*?margin-inline-start:\s*[^;]+;[\s\S]*?vertical-align:\s*middle;/);
 });
 
 test("PR title menu trigger keeps its prominent heading presentation", () => {
@@ -168,7 +161,7 @@ test("Railway deploys only when runtime inputs change", () => {
 	const railway = JSON.parse(text("railway.json")) as {
 		build: { watchPatterns?: string[] };
 	};
-	expect(railway.build.watchPatterns).toEqual(["**", "!/README.md", "!/docs/**", "!/openspec/**", "!/.mex/**"]);
+	expect(railway.build.watchPatterns).toEqual(["**", "!/README.md", "!/docs/**", "!/.mex/**"]);
 });
 
 test("server allows serial GitHub reconciliation to outlive Bun's default idle timeout", () => {

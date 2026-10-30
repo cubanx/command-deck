@@ -29,7 +29,7 @@ test("startup finishes interrupted effects and an expired receipt can replay wit
 		});
 		try {
 			await expect(
-				drainInbox(db, undefined, undefined, async () => {
+				drainInbox(db, undefined, async () => {
 					throw new Error("fictional process stopped");
 				}),
 			).rejects.toThrow("fictional process stopped");
@@ -46,7 +46,6 @@ test("startup finishes interrupted effects and an expired receipt can replay wit
 		const refreshed: string[] = [];
 		await drainInbox(
 			db,
-			undefined,
 			undefined,
 			undefined,
 			() => new Date(Date.now() + 120_000),

@@ -1,4 +1,4 @@
-export type SortMode = "opened" | "closest" | "updated" | "progress" | "repository";
+export type SortMode = "opened" | "closest" | "updated" | "repository";
 export type SortDirection = "asc" | "desc";
 export type SortPreference = { mode: SortMode; direction: SortDirection };
 
@@ -11,7 +11,7 @@ export const defaultSortPreference: SortPreference = {
 	direction: "asc",
 };
 
-const sortModes = new Set<SortMode>(["opened", "closest", "updated", "progress", "repository"]);
+const sortModes = new Set<SortMode>(["opened", "closest", "updated", "repository"]);
 const sortDirections = new Set<SortDirection>(["asc", "desc"]);
 
 export const isSortMode = (value: string): value is SortMode => sortModes.has(value as SortMode);

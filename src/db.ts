@@ -6,7 +6,7 @@ export const RECENT_MERGED_PULL_REQUEST_CAP = 100;
 export const RECENT_MERGED_PULL_REQUEST_RETENTION_MS = 48 * 60 * 60 * 1_000;
 const MAX_CAS_RETRIES = 3;
 export type PullRequest = Record<string, unknown> & { opened_at?: string };
-export type DashboardSortMode = "opened" | "closest" | "updated" | "progress" | "repository";
+export type DashboardSortMode = "opened" | "closest" | "updated" | "repository";
 export type DashboardSortPreference = {
 	mode: string;
 	direction: "asc" | "desc";
@@ -83,7 +83,6 @@ export type Repository = {
 	repositoryId: string;
 	full_name: string;
 	pullRequests: PullRequest[];
-	openSpecs: Record<string, unknown>[];
 	deployments: Record<string, unknown>[];
 	policy?: RepositoryPolicy;
 	recentMergedPullRequests?: MergedPullRequestEvidence[];

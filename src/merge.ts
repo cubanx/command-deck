@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Db, MergeIntent } from "#/db";
 import { githubFetch } from "#/github";
-import { openSpecGate } from "#/openspec-gate";
 
 const failed = new Set([
 	"action_required",
@@ -53,12 +52,6 @@ export const mergeIntentFor = async (db: Db, token: string, now = new Date()) =>
 	});
 
 export const mergeEligibility = (pr: Record<string, unknown>) => {
-	const spec = pr.open_spec as Record<string, unknown> | null;
-	const specs = Array.isArray(pr.open_specs) ? (pr.open_specs as Record<string, unknown>[]) : spec ? [spec] : [];
-	const labels = Array.isArray(pr.labels)
-		? pr.labels.filter((label): label is string => typeof label === "string")
-		: [];
-	const openSpec = openSpecGate(specs, labels, pr);
 	const gates = [
 		{ blocked: pr.state !== "open", reason: "Pull request is closed." },
 		{ blocked: Boolean(pr.draft), reason: "Pull request is a draft." },
@@ -81,11 +74,6 @@ export const mergeEligibility = (pr: Record<string, unknown>) => {
 		{
 			blocked: normalized(pr.review_state) !== "approved",
 			reason: "Required review is not approved.",
-		},
-		{
-			blocked: !openSpec.ready,
-			reason:
-				openSpec.blocker === "confirm" ? "Confirm OpenSpec association." : "OpenSpec completion is not confirmed.",
 		},
 		{
 			blocked: pr.merge_method !== "MERGE",

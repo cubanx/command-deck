@@ -15,7 +15,7 @@ last_updated: 2026-09-13
 
 ## Flow
 
-`src/server.ts` receives browser and GitHub traffic. Signed GitHub webhook deliveries enter the MongoDB inbox, then `src/events.ts` drains them serially into scoped projections. `src/access.ts` builds the signed-in user's dashboard. OpenSpec push events use `src/openspec.ts` to read committed task files and project progress.
+`src/server.ts` receives browser and GitHub traffic. Signed GitHub webhook deliveries enter the MongoDB inbox, then `src/events.ts` drains them serially into scoped projections. `src/access.ts` builds the signed-in user's dashboard.
 
 ## Components
 
@@ -24,10 +24,9 @@ last_updated: 2026-09-13
 - `src/db.ts`: MongoDB domain collections, indexes, per-document conflict guards, and size limits.
 - `src/github.ts`: bounded GitHub App API access and reconciliation.
 - `src/access.ts`: narrow identity reads, shared installation bindings, preferences, and authorized dashboard assembly.
-- `src/openspec.ts`: committed OpenSpec task parsing and correlation.
 
 ## Boundaries
 
 - GitHub is the provider; Railway hosts the service but is not queried by the dashboard.
-- Mex and OpenSpec are repository-development inputs, never runtime dependencies.
+- Mex is a repository-development input, never a runtime dependency.
 - Credentials, provider administration, deployment, and production operations remain outside ordinary code paths.

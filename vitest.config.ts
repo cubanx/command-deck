@@ -16,7 +16,6 @@ export default defineConfig({
 					include: ["test/**/*.test.{ts,tsx}"],
 					exclude: [
 						"test/domain-*.test.ts",
-						"test/merged-open-spec-evidence.test.ts",
 						"test/preferences-api.test.ts",
 						"test/reconciliation-runs.test.ts",
 						"test/access.test.ts",
@@ -26,7 +25,6 @@ export default defineConfig({
 						"test/github-events.test.ts",
 						"test/merge.test.ts",
 						"test/mongodb.test.ts",
-						"test/openspec.test.ts",
 						"test/projection-invariants.test.ts",
 						"test/server-startup-reconciliation.test.ts",
 						"test/server.test.ts",
@@ -42,7 +40,6 @@ export default defineConfig({
 					name: "mongo",
 					include: [
 						"test/domain-*.test.ts",
-						"test/merged-open-spec-evidence.test.ts",
 						"test/preferences-api.test.ts",
 						"test/reconciliation-runs.test.ts",
 						"test/access.test.ts",
@@ -52,7 +49,6 @@ export default defineConfig({
 						"test/github-events.test.ts",
 						"test/merge.test.ts",
 						"test/mongodb.test.ts",
-						"test/openspec.test.ts",
 						"test/projection-invariants.test.ts",
 						"test/server-startup-reconciliation.test.ts",
 						"test/server.test.ts",

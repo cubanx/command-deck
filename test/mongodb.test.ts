@@ -122,7 +122,6 @@ test("inbox drain can use index ordering while preserving eligibility", async ()
 			await drainInbox(
 				db,
 				undefined,
-				undefined,
 				async () => {},
 				() => current,
 			);

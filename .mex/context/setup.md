@@ -25,10 +25,9 @@ last_updated: 2026-09-14
 
 - `bun run typecheck`
 - `MONGODB_URI_BASE=mongodb://127.0.0.1:27018 bun test` with a disposable local MongoDB server
-- `openspec validate <change> --strict`
 - `git diff --check`
 
-After the authorized clean start, sign in, reconnect installations through the verified GitHub flow, and reconcile. Follow `openspec/changes/split-domain-documents/clean-start-runbook.md`; manual binding seeds are unsupported.
+After the authorized clean start, sign in, reconnect installations through the verified GitHub flow, and reconcile. Manual binding seeds are unsupported.
 
 Tests create UUID-named `command-center-ai-test-*` databases and drop them afterward. Never point the test URI at shared or production MongoDB.
 

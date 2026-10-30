@@ -28,7 +28,6 @@ const seedMergePullRequest = async (db: Db) => {
 					author_login: "kira",
 					state: "open",
 					draft: false,
-					labels: ["openspec-not-required"],
 					head_sha: "a".repeat(40),
 					mergeable: "clean",
 				},
@@ -122,7 +121,6 @@ test("public Vite shell assets and streams are isolated without a service worker
 		const javascript = await app.fetch(new Request(`http://local/${script}`));
 		expect(javascript.headers.get("content-type")).toBe("text/javascript");
 		expect(javascript.headers.get("cache-control")).toContain("immutable");
-		expect(await javascript.text()).toContain("showDirectoryPicker");
 		const css = shell.match(/<link rel="stylesheet" href="\/(.*?)">/)?.[1];
 		if (!css) throw new Error("Vite stylesheet missing");
 		expect((await app.fetch(new Request(`http://local/${css}`))).headers.get("content-type")).toBe("text/css");
@@ -385,7 +383,7 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 				},
 			]);
 		}
-		let outcome: "changed" | "openspec" | "closed" | "unchanged" | "error" = "changed";
+		let outcome: "changed" | "retitled" | "closed" | "unchanged" | "error" = "changed";
 		const app = createApp(db, { ...testConfig, githubWebhookSecret: "secret" }, undefined, {
 			reconcilePullRequest: async (database, target) => {
 				if (outcome === "error")
@@ -394,30 +392,16 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 						stale: true,
 						message: "provider unavailable",
 					};
-				if (outcome === "changed" || outcome === "openspec" || outcome === "closed") {
+				if (outcome === "changed" || outcome === "retitled" || outcome === "closed") {
 					if (outcome === "closed") await database.pullRequests.deleteOne({ _id: "2:7" });
 					else
 						await upsertPullRequest(database, {
 							repositoryId: "2",
 							number: 7,
-							...(outcome === "openspec"
-								? {
-										open_specs: [
-											{
-												change_name: "repair-wolf-359",
-												completed: 0,
-												total: 1,
-												pre_merge_ready: false,
-												source_commit: "a".repeat(40),
-												active_group: null,
-												updated_at: "2030-01-01T00:00:00Z",
-											},
-										],
-									}
-								: { title: "Repair the wormhole" }),
+							title: outcome === "retitled" ? "Repair the wormhole again" : "Repair the wormhole",
 						});
 				}
-				return outcome === "changed" || outcome === "openspec" || outcome === "closed"
+				return outcome === "changed" || outcome === "retitled" || outcome === "closed"
 					? { kind: "changed", body: { number: target.number } }
 					: { kind: "unchanged" };
 			},
@@ -457,15 +441,13 @@ test("changed repairs refresh every bound stream after persistence and suppress 
 			expect((await db.pullRequests.findOne({ _id: "2:7" }))?.title).toBe("Repair the wormhole");
 			for (const stream of [primary, shared])
 				expect(new TextDecoder().decode((await stream.reader.read()).value)).toContain("event: refresh");
-			const openSpec = await streamFor("u");
-			outcome = "openspec";
+			const retitled = await streamFor("u");
+			outcome = "retitled";
 			expect((await repair()).status).toBe(200);
-			expect((await db.pullRequests.findOne({ _id: "2:7" }))?.open_specs).toMatchObject([
-				{ change_name: "repair-wolf-359" },
-			]);
-			expect(new TextDecoder().decode((await openSpec.reader.read()).value)).toContain("event: refresh");
+			expect((await db.pullRequests.findOne({ _id: "2:7" }))?.title).toBe("Repair the wormhole again");
+			expect(new TextDecoder().decode((await retitled.reader.read()).value)).toContain("event: refresh");
 			expect(new TextDecoder().decode((await primary.reader.read()).value)).toContain("event: refresh");
-			await openSpec.reader.cancel();
+			await retitled.reader.cancel();
 			outcome = "unchanged";
 			expect((await repair()).status).toBe(200);
 			const ignored = JSON.stringify({
@@ -694,25 +676,11 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 					return Response.json({
 						repositories: [{ id: 2, full_name: "cubanx/defiant" }],
 					});
-				if (url.includes("/pulls/1/files"))
-					return Response.json([{ filename: "openspec/changes/repair-defiant/tasks.md" }]);
-				if (url.includes("/pulls?"))
-					return Response.json([
-						{
-							number: 1,
-							title: "Repair the defiant",
-							user: { login: "kira" },
-							state: "open",
-							head: { sha: "a".repeat(40) },
-							body: "## OpenSpecs\n- repair-defiant",
-						},
-					]);
-				if (url.includes("/deployments")) return Response.json([]);
-				if (url.includes("contents/openspec/changes/repair-defiant/tasks.md")) {
+				if (url.includes("/pulls?")) {
 					if (fail)
 						return Response.json(
 							{
-								message: "OpenSpec artifact denied",
+								message: "Pull request list denied",
 								documentation_url: "https://docs.github.com/rest",
 								token: "fixture-token-value",
 								raw_body_fixture: "fixture-raw-body-value",
@@ -722,8 +690,17 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 								headers: { "x-fixture-secret": "fixture-header-value" },
 							},
 						);
-					return new Response("## 1. Repair the defiant");
+					return Response.json([
+						{
+							number: 1,
+							title: "Repair the defiant",
+							user: { login: "kira" },
+							state: "open",
+							head: { sha: "a".repeat(40) },
+						},
+					]);
 				}
+				if (url.includes("/deployments")) return Response.json([]);
 				throw new Error(`unexpected ${url}`);
 			};
 		});
@@ -781,9 +758,9 @@ test("manual reconciliation scopes work to the signed-in user, refreshes, and sa
 			expect(reconciliationLogs).toContainEqual({
 				event: "reconciliation_failed",
 				level: "error",
-				message: "reconciliation failed installation=12 operation=openspec category=broad",
+				message: "reconciliation failed installation=12 operation=pull_requests category=broad",
 				installationId: "12",
-				operation: "openspec",
+				operation: "pull_requests",
 				category: "broad",
 				status: 500,
 			});
@@ -957,7 +934,7 @@ test("merge start and confirmation bind the session, origin, exact node ID, and 
 		).toBe(400);
 	}));
 
-test("merge confirmation refuses removed bindings and incomplete OpenSpec without mutation", () =>
+test("merge confirmation refuses removed bindings without mutation", () =>
 	withDatabase(async (db) => {
 		await seedMergePullRequest(db);
 		const session = await createSession(db, "u");
@@ -1013,32 +990,6 @@ test("merge confirmation refuses removed bindings and incomplete OpenSpec withou
 		const removed = await start();
 		await db.bindings.deleteMany({ userId: "u" });
 		expect((await post(removed)).status).toBe(409);
-		expect(mutations).toBe(0);
-		await seedMergePullRequest(db);
-		const incomplete = await start();
-		const openSpecs = [
-			{
-				change_name: "ready-to-merge",
-				completed: 2,
-				total: 2,
-				source_commit: "a".repeat(40),
-			},
-			{
-				change_name: "hold-the-line",
-				completed: 1,
-				total: 2,
-				source_commit: "a".repeat(40),
-			},
-		];
-		await upsertPullRequest(db, {
-			repositoryId: "42",
-			number: 8,
-			labels: [],
-			open_spec_declaration: "declared",
-			open_specs: openSpecs,
-			open_spec: openSpecs[0],
-		});
-		expect((await post(incomplete)).status).toBe(409);
 		expect(mutations).toBe(0);
 	}));
 
@@ -1688,7 +1639,7 @@ test("failed OAuth bootstrap keeps the binding durable for scheduled reconciliat
 		}
 	}));
 
-test("OAuth bootstrap logs one sanitized aggregate for an OpenSpec task failure", () =>
+test("OAuth bootstrap logs one sanitized aggregate for a pull request list failure", () =>
 	withDatabase(async (db) => {
 		const { privateKey } = await crypto.subtle.generateKey(
 			{
@@ -1729,20 +1680,7 @@ test("OAuth bootstrap logs one sanitized aggregate for an OpenSpec task failure"
 			if (url.includes("/branches/main/protection")) return new Response(null, { status: 404 });
 			if (url.includes("installation/repositories"))
 				return Response.json({ repositories: [{ id: 2, full_name: "Crisp-Inc/defiant" }] });
-			if (url.includes("/repositories/2/pulls?") && !url.includes("/files"))
-				return Response.json([
-					{
-						number: 1,
-						title: "Repair the defiant",
-						user: { login: "kira" },
-						state: "open",
-						head: { sha: "a".repeat(40) },
-						body: "## OpenSpecs\n- hostile-bootstrap",
-					},
-				]);
-			if (url.includes("/repositories/2/pulls/1/files"))
-				return Response.json([{ filename: "openspec/changes/hostile-bootstrap/tasks.md" }]);
-			if (url.includes("contents/openspec/changes/hostile-bootstrap/tasks.md"))
+			if (url.includes("/repositories/2/pulls?"))
 				return Response.json(
 					{
 						message: canary,
@@ -1768,7 +1706,7 @@ test("OAuth bootstrap logs one sanitized aggregate for an OpenSpec task failure"
 			expect(aggregate).toMatchObject({
 				event: "reconciliation_failed",
 				installationId: "12",
-				operation: "openspec",
+				operation: "pull_requests",
 				category: "broad",
 				status: 500,
 			});
@@ -1791,8 +1729,8 @@ test("manual repair logs a returned error once with a targeted sanitized diagnos
 				kind: "error",
 				stale: true,
 				message: "resolved repair failure",
-				operation: "openspec",
-				summary: "OpenSpec task fetch failed",
+				operation: "pull_requests",
+				summary: "Pull request list failed",
 				repository: "Crisp-Inc/defiant",
 				status: 502,
 			}),
@@ -1812,8 +1750,8 @@ test("manual repair logs a returned error once with a targeted sanitized diagnos
 				kind: "error",
 				stale: true,
 				message: "resolved repair failure",
-				operation: "openspec",
-				summary: "OpenSpec task fetch failed",
+				operation: "pull_requests",
+				summary: "Pull request list failed",
 				repository: "Crisp-Inc/defiant",
 				status: 502,
 			});
@@ -1821,9 +1759,9 @@ test("manual repair logs a returned error once with a targeted sanitized diagnos
 				{
 					event: "reconciliation_failed",
 					level: "error",
-					message: "reconciliation failed installation=12 operation=openspec category=targeted",
+					message: "reconciliation failed installation=12 operation=pull_requests category=targeted",
 					installationId: "12",
-					operation: "openspec",
+					operation: "pull_requests",
 					category: "targeted",
 					status: 502,
 				},
@@ -1874,7 +1812,7 @@ test.each([false, true])("manual repair reports persistence failures separately 
 	}),
 );
 
-test("startup drain projects a pending OpenSpec push and clears the inbox payload", () =>
+test("startup drain processes a pending push and clears the inbox payload", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "9", "cubanx");
@@ -1897,7 +1835,7 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 				repository: { id: 2 },
 				ref: "refs/heads/main",
 				after: "a".repeat(40),
-				commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
+				commits: [{ modified: ["src/defiant.ts"] }],
 			}),
 			status: "pending",
 			attempts: 0,
@@ -1927,208 +1865,8 @@ test("startup drain projects a pending OpenSpec push and clears the inbox payloa
 				githubAppPrivateKey: pem,
 			});
 			await app.drain();
-			expect((await db.pullRequests.findOne({ _id: "2:7" }))?.open_specs).toHaveLength(1);
 			expect((await db.inboxDeliveries.findOne({ _id: "github:push" }))?.payload).toBeUndefined();
 		} finally {
 			globalThis.fetch = original;
 		}
-	}));
-
-test("server webhook task fetches accept only a complete final-tree absence", async () => {
-	for (const [name, tree, expectedStatus] of [
-		["absent", { truncated: false, tree: [] }, "done"],
-		["malformed", { tree: [] }, "pending_verification"],
-		["truncated", { truncated: true, tree: [] }, "pending_verification"],
-		[
-			"present",
-			{ truncated: false, tree: [{ path: "openspec/changes/defiant/tasks.md", type: "blob" }] },
-			"pending_verification",
-		],
-	] as const)
-		await withDatabase(async (db) => {
-			await upsertIdentity(db, "u", "sisko");
-			await bindInstallation(db, "u", "9", "cubanx");
-			await seedRepositories(db, "u", [
-				{
-					repositoryId: "2",
-					full_name: "ds9/ops",
-					pullRequests: [
-						{
-							number: 7,
-							author_login: "sisko",
-							state: "open",
-							head_sha: "a".repeat(40),
-							head_ref: "main",
-							open_specs: [{ change_name: "defiant", completed: 1, total: 2 }],
-						},
-					],
-					deployments: [],
-				},
-			]);
-			const payload = JSON.stringify({
-				installation: { id: 9, account: { login: "cubanx" } },
-				repository: { id: 2 },
-				ref: "refs/heads/main",
-				after: "a".repeat(40),
-				commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
-			});
-			await db.inboxDeliveries.insertOne({
-				_id: `github:final-tree-${name}`,
-				provider: "github",
-				deliveryId: `final-tree-${name}`,
-				eventName: "push",
-				payload,
-				status: "pending",
-				attempts: 0,
-				receivedAt: new Date(),
-			});
-			const { privateKey } = await crypto.subtle.generateKey(
-				{
-					name: "RSASSA-PKCS1-v1_5",
-					modulusLength: 2048,
-					publicExponent: new Uint8Array([1, 0, 1]),
-					hash: "SHA-256",
-				},
-				true,
-				["sign", "verify"],
-			);
-			const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
-				.toString("base64")
-				.match(/.{1,64}/g)
-				?.join("\n")}\n-----END PRIVATE KEY-----`;
-			const originalFetch = globalThis.fetch,
-				contentUrls: string[] = [],
-				treeUrls: string[] = [];
-			fetchTarget.fetch = async (input) => {
-				const url = String(input);
-				if (url.includes("access_tokens")) return Response.json({ token: "installation" });
-				if (url.includes("/contents/openspec/changes/defiant/tasks.md")) {
-					contentUrls.push(url);
-					return new Response(null, { status: 404 });
-				}
-				if (url.includes("/git/trees/")) {
-					treeUrls.push(url);
-					return Response.json(tree);
-				}
-				throw new Error(`unexpected GitHub request ${url}`);
-			};
-			const app = createApp(db, { ...testConfig, githubAppId: "1", githubAppPrivateKey: pem });
-			try {
-				await app.drain();
-				const delivery = await db.inboxDeliveries.findOne({ _id: `github:final-tree-${name}` });
-				expect(delivery).toMatchObject({ status: expectedStatus });
-				expect(delivery?.attempts).toBe(expectedStatus === "done" ? 0 : 3);
-				expect(delivery?.payload).toBe(expectedStatus === "done" ? undefined : payload);
-				const contentUrl =
-					"https://api.github.com/repositories/2/contents/openspec/changes/defiant/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-				const treeUrl =
-					"https://api.github.com/repositories/2/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?recursive=1";
-				expect(contentUrls).toEqual(Array(expectedStatus === "done" ? 1 : 3).fill(contentUrl));
-				expect(treeUrls).toEqual(Array(expectedStatus === "done" ? 1 : 3).fill(treeUrl));
-				if (expectedStatus === "done") expect(treeUrls).toHaveLength(1);
-				expect((await db.pullRequests.findOne({ _id: "2:7" }))?.open_specs).toEqual([
-					{ change_name: "defiant", completed: 1, total: 2 },
-				]);
-			} finally {
-				await app.stop();
-				globalThis.fetch = originalFetch;
-			}
-		});
-}, 30_000);
-
-test("webhook task fetch logs safe GitHub diagnostics", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "9", "cubanx");
-		const payload = JSON.stringify({
-			installation: { id: 9, account: { login: "cubanx" } },
-			repository: { id: 2 },
-			ref: "refs/heads/main",
-			after: "a".repeat(40),
-			commits: [{ modified: ["openspec/changes/defiant/tasks.md"] }],
-		});
-		const user = await db.users.findOne({ _id: "u" });
-		await seedRepositories(db, "u", [
-			{
-				repositoryId: "2",
-				full_name: "ds9/ops",
-				pullRequests: [{ number: 7, author_login: "sisko", state: "open", head_sha: "a".repeat(40), head_ref: "main" }],
-				deployments: [],
-			},
-		]);
-		await db.inboxDeliveries.insertOne({
-			_id: "github:failed-push",
-			provider: "github",
-			deliveryId: "failed-push",
-			eventName: "push",
-			payload,
-			status: "pending",
-			attempts: 0,
-			receivedAt: new Date(),
-		});
-		const { privateKey } = await crypto.subtle.generateKey(
-			{
-				name: "RSASSA-PKCS1-v1_5",
-				modulusLength: 2048,
-				publicExponent: new Uint8Array([1, 0, 1]),
-				hash: "SHA-256",
-			},
-			true,
-			["sign", "verify"],
-		);
-		const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey))
-			.toString("base64")
-			.match(/.{1,64}/g)
-			?.join("\n")}\n-----END PRIVATE KEY-----`;
-		const originalFetch = globalThis.fetch,
-			originalError = console.error,
-			logs: unknown[][] = [];
-		fetchTarget.fetch = async (input) =>
-			String(input).includes("access_tokens")
-				? Response.json({ token: "installation" })
-				: Response.json(
-						{
-							message: "Resource not accessible by integration",
-							documentation_url: "https://docs.github.com/rest",
-							errors: [
-								{
-									resource: "Repository",
-									field: "contents",
-									code: "forbidden",
-									value: "must-not-log",
-								},
-							],
-							secret: "must-not-log",
-						},
-						{ status: 403 },
-					);
-		console.error = (...args: unknown[]) => logs.push(args);
-		try {
-			const app = createApp(db, {
-				...testConfig,
-				githubAppId: "1",
-				githubAppPrivateKey: pem,
-			});
-			await app.drain();
-		} finally {
-			globalThis.fetch = originalFetch;
-			console.error = originalError;
-		}
-		expect(logs).toContainEqual([
-			"GitHub request failed",
-			JSON.stringify({
-				operation: "webhook OpenSpec task fetch",
-				status: 403,
-				target:
-					"https://api.github.com/repositories/2/contents/openspec/changes/defiant/tasks.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				diagnostic: {
-					message: "Resource not accessible by integration",
-					documentationUrl: "https://docs.github.com/rest",
-					errors: [{ resource: "Repository", field: "contents", code: "forbidden" }],
-				},
-			}),
-		]);
-		expect(JSON.stringify(logs)).not.toContain("must-not-log");
-		const delivery = await db.inboxDeliveries.findOne({ _id: "github:failed-push" });
-		expect(delivery).toMatchObject({ status: "pending_verification", attempts: 3, payload });
 	}));

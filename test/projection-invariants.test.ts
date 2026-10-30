@@ -1,9 +1,8 @@
 import { expect, test } from "vitest";
-import { bindInstallation, dashboardForUser, upsertIdentity } from "#/access";
+import { bindInstallation, upsertIdentity } from "#/access";
 import { type Db, upsertPullRequest } from "#/db";
 import { acceptGitHubDelivery, drainInbox } from "#/events";
 import { reconcilePullRequest } from "#/github";
-import { projectOpenSpec } from "#/openspec";
 import { withDatabase } from "./mongo-support";
 
 async function seedPr(db: Db, pr: Record<string, unknown>) {
@@ -35,7 +34,7 @@ test("provider identity mutations are idempotent", () =>
 		expect(await db.pullRequests.find({ repositoryId: "2" }).toArray()).toHaveLength(1);
 	}));
 
-test.each(["OPEN", "CLOSED", "NEW_HEAD"])("late %s repair preserves newer webhook and task projection", (state) =>
+test.each(["OPEN", "CLOSED", "NEW_HEAD"])("late %s repair preserves newer webhook projection", (state) =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "kira");
 		await bindInstallation(db, "u", "1", "cubanx");
@@ -75,15 +74,6 @@ test.each(["OPEN", "CLOSED", "NEW_HEAD"])("late %s repair preserves newer webhoo
 						}),
 					);
 					await drainInbox(db);
-					await projectOpenSpec(db, {
-						installationId: "1",
-						accountLogin: "cubanx",
-						repositoryId: "2",
-						path: "openspec/changes/defiant/tasks.md",
-						sha: "b".repeat(40),
-						sourceRef: "defiant",
-						content: "## Observe [post-merge]\n- [ ] Observe Defiant",
-					});
 					return Response.json({
 						data: {
 							repository: {
@@ -91,7 +81,6 @@ test.each(["OPEN", "CLOSED", "NEW_HEAD"])("late %s repair preserves newer webhoo
 									state: state === "NEW_HEAD" ? "OPEN" : state,
 									author: { login: "kira" },
 									headRefOid: sha,
-									body: "## OpenSpecs\n- defiant",
 									updatedAt: "2026-09-09T12:00:00Z",
 									labels: connection,
 									reviews: connection,
@@ -104,150 +93,14 @@ test.each(["OPEN", "CLOSED", "NEW_HEAD"])("late %s repair preserves newer webhoo
 					});
 				}
 				if (String(url).includes("actions/runs")) return Response.json({ workflow_runs: [] });
-				if (String(url).includes("/files"))
-					return Response.json([{ filename: "openspec/changes/defiant/tasks.md", status: "modified" }]);
 				throw new Error("Unexpected fixture route");
 			},
-			fetchTasks: async () => "## Observe [post-merge]\n- [x] Observe Defiant",
 		});
 		const pullRequests = await db.pullRequests.find({ repositoryId: "2" }).toArray();
-		const openSpecs = (pullRequests[0]?.open_specs ?? []) as Record<string, unknown>[];
 		expect(pullRequests).toMatchObject([
 			state === "NEW_HEAD"
 				? { number: 7, state: "open", head_sha: "b".repeat(40) }
 				: { number: 7, state: "closed", merged: true, retention_candidate: true },
 		]);
-		expect(openSpecs).toMatchObject([
-			{ change_name: "defiant", completed: 0, total: 1, source_commit: "b".repeat(40) },
-		]);
-	}),
-);
-
-test.each([false, true])("late merged evidence cannot undo newer completion=%s", (newerComplete) =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "kira");
-		await bindInstallation(db, "u", "1", "cubanx");
-		await seedPr(db, {
-			number: 7,
-			author_login: "kira",
-			state: "closed",
-			merged: true,
-			retention_candidate: true,
-			post_merge_obligations: ["defiant", "bajor", "wormhole"],
-		});
-		await upsertIdentity(db, "alias", "kira");
-		await bindInstallation(db, "alias", "1", "cubanx");
-
-		const connection = { nodes: [], pageInfo: { hasNextPage: false } };
-		const repair = (sha: string, complete: boolean, beforeTasks?: () => Promise<unknown>) => {
-			let advanced = false;
-			return reconcilePullRequest(db, {
-				installationId: "1",
-				repositoryId: "2",
-				number: 7,
-				token: "fictional",
-				fetcher: async (url) => {
-					const value = String(url);
-					if (value.endsWith("/graphql"))
-						return Response.json({
-							data: {
-								repository: {
-									pullRequest: {
-										state: "MERGED",
-										merged: true,
-										author: { login: "kira" },
-										headRefOid: "c".repeat(40),
-										body: "## OpenSpecs\n- defiant\n- bajor",
-										baseRefName: "main",
-										labels: connection,
-										reviews: connection,
-										reviewThreads: connection,
-										reviewRequests: { totalCount: 0 },
-										statusCheckRollup: null,
-									},
-								},
-							},
-						});
-					if (value.includes("actions/runs")) return Response.json({ workflow_runs: [] });
-					if (value.endsWith("/repos/ds9/ops")) return Response.json({ default_branch: "main" });
-					if (value.endsWith("/commits/main")) return Response.json({ sha });
-					throw new Error("Unexpected fixture route");
-				},
-				fetchTasks: async (task) => {
-					expect(task.sha).toBe(sha);
-					if (!advanced && beforeTasks) {
-						advanced = true;
-						await beforeTasks();
-					}
-					return `## ${task.path.includes("wormhole") ? "Build" : "Observe [post-merge]"}\n- [${complete ? "x" : " "}] Observe Defiant`;
-				},
-			});
-		};
-		const newerSha = "b".repeat(40);
-		await repair("a".repeat(40), !newerComplete, () => repair(newerSha, newerComplete));
-		for (const userId of ["u", "alias"]) {
-			const pullRequests = (await dashboardForUser(db, userId)).pullRequests;
-			const openSpecs = (pullRequests[0]?.open_specs ?? []) as Record<string, unknown>[];
-			expect(pullRequests).toHaveLength(newerComplete ? 0 : 1);
-			if (!newerComplete)
-				expect(pullRequests[0]).toMatchObject({
-					post_merge_source_commit: newerSha,
-					post_merge_obligations: ["bajor", "defiant", "wormhole"],
-				});
-			expect(openSpecs).toHaveLength(newerComplete ? 0 : 3);
-			for (const spec of openSpecs)
-				expect(spec).toMatchObject({ source_commit: newerSha, completed: newerComplete ? 1 : 0 });
-		}
-	}),
-);
-
-test.each([false, true])("broad open-list snapshots preserve concurrent merged completion=%s", (complete) =>
-	withDatabase(async (db) => {
-		const { bootstrapInstallation } = await import("#/github");
-		await upsertIdentity(db, "u", "kira");
-		await bindInstallation(db, "u", "1", "cubanx");
-		await seedPr(db, { number: 7, author_login: "kira", state: "open", head_sha: "a".repeat(40) });
-		await bootstrapInstallation(
-			db,
-			"1",
-			"fictional",
-			async (url) => {
-				const value = String(url);
-				if (value.includes("/app/installations/")) return Response.json({ account: { login: "cubanx" } });
-				if (value.includes("installation/repositories"))
-					return Response.json({ repositories: [{ id: 2, full_name: "ds9/ops" }] });
-				if (value.includes("/pulls?") && new URL(value).searchParams.get("state") === "open") {
-					if (complete) await db.pullRequests.deleteOne({ _id: "2:7" });
-					else
-						await upsertPullRequest(db, {
-							repositoryId: "2",
-							number: 7,
-							author_login: "kira",
-							state: "closed",
-							merged: true,
-							retention_candidate: true,
-							head_ref: "defiant",
-						});
-					await projectOpenSpec(db, {
-						installationId: "1",
-						accountLogin: "cubanx",
-						repositoryId: "2",
-						path: "openspec/changes/defiant/tasks.md",
-						sha: "b".repeat(40),
-						sourceRef: "defiant",
-						content: "## Observe [post-merge]\n- [ ] Observe Defiant",
-					});
-					return Response.json([{ number: 7, user: { login: "kira" }, state: "open", head: { sha: "a".repeat(40) } }]);
-				}
-				return Response.json([]);
-			},
-			"app-jwt",
-		);
-		const pullRequests = await db.pullRequests.find({ repositoryId: "2" }).toArray();
-		const openSpecs = (pullRequests[0]?.open_specs ?? []) as Record<string, unknown>[];
-		expect(pullRequests).toHaveLength(complete ? 0 : 1);
-		if (!complete) expect(pullRequests[0]).toMatchObject({ state: "closed", merged: true });
-		if (complete) expect(openSpecs).toEqual([]);
-		else expect(openSpecs).toMatchObject([{ change_name: "defiant", source_commit: "b".repeat(40) }]);
 	}),
 );

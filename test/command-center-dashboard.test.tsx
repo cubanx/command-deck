@@ -20,7 +20,6 @@ const snapshot = {
 			full_name: "ds9/ops",
 			title: "Defiant readiness",
 			url: "https://example.test/9",
-			labels: ["openspec-not-required"],
 			review_activity: true,
 			completed_review_count: 1,
 			unresolved_review_threads: 0,
@@ -38,9 +37,6 @@ const snapshot = {
 			number: 10,
 			full_name: "ds9/science",
 			title: "Wormhole chart",
-			labels: [],
-			open_specs: [],
-			open_spec_declaration: "empty",
 			installation_pull_requests: "write",
 			state: "open",
 		},
@@ -56,11 +52,6 @@ const evidenceSnapshot = {
 	pullRequests: [
 		{
 			...snapshot.pullRequests[0],
-			open_specs: [
-				{ change_name: "hold-the-line", completed: 1, total: 2 },
-				{ change_name: "save-the-prophets", completed: 3, total: 3 },
-			],
-			detected_open_specs: ["hold-the-line", "SAVE-THE-PROPHETS", "local-runabout"],
 			workflow_state: "failure",
 			checks_state: "success",
 			review_state: "approved",
@@ -117,16 +108,6 @@ const controlSnapshot = {
 			required_checks: [{ head_sha: "a".repeat(40), conclusion: "failure" }],
 			opened_at: "2026-01-03T00:00:00Z",
 			updated_at: "2026-01-03T00:00:00Z",
-		},
-		{
-			...snapshot.pullRequests[0],
-			number: 404,
-			full_name: "ds9/odo",
-			title: "Odo OpenSpec",
-			labels: [],
-			open_specs: [{ change_name: "repair-wormhole", completed: 1, total: 2 }],
-			opened_at: "2026-01-04T00:00:00Z",
-			updated_at: "2026-01-04T00:00:00Z",
 		},
 		{
 			...snapshot.pullRequests[0],
@@ -199,16 +180,6 @@ const mergeSnapshot = {
 			full_name: "ds9/blocked",
 			title: "Mergeability blocked",
 			mergeable: "blocked",
-		},
-		{
-			...snapshot.pullRequests[0],
-			number: 20,
-			full_name: "ds9/local",
-			title: "Local only",
-			labels: [],
-			open_specs: [],
-			open_spec_declaration: "empty",
-			detected_open_specs: ["local-only"],
 		},
 	],
 	deployments: [],
@@ -325,22 +296,17 @@ test("renders lifecycle and evidence separately", () => {
 	const lifecycle = card.getByRole("group", { name: "PR Lifecycle" });
 	expect(lifecycle.classList.contains("pr-lifecycle")).toBe(true);
 	expect(lifecycle.querySelector("legend.pr-lifecycle-title")?.textContent).toBe("PR Lifecycle");
-	expect(lifecycle.querySelector(".sr-only")?.textContent).toBe("PR lifecycle. Current stage: OpenSpec ready");
+	expect(lifecycle.querySelector(".sr-only")?.textContent).toBe("PR lifecycle. Current stage: Mergeable");
 	const pills = lifecycle.querySelector(".lifecycle-pills[aria-hidden='true']");
 	expect([...(pills?.querySelectorAll(".lifecycle-pill") ?? [])].map((pill) => pill.textContent)).toEqual([
 		"✓ Draft · Complete",
-		"◐ OpenSpec ready · Current",
-		"○ Ready for review · Upcoming",
-		"○ Reviewing · Upcoming",
-		"○ Mergeable · Upcoming",
+		"✓ Ready for review · Complete",
+		"✓ Reviewing · Complete",
+		"◐ Mergeable · Current",
 	]);
 	expect(pills?.querySelector(".lifecycle-pill.complete")?.textContent).toBe("✓ Draft · Complete");
-	expect(pills?.querySelector(".lifecycle-pill.current")?.textContent).toBe("◐ OpenSpec ready · Current");
-	expect(pills?.querySelectorAll(".lifecycle-pill.upcoming")).toHaveLength(3);
-	expect(card.getByText("OpenSpec · hold-the-line · Incomplete · 1/2")).toBeTruthy();
-	expect(card.getByText("OpenSpec · save-the-prophets · Complete · 3/3")).toBeTruthy();
-	expect(card.getByText("Detected OpenSpec candidates (informational): local-runabout")).toBeTruthy();
-	expect(card.queryByText(/Detected OpenSpec candidates .*hold-the-line/)).toBeNull();
+	expect(pills?.querySelector(".lifecycle-pill.current")?.textContent).toBe("◐ Mergeable · Current");
+	expect(pills?.querySelectorAll(".lifecycle-pill.complete")).toHaveLength(3);
 	expect(card.getByRole("link", { name: "Runabout check" }).getAttribute("href")).toBe(
 		"https://example.test/actions/9",
 	);
@@ -370,8 +336,6 @@ test("keeps filter controls in a shared wrapping row", () => {
 		["opened:desc", "Newest opened"],
 		["updated:asc", "Least recently updated"],
 		["updated:desc", "Most recently updated"],
-		["progress:asc", "Least complete"],
-		["progress:desc", "Most complete"],
 		["repository:asc", "Repository A–Z"],
 		["repository:desc", "Repository Z–A"],
 	]);
@@ -393,145 +357,6 @@ test("keeps deployment and broad reconciliation controls out of the dashboard", 
 	expect(screen.queryByRole("button", { name: /Latest deployment/i })).toBeNull();
 	expect(screen.queryByRole("button", { name: "Sync GitHub installations" })).toBeNull();
 	expect(screen.queryByRole("button", { name: "Reconcile all PRs" })).toBeNull();
-});
-
-test("presents only authoritative OpenSpec tasks on cards and status details", async () => {
-	renderFrontend(
-		<OperationalDashboard
-			snapshot={{
-				...snapshot,
-				pullRequests: [
-					{
-						...snapshot.pullRequests[0],
-						open_specs: [
-							{
-								change_name: "defiant-repair",
-								completed: 1,
-								total: 3,
-								active_groups: [
-									{
-										title: "Current repairs",
-										tasks: [
-											{ completed: true, text: "Align the deflector" },
-											{ completed: false, text: "Reconfigure the deflector" },
-										],
-									},
-									{
-										title: "Next repairs",
-										tasks: [{ completed: false, text: "Test the warp core" }],
-									},
-								],
-								source_url: "https://github.com/ds9/ops/blob/main/openspec/changes/defiant-repair/tasks.md",
-							},
-							{
-								change_name: "wormhole-log",
-								completed: 3,
-								total: 3,
-								active_groups: [],
-								source_url: "javascript:alert('not-safe')",
-							},
-							{
-								change_name: "duplicate-source",
-								completed: 0,
-								total: 3,
-								active_groups: [
-									{
-										title: "Repeated source title",
-										tasks: [
-											{ completed: false, text: "Repeat the task" },
-											{ completed: false, text: "Repeat the task" },
-										],
-									},
-									{
-										title: "Repeated source title",
-										tasks: [{ completed: false, text: "Next repeated task" }],
-									},
-								],
-							},
-							{
-								change_name: "incomplete-evidence",
-								completed: 5,
-								total: 8,
-								active_groups: [],
-								source_url: "https://github.com/ds9/ops/blob/main/openspec/changes/incomplete-evidence/tasks.md",
-							},
-							{
-								change_name: "modernize-railway-better-auth",
-								completed: 5,
-								total: 8,
-								pre_merge_ready: true,
-								active_groups: [],
-								incomplete_groups: [
-									{
-										title: "2.2-2.4 Observe [post-merge]",
-										tasks: [
-											{ completed: false, text: "2.2 Confirm the relay" },
-											{ completed: false, text: "2.3 Observe the rollout" },
-											{ completed: false, text: "2.4 Record the outcome" },
-										],
-									},
-								],
-							},
-						],
-						detected_open_specs: ["local-candidate"],
-					},
-				],
-			}}
-		/>,
-	);
-	const article = screen.getByRole("article", { name: /Defiant readiness/i });
-	const viewers = article.querySelectorAll("details");
-	expect(viewers).toHaveLength(5);
-	expect([...viewers].slice(0, 4).map((viewer) => viewer.querySelector("summary")?.textContent)).toEqual([
-		"OpenSpec · defiant-repair · Current repairs · 1/3",
-		"OpenSpec · wormhole-log · Complete · 3/3",
-		"OpenSpec · duplicate-source · Repeated source title · 0/3",
-		"OpenSpec · incomplete-evidence · Incomplete · 5/8",
-	]);
-	const postMergeSummary = viewers[4]?.querySelector("summary");
-	expect(postMergeSummary?.textContent).toContain("OpenSpec · modernize-railway-better-auth · 5/8");
-	expect(postMergeSummary?.textContent).not.toContain("Post-merge remaining");
-	expect(
-		within(postMergeSummary as HTMLElement)
-			.getByText("Post-merge")
-			.closest(".post-merge-badge"),
-	).not.toBeNull();
-	expect(viewers[0]?.classList.contains("openspec")).toBe(true);
-	expect(viewers[0]?.querySelector("summary > strong")?.textContent).toBe(
-		"OpenSpec · defiant-repair · Current repairs · 1/3",
-	);
-	expect(viewers[0]?.querySelector("ul.tasks")).toBeTruthy();
-	expect(viewers[0]?.textContent).toContain("Current repairs");
-	expect(viewers[0]?.textContent).toContain("Next repairs");
-	expect(
-		[...viewers[0]!.querySelectorAll<HTMLInputElement>("input[type=checkbox]")].map((input) => [
-			input.checked,
-			input.disabled,
-		]),
-	).toEqual([
-		[true, true],
-		[false, true],
-		[false, true],
-	]);
-	expect(
-		within(article).getAllByRole("checkbox", {
-			name: "Reconfigure the deflector",
-		}),
-	).toHaveLength(1);
-	expect(within(article).getAllByRole("checkbox", { name: "Repeat the task" })).toHaveLength(2);
-	expect(
-		(
-			within(article).getByRole("checkbox", {
-				name: "Next repeated task",
-			}) as HTMLInputElement
-		).disabled,
-	).toBe(true);
-	expect(viewers[3]?.textContent).toContain("Task details are unavailable until reconciliation.");
-	expect(viewers[3]?.textContent).not.toContain("All tasks complete.");
-	expect(viewers[4]?.textContent).toContain("2.2 Confirm the relay");
-	expect(within(article).getAllByRole("link", { name: "Open tasks" })).toHaveLength(2);
-	expect([...viewers].some((viewer) => viewer.textContent?.includes("local-candidate"))).toBe(false);
-	expect([...viewers].some((viewer) => viewer.textContent?.includes("All tasks complete."))).toBe(true);
 });
 
 test("filters, orders, and clears the operational card view", async () => {
@@ -569,26 +394,25 @@ test("filters, orders, and clears the operational card view", async () => {
 		fireEvent.click(clear);
 	};
 	fireEvent.click(status());
-	expect(within(await screen.findByRole("listbox")).getAllByRole("option", { hidden: true })).toHaveLength(9);
+	expect(within(await screen.findByRole("listbox")).getAllByRole("option", { hidden: true })).toHaveLength(8);
 	expect(screen.queryByRole("checkbox", { name: "All" })).toBeNull();
 	expect(screen.queryByText("Lifecycle")).toBeNull();
 	expect(screen.queryByText("Attention")).toBeNull();
 	fireEvent.click(await screen.findByRole("option", { name: "Draft", hidden: true }));
 	expect(articleTitles()).toEqual(["Dukat draft"]);
 	await selectStatus("Needs attention");
-	expect(articleTitles()).toEqual(["Quark reviewing", "Odo OpenSpec", "Dukat draft"]);
+	expect(articleTitles()).toEqual(["Quark reviewing", "Dukat draft"]);
 	const removeDraft = status().closest(".filter-status")?.querySelector("span[data-with-remove] button");
 	if (!removeDraft) throw new Error("Expected built-in Draft removal control");
 	fireEvent.click(removeDraft);
 	expect(status().closest(".filter-status")?.textContent).not.toContain("Draft");
-	expect(articleTitles()).toEqual(["Quark reviewing", "Odo OpenSpec", "Dukat draft"]);
+	expect(articleTitles()).toEqual(["Quark reviewing", "Dukat draft"]);
 	clearStatuses();
-	expect(articleTitles()).toHaveLength(5);
+	expect(articleTitles()).toHaveLength(4);
 	expect(status().getAttribute("placeholder")).toBe("All statuses");
 	expect(screen.queryByText(/Status: (All|None)/)).toBeNull();
 	for (const [stage, title] of [
 		["Draft", "Dukat draft"],
-		["OpenSpec", "Odo OpenSpec"],
 		["Ready", "Kira ready"],
 		["Reviewing", "Quark reviewing"],
 		["Mergeable", "Sisko mergeable"],
@@ -598,7 +422,7 @@ test("filters, orders, and clears the operational card view", async () => {
 		clearStatuses();
 	}
 	for (const [name, expected] of [
-		["Needs attention", ["Quark reviewing", "Odo OpenSpec", "Dukat draft"]],
+		["Needs attention", ["Quark reviewing", "Dukat draft"]],
 		["Failed Actions", ["Quark reviewing"]],
 		["Failed Checks", ["Quark reviewing"]],
 	] as const) {
@@ -606,7 +430,7 @@ test("filters, orders, and clears the operational card view", async () => {
 		expect(articleTitles()).toEqual(expected);
 		clearStatuses();
 	}
-	for (const name of ["ds9/dukat", "ds9/kira", "ds9/odo", "ds9/quark", "ds9/sisko"])
+	for (const name of ["ds9/dukat", "ds9/kira", "ds9/quark", "ds9/sisko"])
 		fireEvent.click(within(repositoryPills).getByRole("button", { name }));
 	expect(screen.queryAllByRole("article")).toEqual([]);
 	fireEvent.click(within(repositoryPills).getByRole("button", { name: "ds9/sisko" }));
@@ -614,25 +438,23 @@ test("filters, orders, and clears the operational card view", async () => {
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 	const sort = screen.getByRole("combobox", { name: "Sort pull requests" });
 	for (const [value, expected] of [
-		["opened:asc", ["Sisko mergeable", "Kira ready", "Quark reviewing", "Odo OpenSpec", "Dukat draft"]],
-		["opened:desc", ["Dukat draft", "Odo OpenSpec", "Quark reviewing", "Kira ready", "Sisko mergeable"]],
-		["updated:asc", ["Sisko mergeable", "Dukat draft", "Quark reviewing", "Odo OpenSpec", "Kira ready"]],
-		["updated:desc", ["Kira ready", "Odo OpenSpec", "Quark reviewing", "Dukat draft", "Sisko mergeable"]],
-		["repository:asc", ["Dukat draft", "Kira ready", "Odo OpenSpec", "Quark reviewing", "Sisko mergeable"]],
-		["repository:desc", ["Sisko mergeable", "Quark reviewing", "Odo OpenSpec", "Kira ready", "Dukat draft"]],
-		["closest:asc", ["Sisko mergeable", "Quark reviewing", "Kira ready", "Odo OpenSpec", "Dukat draft"]],
-		["closest:desc", ["Dukat draft", "Odo OpenSpec", "Kira ready", "Quark reviewing", "Sisko mergeable"]],
-		["progress:asc", ["Odo OpenSpec", "Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"]],
-		["progress:desc", ["Odo OpenSpec", "Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"]],
+		["opened:asc", ["Sisko mergeable", "Kira ready", "Quark reviewing", "Dukat draft"]],
+		["opened:desc", ["Dukat draft", "Quark reviewing", "Kira ready", "Sisko mergeable"]],
+		["updated:asc", ["Sisko mergeable", "Dukat draft", "Quark reviewing", "Kira ready"]],
+		["updated:desc", ["Kira ready", "Quark reviewing", "Dukat draft", "Sisko mergeable"]],
+		["repository:asc", ["Dukat draft", "Kira ready", "Quark reviewing", "Sisko mergeable"]],
+		["repository:desc", ["Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"]],
+		["closest:asc", ["Sisko mergeable", "Quark reviewing", "Kira ready", "Dukat draft"]],
+		["closest:desc", ["Dukat draft", "Kira ready", "Quark reviewing", "Sisko mergeable"]],
 	] as const) {
 		fireEvent.change(sort, { target: { value } });
 		expect(articleTitles()).toEqual(expected);
 	}
 	fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-	expect((sort as HTMLSelectElement).value).toBe("progress:desc");
+	expect((sort as HTMLSelectElement).value).toBe("closest:desc");
 	expect(status().getAttribute("placeholder")).toBe("All statuses");
 	expect(store.has("dcc-pr-sort")).toBe(false);
-	expect(screen.getByRole("status").textContent).toBe("5 results");
+	expect(screen.getByRole("status").textContent).toBe("4 results");
 });
 
 test("keeps snapshot failures sanitized while stale and empty states remain usable", () => {
@@ -724,7 +546,6 @@ test("default and cleared filters show retained work as merged with merge disabl
 						merged: true,
 						retention_candidate: true,
 						draft: true,
-						post_merge_unresolved: true,
 					},
 				],
 			}}

@@ -115,7 +115,6 @@ test("dashboard shows every open authored PR across allowed installations, atten
 					state: "open",
 					checks_state: "success",
 					updated_at: "2030-01-01T00:00:00Z",
-					labels: ["openspec-not-required"],
 				},
 				{ number: 3, title: "Closed", author_login: "odo", state: "closed" },
 				{ number: 4, title: "Not Odo", author_login: "quark", state: "open" },
@@ -133,7 +132,6 @@ test("dashboard shows every open authored PR across allowed installations, atten
 					state: "open",
 					checks_state: "success",
 					updated_at: "2030-01-03T00:00:00Z",
-					labels: ["openspec-not-required"],
 				},
 				{
 					number: 2,
@@ -226,16 +224,10 @@ test("local demo projections are deterministic and isolated", () =>
 			fixture_avatar: true,
 		});
 		const defiantChecklist = dashboard.pullRequests.find((pr) => pr.title === "Restore the Defiant launch checklist");
-		expect(dashboard.pullRequests.filter((pr) => pr.open_spec)).toHaveLength(1);
 		expect(defiantChecklist).toMatchObject({
 			title: "Restore the Defiant launch checklist",
 			url: "https://github.com/ds9/ops-console/pull/119",
 			draft: 1,
-			open_spec: {
-				change_name: "restore-defiant-launch-checklist",
-				completed: 26,
-				total: 27,
-			},
 		});
 		expect(dashboard.pullRequests.find((pr) => pr.number === 118)).toMatchObject({
 			title: "Tune the wormhole transit monitor",
@@ -271,99 +263,7 @@ test("local demo projections are deterministic and isolated", () =>
 		});
 	}));
 
-test("dashboard ignores post-merge-only OpenSpec work for attention", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "1", "cubanx");
-		await putRepositories(db, "1", {
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [
-				{
-					number: 1,
-					author_login: "sisko",
-					state: "open",
-					open_specs: [{ completed: 1, total: 2, pre_merge_ready: true }],
-				},
-				{
-					number: 2,
-					author_login: "sisko",
-					state: "open",
-					open_specs: [{ completed: 1, total: 2 }],
-				},
-			],
-			deployments: [],
-		});
-		const pullRequests = await dashboardForUser(db, "u");
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 1)?.needs_attention).toBe(false);
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 2)?.needs_attention).toBe(true);
-	}));
-
-test("dashboard derives OpenSpec attention from the canonical gate", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "1", "cubanx");
-		await putRepositories(db, "1", {
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [
-				{
-					number: 1,
-					author_login: "sisko",
-					state: "open",
-				},
-				{
-					number: 2,
-					author_login: "sisko",
-					state: "open",
-					labels: ["openspec-not-required"],
-				},
-				{
-					number: 3,
-					author_login: "sisko",
-					state: "open",
-					open_spec_declaration: "invalid",
-				},
-				{
-					number: 4,
-					author_login: "sisko",
-					state: "open",
-					open_spec_declaration: "empty",
-				},
-				{
-					number: 5,
-					author_login: "sisko",
-					state: "open",
-					open_spec_declaration: "empty",
-					labels: ["openspec-not-required"],
-				},
-				{
-					number: 6,
-					author_login: "sisko",
-					state: "open",
-					open_spec_declaration: "absent",
-					detected_open_specs: ["repair-wolf-359"],
-				},
-				{
-					number: 7,
-					author_login: "sisko",
-					state: "open",
-					open_specs: [{ completed: "not-a-number", total: 2 }],
-				},
-			],
-			deployments: [],
-		});
-		const pullRequests = await dashboardForUser(db, "u");
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 1)?.needs_attention).toBe(true);
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 2)?.needs_attention).toBe(false);
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 3)?.needs_attention).toBe(true);
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 4)?.needs_attention).toBe(true);
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 5)?.needs_attention).toBe(false);
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 6)?.needs_attention).toBe(true);
-		expect(pullRequests.pullRequests.find((pr) => pr.number === 7)?.needs_attention).toBe(true);
-	}));
-
-test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or ambiguous links", () =>
+test("dashboard prioritizes attention and sanitizes unsafe links", () =>
 	withDatabase(async (db) => {
 		await upsertIdentity(db, "u", "sisko");
 		await bindInstallation(db, "u", "1", "cubanx");
@@ -383,7 +283,6 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					url: "javascript:alert(1)",
 					head_sha: sha,
 					head_ref: "shared",
-					open_specs: [{ change_name: "sha-match", completed: 2, total: 2 }],
 				},
 				{
 					number: 2,
@@ -392,7 +291,6 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					state: "open",
 					updated_at: "2030-01-03",
 					head_ref: "unique",
-					open_specs: [{ change_name: "branch-match", completed: 2, total: 2 }],
 				},
 				{
 					number: 3,
@@ -401,7 +299,6 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					state: "open",
 					updated_at: "2030-01-02",
 					head_ref: "shared",
-					labels: ["openspec-not-required"],
 				},
 				{
 					number: 4,
@@ -411,7 +308,6 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 					updated_at: "2030-01-01T01:00:00Z",
 					head_sha: sha,
 					head_ref: "other",
-					labels: ["openspec-not-required"],
 				},
 			],
 			deployments: [
@@ -424,73 +320,8 @@ test("dashboard prioritizes attention and correlates OpenSpecs without unsafe or
 		const dashboard = await dashboardForUser(db, "u", now);
 		expect(dashboard.pullRequests.map((pr) => pr.number)).toEqual([1, 2, 3, 4]);
 		const pullRequests = new Map(dashboard.pullRequests.map((pr) => [pr.number, pr]));
-		expect(pullRequests.get(1)).toMatchObject({
-			url: "https://github.com/ds9/ops/pull/1",
-			open_spec: { change_name: "sha-match" },
-		});
-		expect(pullRequests.get(2)?.open_spec).toMatchObject({
-			change_name: "branch-match",
-		});
-		expect(pullRequests.get(3)?.open_spec).toBeNull();
-		expect(pullRequests.get(4)?.open_spec).toBeNull();
-		expect(pullRequests.get(1)?.open_specs).toMatchObject([{ change_name: "sha-match" }]);
+		expect(pullRequests.get(1)).toMatchObject({ url: "https://github.com/ds9/ops/pull/1" });
 		expect(dashboard.deployments.map((deployment) => deployment.id)).toEqual(["pending", "failure", "success"]);
-	}));
-
-test("dashboard keeps every exact-head OpenSpec in deterministic order and keeps PR-associated progress", () =>
-	withDatabase(async (db) => {
-		await upsertIdentity(db, "u", "sisko");
-		await bindInstallation(db, "u", "1", "cubanx");
-		const sha = "a".repeat(40);
-		await putRepositories(db, "1", {
-			repositoryId: "2",
-			full_name: "ds9/ops",
-			pullRequests: [
-				{
-					number: 1,
-					author_login: "sisko",
-					state: "open",
-					head_sha: sha,
-					head_ref: "feature/shared",
-					open_specs: [
-						{
-							change_name: "zeta",
-							completed: 1,
-							total: 1,
-							source_commit: sha,
-						},
-						{
-							change_name: "alpha",
-							completed: 1,
-							total: 1,
-							source_commit: sha,
-						},
-						{
-							change_name: "alpha",
-							completed: 1,
-							total: 1,
-							source_commit: sha,
-						},
-					],
-				},
-				{
-					number: 2,
-					author_login: "sisko",
-					state: "open",
-					head_ref: "feature/unique",
-					open_specs: [{ change_name: "branch", completed: 1, total: 1 }],
-				},
-			],
-			deployments: [],
-		});
-		const pulls = await dashboardForUser(db, "u");
-		const exact = pulls.pullRequests.find((pr) => pr.number === 1)!;
-		expect((exact.open_specs as Array<Record<string, unknown>>).map((spec) => spec.change_name)).toEqual([
-			"alpha",
-			"zeta",
-		]);
-		expect((exact.open_spec as Record<string, unknown>)?.change_name).toBe("alpha");
-		expect(pulls.pullRequests.find((pr) => pr.number === 2)?.open_specs).toMatchObject([{ change_name: "branch" }]);
 	}));
 
 test("identity upserts are atomic and preserve separate bindings", () =>

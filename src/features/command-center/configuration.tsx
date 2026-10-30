@@ -1,26 +1,14 @@
 import { Alert, Button, Group, Stack, Text, Title } from "@mantine/core";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { AppearanceControls } from "#/features/command-center/configuration-appearance";
-import { CheckoutControls, type Repository } from "#/features/command-center/configuration-checkouts";
-import { snapshotQueryOptions } from "#/features/command-center/snapshot";
 import {
 	reconcileAllInstallationsMutationOptions,
 	reconcilePullRequestsMutationOptions,
 } from "#/features/command-center/snapshot-mutations";
 
-const isRepository = (value: unknown): value is Repository =>
-	typeof value === "object" &&
-	value !== null &&
-	typeof (value as Record<string, unknown>).account_login === "string" &&
-	typeof (value as Record<string, unknown>).installation_id === "string" &&
-	typeof (value as Record<string, unknown>).repository_id === "string" &&
-	typeof (value as Record<string, unknown>).full_name === "string";
-
 export function Configuration() {
-	const { data: snapshot } = useQuery({ ...snapshotQueryOptions, staleTime: Number.POSITIVE_INFINITY });
 	const queryClient = useQueryClient();
-	const repositories = useMemo(() => snapshot?.repositories.filter(isRepository) ?? [], [snapshot?.repositories]);
 	const installations = useMutation(reconcileAllInstallationsMutationOptions(queryClient));
 	const pullRequests = useMutation(reconcilePullRequestsMutationOptions(queryClient));
 	const [busy, setBusy] = useState<string | null>(null);
@@ -75,8 +63,6 @@ export function Configuration() {
 					<Text role="status">{announcement.text}</Text>
 				) : null}
 				<AppearanceControls />
-				<Alert color="blue">Detected OpenSpec candidates are local and informational.</Alert>
-				<CheckoutControls repositories={repositories} />
 			</Stack>
 		</main>
 	);
